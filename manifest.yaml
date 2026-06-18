@@ -1,0 +1,51 @@
+# Inventario REAL del qa-kit global — fuente de verdad para los instaladores.
+# Sin drift: lista solo lo que existe en el repo (corrige D2 del documento de arquitectura).
+version: "0.0.1-f0"
+description: "Andamiaje F0 — local-first, tracker-adapter, perfiles por capas"
+status: "scaffold"   # F0: estructura + plumbing. Skills/runners se portan en F1-F3.
+
+core:
+  tracker_adapter:
+    - core/tracker-adapter/CONTRACT.md
+    - core/tracker-adapter/tracker-adapter.mjs
+    - core/tracker-adapter/index.mjs
+  agents: []          # se portan en F1 (qa-orchestrator, executor, generator, explorer, healer)
+  skills: []          # se portan en F1-F3 (runners + diseño)
+  templates:
+    local:
+      - templates/local/README.md
+
+adapters:
+  trackers:
+    local:
+      - adapters/trackers/local/local-adapter.mjs
+      - adapters/trackers/local/README.md
+    azure-devops:
+      - adapters/trackers/azure-devops/azure-devops-adapter.mjs
+      - adapters/trackers/azure-devops/README.md
+    # github: []   # fase 5
+    # jira: []     # fase 5
+
+profiles:
+  - profiles/default.yaml
+  presets:
+    - profiles/presets/azure-devops.yaml
+  overlays:
+    - profiles/overlays/flit.yaml
+
+runtime:
+  profile:
+    - runtime/profile/yaml-lite.mjs
+    - runtime/profile/resolve-profile.mjs
+  evidence:
+    - runtime/evidence/local-sink.mjs
+  smoke_test: runtime/smoke-test.mjs
+
+delivery:        # fase 4 — empaque por runtime, generado desde core/
+  - delivery/cursor/README.md
+  - delivery/claude-code/README.md
+  - delivery/plain/README.md
+
+packs:           # opcionales, NO instalados por defecto
+  dev-side:
+    - packs/dev-side/README.md

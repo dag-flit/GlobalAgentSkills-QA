@@ -1,0 +1,38 @@
+# Overlay de organización FLIT. Extiende el preset azure-devops.
+# Aquí —y SOLO aquí— viven las convenciones específicas de FLIT.
+# Uso en el repo:  profile: flit   (que a su vez hereda azure-devops <- default)
+# Regla del kit global: cero literales FLIT fuera de este archivo.
+
+extends: azure-devops      # el resolver aplica default <- azure-devops <- flit <- proyecto
+
+project:
+  name: "flit"
+
+locale:
+  timezone: "America/Bogota"
+
+stack:
+  backend: dotnet
+  frontend: react
+
+testing:
+  ac_format: gherkin
+  layers_enabled: ["static", "unit", "e2e"]   # api habilitada en fase 4
+  environments: ["DEV", "QA"]
+
+azure:
+  work_item:
+    test_case_title_pattern: "QA_TC{seq:02d}_{module}_{scope} - {scenario}"
+    test_case_title_prefix: "QA_TC"
+    certified_tag: "QA_PDN"
+    defect_tag: "QA_NOVEDAD"
+  evidence:
+    manuals: "Custom.Manuales"
+  testing_values:
+    initial: "No Test"
+    after_qa_cycle: "Test QA"
+
+assignment:
+  defect_from_requirement: "parent.assignee"
+  production_defect: env.TECH_LEAD_EMAIL    # regla FLIT: bugs PDN al LT
+  qa_assignee: env.USER_REAL_EMAIL

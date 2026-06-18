@@ -1,0 +1,62 @@
+# Preset de tracker Azure DevOps. Se aplica sobre default.yaml.
+# Uso en el repo:  profile: azure-devops  +  env.AZURE_PROJECT_NAME
+# NO contiene convenciones de ninguna organización (eso va en overlays/).
+
+tracker: azure-devops
+
+evidence:
+  sink: dual              # resumen en Discussion del WI padre + adjuntos en Task-TC hijo
+
+human_gates:
+  publish_test_cases: true
+  publish_bugs: true
+  approve_regression: true
+
+supervision:
+  enabled: true           # ADO exige bloque de supervisión en cada comentario
+  lead_email: env.USER_REAL_EMAIL
+  comment_prefix: "Agente/skill {agent_or_skill} usada bajo supervisión de @{lead_email}"
+
+azure:
+  work_item:
+    requirement_type: "User Story"
+    test_case_storage: task           # task | test_case | both
+    test_case_work_item_type: "Task"
+    test_case_title_pattern: "TC-{seq:02d}_{scope} - {scenario}"
+    test_case_title_prefix: "TC-"
+    ready_for_qa_state: "Resolved"
+    retest_qa_states: ["Active"]
+    design_state: "Active"
+    certified_tag: "QA_CERTIFIED"
+    defect_tag: "QA_DEFECT"
+    on_defect_reactivate_state: "Active"   # QA reactiva el WI padre; NUNCA Closed (exclusivo PO)
+    qa_may_close_types: ["Task", "Bug"]    # únicos WI que QA cierra
+    bug_work_item_type: "Bug"
+    bug_dev_resolved_state: "Resolved"
+    bug_qa_verified_state: "Closed"
+    test_case_pass_state: "Closed"
+    test_case_fail_state: "Active"
+  evidence:
+    parent_summary_destination: "discussion"   # resumen QA en Discussion del WI padre
+    parent_summary_mode: "comment"
+    tc_detail_destination: "discussion"        # detalle png/webm en Task-TC hijo
+    parent_trace_comment: true
+    dev_only_field: "Custom.Evidences"         # exclusivo del lado dev — QA nunca escribe aquí
+    fallback: "discussion"
+  fields:
+    acceptance_criteria: "Microsoft.VSTS.Common.AcceptanceCriteria"
+    evidences: "Custom.Evidences"
+    testing: "Custom.Testing"
+    retest: "Custom.ReTest"
+    test_start_date: "Custom.TestStartDate"
+    test_end_date: "Custom.TestEndDate"
+  testing_values:
+    initial: "Not Started"
+    after_qa_cycle: "QA Complete"
+  retest:
+    initial: 0
+    increment_on: "each_completed_qa_cycle"
+  tc_ado_matching:
+    strategies: ["annotation", "mapping_file", "env_map", "exact_title", "prefix_seq", "normalized_slug"]
+    on_unmatched: warn
+    mapping_file_path: ".qa/mappings/wi-{work_item_id}.json"
