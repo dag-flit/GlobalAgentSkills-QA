@@ -19,9 +19,16 @@ function semgrepConfig(profile) {
 // ciclo. Hallazgos reales siguen siendo exit 1 (con `--error` en semgrep) → fail.
 const SCANNER_ERROR = [2];
 
+// bandit escanea TODO el árbol, incluido el código de test, donde `assert` (B101) es la forma
+// correcta de afirmar en pytest/unittest — no un hallazgo de seguridad. Sin excluir, cualquier
+// repo Python con tests rompe el gate de security por puro ruido. Excluimos directorios de test
+// (y entornos virtuales) para que bandit reporte la postura del CÓDIGO DE APP, no del andamiaje.
+// fnmatch en Windows normaliza `/`→`\`, así que estos globs matchean en ambas plataformas.
+const BANDIT_EXCLUDE = "*/tests/*,*/test/*,*/.venv/*,*/venv/*,*/node_modules/*";
+
 const TOOLS = {
   semgrep: ({ profile }) => ({ argv: ["semgrep", "--error", "--quiet", "--config", semgrepConfig(profile)], skipCodes: SCANNER_ERROR }),
-  bandit: () => ({ argv: ["bandit", "-r", "."], skipCodes: SCANNER_ERROR }),
+  bandit: () => ({ argv: ["bandit", "-r", ".", "--exclude", BANDIT_EXCLUDE], skipCodes: SCANNER_ERROR }),
 };
 
 /** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */

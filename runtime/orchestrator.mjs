@@ -49,6 +49,8 @@ export async function runQaCycle({
   env = {},
   profile,
   workItemId = "local",
+  featureId,
+  developer,
   exec,
   http,
 } = {}) {
@@ -102,7 +104,10 @@ export async function runQaCycle({
   }
 
   // ── Entrega al sink (vía adapter) ───────────────────────────────────────────
-  const report = await adapter.publishEvidence({ work_item_id: workItemId }, { results });
+  const report = await adapter.publishEvidence(
+    { work_item_id: workItemId, feature_id: featureId, developer },
+    { results }
+  );
 
   return {
     ok: true,

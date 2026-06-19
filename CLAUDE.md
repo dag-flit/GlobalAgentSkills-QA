@@ -54,10 +54,16 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensió
     resuelve PATH/PATHEXT antes de lanzar: en Windows español cmd.exe no da ENOENT ni 9009).
     Un spec puede declarar **`skipCodes`** (exit que significa "error de herramienta, no
     hallazgo"): semgrep/bandit usan `[2]` → un `--config auto` sin red **se omite, no falla**.
-    Hallazgo real = exit 1 → fail.
+    Hallazgo real = exit 1 → fail. **bandit excluye directorios de test** (`*/tests/*`, `*/test/*`,
+    venvs): `assert` en pytest es B101 pero NO un hallazgo de seguridad — sin esto cualquier repo
+    Python rompía el gate de security por ruido. fnmatch normaliza `/`→`\` (vale en Windows).
   - `api.mjs`: colección Postman → `newman run`; OpenAPI → validación de contrato OFFLINE
     con `@redocly/cli lint` vía npx (local-first, sin servidor; ruleset por perfil
     `api.openapi_ruleset`, default `minimal`; degrada a skip si npx/red no resuelven).
+    **Detección/localización ampliada:** además de `openapi.yaml`/`swagger.yaml`, reconoce
+    cualquier `.yaml/.json` dentro de un directorio `openapi/` (p.ej. `contracts/openapi/
+    core-api.v1.yaml`) — contratos versionados con nombre propio. `findByPath` baja varios
+    niveles (no solo raíz+1) y elige determinista por orden lexicográfico.
   - Registrados en `RUNNERS`; el orquestador pasa `env` a los runners. Skills `db/security/api`.
   - qa-detect: `db` prefiere herramienta ejecutable (pgtap/prisma) sobre `migrations/` suelto.
   - Smoke test: `node runtime/smoke-test.mjs` → **15/15 OK** (casos 14-15 cubren las 6 capas).
@@ -155,8 +161,16 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ```bash
 node runtime/smoke-test.mjs        # verificar plumbing (debe dar 22/22 OK)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
+node runtime/cli.mjs [repoRoot] -w <HU> -f <FT> -d "<dev>"   # con trazabilidad por dev
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
 ```
+
+**Trazabilidad de evidencia (FT + dev):** el sink local escribe en
+`qa-evidence/<fecha>/WI-<HU>[__FT-<feature>][__<dev-slug>]/`. Los flags `--feature/-f` y
+`--developer/-d` (propagados cli→`runQaCycle`→`publishEvidence`→`writeLocalReport`) anexan el
+Feature padre y el desarrollador a la subcarpeta, y aparecen en el encabezado del reporte. El
+nombre del dev se sanea con `slug()` (tildes/ñ/espacios → ASCII-safe). Sin flags → `WI-<HU>`
+como antes. Así, corridas de distintos devs sobre la misma HU no se pisan.
 
 ## Documentación / guías
 

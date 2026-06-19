@@ -179,8 +179,19 @@ assert.strictEqual(cycleAdo.tracker, "azure-devops");
 assert.strictEqual(cycleAdo.preflight.ok, false);
 assert.deepStrictEqual(cycleAdo.results, []);              // no se corrió ningún runner
 
+// 9c. trazabilidad: --feature y --developer se anexan a la subcarpeta de evidencia (slug del dev),
+// para separar corridas de distintos devs sobre la misma HU/feature sin pisarse.
+const cycleTrace = await runQaCycle({
+  repoRoot: repoCycle, env: {}, workItemId: "10194", featureId: "10118", developer: "Abraham Cañon Vasquez",
+  exec: () => ({ code: 0, stdout: "", stderr: "" }),
+});
+const traceDir = path.basename(cycleTrace.report.dir);
+assert.strictEqual(traceDir, "WI-10194__FT-10118__Abraham-Canon-Vasquez"); // ñ/espacios saneados
+const traceMd = fs.readFileSync(cycleTrace.report.mdPath, "utf8");
+assert.ok(/Feature \(FT\):\*\* 10118/.test(traceMd) && /Desarrollador:\*\* Abraham/.test(traceMd));
+
 fs.rmSync(repoCycle, { recursive: true, force: true });
-ok("orquestador: local arranca directo sin preflight; ADO sin env se detiene en preflight");
+ok("orquestador: local arranca directo sin preflight; ADO sin env se detiene en preflight; FT+dev trazados en la carpeta");
 
 // 10. runners unit + e2e y ciclo completo static/unit/e2e local (criterio de salida F1)
 const repoFull = fs.mkdtempSync(path.join(os.tmpdir(), "qa-full-"));
@@ -429,6 +440,17 @@ assert.ok(capSecZero.calls[0].args.includes("auto")); // ruleset por defecto sin
 const secNoBin = runSecurityTests({ repoRoot: repoSecZero, exec: capturingExec(127).exec })[0];
 assert.strictEqual(secNoBin.status, "skip");
 fs.rmSync(repoSecZero, { recursive: true, force: true });
+// bandit (stack Python): escanea recursivo PERO excluye directorios de test → `assert` en
+// pytest (B101) no es un hallazgo de seguridad y no debe romper el gate por ruido.
+const repoBandit = fs.mkdtempSync(path.join(os.tmpdir(), "qa-bandit-"));
+fs.writeFileSync(path.join(repoBandit, "pyproject.toml"), "[project]\nname='x'");
+const capBandit = capturingExec(0);
+const banditRun = runSecurityTests({ repoRoot: repoBandit, exec: capBandit.exec })[0];
+assert.strictEqual(banditRun.metrics.tool, "bandit");            // python → bandit
+const banditArgs = capBandit.calls[0].args;
+assert.ok(banditArgs.includes("--exclude"));
+assert.ok(banditArgs.some((a) => /\*\/tests\/\*/.test(a)));      // tests fuera del scan
+fs.rmSync(repoBandit, { recursive: true, force: true });
 
 // api: postman → newman run <colección>; openapi → redocly lint (validación offline)
 const repoApi = fs.mkdtempSync(path.join(os.tmpdir(), "qa-api-"));
@@ -460,7 +482,21 @@ assert.ok(capOasStrict.calls[0].args.includes("--extends=recommended"));
 const oasFail = runApiTests({ repoRoot: repoOas, exec: capturingExec(1, { stdout: "Validation failed" }).exec })[0];
 assert.strictEqual(oasFail.status, "fail");
 fs.rmSync(repoOas, { recursive: true, force: true });
-ok("runners db/security/api: conexión desde env, target_profile ruleset, newman; openapi → redocly lint offline");
+// openapi versionado en carpeta `openapi/` (p.ej. contracts/openapi/core-api.v1.yaml): un
+// contrato real no siempre se llama openapi.yaml. qa-detect debe ENCENDER la capa por la ruta,
+// y el runner debe LOCALIZAR el spec aunque esté 2+ niveles abajo y con nombre propio.
+const repoOasV = fs.mkdtempSync(path.join(os.tmpdir(), "qa-oasv-"));
+fs.mkdirSync(path.join(repoOasV, "contracts", "openapi"), { recursive: true });
+fs.writeFileSync(path.join(repoOasV, "contracts", "openapi", "core-api.v1.yaml"), "openapi: 3.1.0");
+const detOasV = detectRepo({ repoRoot: repoOasV });
+assert.ok(detOasV.enabled.includes("api"));                       // detección por carpeta openapi/
+assert.strictEqual(detOasV.layers.api.tool, "openapi");
+const capOasV = capturingExec(0);
+const oasVRun = runApiTests({ repoRoot: repoOasV, exec: capOasV.exec })[0];
+assert.strictEqual(oasVRun.status, "pass");                       // spec localizada 2 niveles abajo
+assert.ok(capOasV.calls[0].args.some((a) => /core-api\.v1\.yaml$/.test(a)));
+fs.rmSync(repoOasV, { recursive: true, force: true });
+ok("runners db/security/api: conexión desde env, target_profile ruleset, newman; openapi → redocly lint offline (incl. contrato versionado en openapi/)");
 
 // 15. orquestador con cobertura de las 6 capas en un solo reporte
 const repoAll = fs.mkdtempSync(path.join(os.tmpdir(), "qa-all-"));
