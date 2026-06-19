@@ -1,15 +1,16 @@
 // index.mjs — factory: selecciona el adapter de tracker según el perfil resuelto.
-// getAdapter({ profile, env, repoRoot }) -> instancia de TrackerAdapter.
-// 'github' y 'jira' quedan registrados como pendientes (fase 5) sin romper la factory.
+// getAdapter({ profile, env, repoRoot, http }) -> instancia de TrackerAdapter.
 
 import { LocalAdapter } from "../../adapters/trackers/local/local-adapter.mjs";
 import { AzureDevOpsAdapter } from "../../adapters/trackers/azure-devops/azure-devops-adapter.mjs";
+import { GithubAdapter } from "../../adapters/trackers/github/github-adapter.mjs";
+import { JiraAdapter } from "../../adapters/trackers/jira/jira-adapter.mjs";
 
 const REGISTRY = {
   local: LocalAdapter,
   "azure-devops": AzureDevOpsAdapter,
-  // github: GithubAdapter,  // fase 5
-  // jira: JiraAdapter,      // fase 5
+  github: GithubAdapter,
+  jira: JiraAdapter,
 };
 
 export function getAdapter(ctx = {}) {

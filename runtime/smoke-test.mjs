@@ -474,6 +474,78 @@ assert.ok(/description: \S/.test(mdcText));               // frontmatter plegado
 fs.rmSync(outRoot, { recursive: true, force: true });
 ok("delivery build: plain/claude-code/cursor generados desde core/ (motor + envoltorios)");
 
-console.log(`\n== ${passed}/17 OK ==`);
+// 18. adapter GitHub con transporte inyectable (offline): contrato sobre Issues
+const repoGh = fs.mkdtempSync(path.join(os.tmpdir(), "qa-gh-"));
+fs.mkdirSync(path.join(repoGh, ".qa"), { recursive: true });
+fs.writeFileSync(path.join(repoGh, ".qa", "qa-project.profile.yaml"), "profile: github\n");
+const { profile: pGithub } = resolveProfile({ repoRoot: repoGh });
+assert.strictEqual(pGithub.tracker, "github");
+const ghEnv = { GITHUB_TOKEN: "t", GITHUB_REPOSITORY: "o/r" };
+const fakeGh = makeFakeAdo([
+  [(r) => r.method === "GET" && /\/repos\/o\/r\/issues\/5$/.test(r.url), () => ({ status: 200, json: { title: "Bug X", state: "open", body: "Scenario: login\n- [ ] valida sesión" } })],
+  [(r) => r.method === "GET" && /\/repos\/o\/r$/.test(r.url), () => ({ status: 200, json: { full_name: "o/r" } })],
+  [(r) => r.method === "POST" && /\/issues\/5\/comments$/.test(r.url), () => ({ status: 201, json: { id: 88 } })],
+  [(r) => r.method === "POST" && /\/repos\/o\/r\/issues$/.test(r.url), () => ({ status: 201, json: { number: 321 } })],
+  [(r) => r.method === "PATCH" && /\/issues\/5$/.test(r.url), () => ({ status: 200, json: { number: 5, state: "closed" } })],
+]);
+const gh = getAdapter({ profile: pGithub, env: ghEnv, repoRoot: repoGh, http: fakeGh.http });
+assert.strictEqual(gh.name, "github");
+assert.strictEqual(gh.capabilities().custom_fields, false);
+assert.ok((await gh.preflight()).ok);
+const ghWi = await gh.getWorkItem("5");
+assert.strictEqual(ghWi.title, "Bug X");
+assert.ok(ghWi.acceptance_criteria.some((a) => /valida sesión/.test(a)));
+const ghPub = await gh.publishEvidence({ work_item_id: "5" }, { results: [{ layer: "e2e", tc_id: "TC-1", status: "fail", narrative: "roto" }] });
+assert.strictEqual(ghPub.commentId, 88);
+assert.ok(fs.existsSync(ghPub.local.mdPath));
+const ghBug = await gh.createDefect({ title: "Falla", description: "pasos" });
+assert.strictEqual(ghBug, "321");
+const ghCreateBody = JSON.parse(fakeGh.calls.find((c) => c.method === "POST" && /\/repos\/o\/r\/issues$/.test(c.url)).body);
+assert.ok(ghCreateBody.labels.includes("qa-defect"));
+assert.strictEqual((await gh.closeArtifact("5", { passed: true })).state, "closed");
+assert.deepStrictEqual(await gh.updateCycle("5", { test_start_date: "x" }), { ok: true, noop: true, reason: "github: sin custom fields (usa labels)" });
+fs.rmSync(repoGh, { recursive: true, force: true });
+ok("adapter GitHub: preflight, getWorkItem/AC, comentario, createDefect+label, closeArtifact; updateCycle no-op");
+
+// 19. adapter Jira con transporte inyectable (offline): contrato sobre API v3
+const repoJira = fs.mkdtempSync(path.join(os.tmpdir(), "qa-jira-"));
+fs.mkdirSync(path.join(repoJira, ".qa"), { recursive: true });
+fs.writeFileSync(path.join(repoJira, ".qa", "qa-project.profile.yaml"), "profile: jira\n");
+const { profile: pJira } = resolveProfile({ repoRoot: repoJira });
+assert.strictEqual(pJira.tracker, "jira");
+const jiraEnv = { JIRA_BASE_URL: "https://acme.atlassian.net", JIRA_EMAIL: "qa@acme.io", JIRA_TOKEN: "t", JIRA_PROJECT_KEY: "QA" };
+const fakeJira = makeFakeAdo([
+  [(r) => r.method === "GET" && /\/rest\/api\/3\/myself$/.test(r.url), () => ({ status: 200, json: { accountId: "a1" } })],
+  [(r) => r.method === "GET" && /\/issue\/QA-5$/.test(r.url), () => ({ status: 200, json: { fields: { summary: "Login", status: { name: "In Progress" }, description: "- [ ] valida login" } } })],
+  [(r) => r.method === "POST" && /\/issue\/QA-5\/comment$/.test(r.url), () => ({ status: 201, json: { id: "c9" } })],
+  [(r) => r.method === "POST" && /\/issue\/QA-5\/transitions$/.test(r.url), () => ({ status: 204, json: null })],
+  [(r) => r.method === "PUT" && /\/issue\/QA-5$/.test(r.url), () => ({ status: 204, json: null })],
+  [(r) => r.method === "POST" && /\/rest\/api\/3\/issue$/.test(r.url), () => ({ status: 201, json: { key: "QA-42" } })],
+]);
+const jira = getAdapter({ profile: pJira, env: jiraEnv, repoRoot: repoJira, http: fakeJira.http });
+assert.strictEqual(jira.name, "jira");
+assert.strictEqual(jira.capabilities().custom_fields, true);
+assert.ok((await jira.preflight()).ok);
+const jWi = await jira.getWorkItem("QA-5");
+assert.strictEqual(jWi.title, "Login");
+assert.strictEqual(jWi.state, "In Progress");
+assert.ok(jWi.acceptance_criteria.some((a) => /valida login/.test(a)));
+const jPub = await jira.publishEvidence({ work_item_id: "QA-5" }, { results: [{ layer: "unit", status: "pass" }] });
+assert.strictEqual(jPub.commentId, "c9");
+const jBug = await jira.createDefect({ title: "Falla", description: "pasos" });
+assert.strictEqual(jBug, "QA-42");
+const jBugFields = JSON.parse(fakeJira.calls.find((c) => c.method === "POST" && /\/rest\/api\/3\/issue$/.test(c.url)).body).fields;
+assert.strictEqual(jBugFields.project.key, "QA");
+assert.strictEqual(jBugFields.issuetype.name, "Bug");
+const jUpd = await jira.updateCycle("QA-5", { test_start_date: "2026-06-18" });
+assert.strictEqual(jUpd.ok, true);
+const jUpdFields = JSON.parse(fakeJira.find("PUT", "/issue/QA-5").body).fields;
+assert.ok(Object.prototype.hasOwnProperty.call(jUpdFields, "customfield_10010"));
+const jClose = await jira.closeArtifact("QA-5", { passed: true });
+assert.strictEqual(jClose.transitionId, "31");
+fs.rmSync(repoJira, { recursive: true, force: true });
+ok("adapter Jira: preflight, getWorkItem/AC, comentario ADF, createDefect, updateCycle (customfield), transición");
+
+console.log(`\n== ${passed}/19 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

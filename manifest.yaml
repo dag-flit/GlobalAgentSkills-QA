@@ -1,8 +1,8 @@
 # Inventario REAL del qa-kit global — fuente de verdad para los instaladores.
 # Sin drift: lista solo lo que existe en el repo (corrige D2 del documento de arquitectura).
-version: "0.4.0-f4"
-description: "Multi-delivery (F4): CLI + empaquetador a plain/claude-code/cursor desde core/"
-status: "active"   # F0 andamiaje · F1 local-first · F2 ADO · F3 capas · F4 CLI+delivery.
+version: "1.0.0-f5"
+description: "Roadmap completo: local-first, 4 trackers (local/ADO/github/jira), 6 capas, multi-delivery"
+status: "complete"   # F0 andamiaje · F1 local-first · F2 ADO · F3 capas · F4 delivery · F5 github+jira.
 
 core:
   tracker_adapter:
@@ -42,13 +42,23 @@ adapters:
       - adapters/trackers/azure-devops/ado-rest.mjs               # F2: cliente REST (rutas/auth)
       - adapters/trackers/azure-devops/tc-match.mjs               # F2.2: tc_id → Task hijo (adjuntos)
       - adapters/trackers/azure-devops/README.md
-    # github: []   # fase 5
-    # jira: []     # fase 5
+    github:
+      - adapters/trackers/github/github-adapter.mjs               # F5: contrato sobre GitHub Issues
+      - adapters/trackers/github/github-rest.mjs
+      - adapters/trackers/github/README.md
+    jira:
+      - adapters/trackers/jira/jira-adapter.mjs                   # F5: contrato sobre Jira Cloud v3
+      - adapters/trackers/jira/jira-rest.mjs
+      - adapters/trackers/jira/README.md
+  shared:
+    - adapters/_shared/parse-ac.mjs                               # AC desde texto/markdown
 
 profiles:
   - profiles/default.yaml
   presets:
     - profiles/presets/azure-devops.yaml
+    - profiles/presets/github.yaml
+    - profiles/presets/jira.yaml
   overlays:
     - profiles/overlays/flit.yaml
 

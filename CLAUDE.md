@@ -54,7 +54,15 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar n
     (skills/agents + CLAUDE.md + bin), `cursor` (`.cursor/*.mdc` con `alwaysApply:false` + install.ps1).
     CLI: `node runtime/delivery/build.mjs dist [-t <target>]`. Salida en `dist/` (gitignored).
   - Smoke test: `node runtime/smoke-test.mjs` → **17/17 OK** (16 CLI real por subproceso, 17 build).
-- **F5 (Más trackers) — SIGUIENTE.** Ver "Próximas tareas".
+- **F5 (Más trackers) — HECHO.** Roadmap completo. Cuatro trackers: `local`, `azure-devops`,
+  `github`, `jira`. Mismo patrón que F2 (cliente REST con transporte **inyectable** → offline):
+  - `adapters/trackers/github/`: Issues. `custom_fields:false` (labels); `updateCycle` no-op;
+    adjuntos se listan en el comentario (sin subida binaria por REST). Preset `github.yaml`.
+  - `adapters/trackers/jira/`: API v3. `custom_fields:true`; comentarios/description en **ADF**;
+    `updateCycle`→`customfield_*`; `closeArtifact`→transición. Preset `jira.yaml`.
+  - `adapters/_shared/parse-ac.mjs`: AC desde texto/markdown (reuso github+jira).
+  - Registrados en la factory; cero cambios en skills/orquestador. CONTRACT actualizado.
+  - Smoke test: `node runtime/smoke-test.mjs` → **19/19 OK** (casos 18 github, 19 jira).
 
 ## Invariantes (no romper)
 
@@ -92,7 +100,7 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 17/17 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 19/19 OK)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
 ```
@@ -103,18 +111,18 @@ Las 4 tareas están **HECHAS** (ver "Estado actual"): `qa-detect`, runners `stat
 con `_runner-core` y ejecutor inyectable (D1 cerrada), y preflight condicional en el
 orquestador. Criterio de salida F1 cumplido y cubierto por el smoke test (10/10).
 
-## Próximas tareas (F5 — más trackers)
+## Roadmap completo — posibles siguientes (fuera del plan original)
 
-Con el contrato `tracker-adapter` y `capabilities()` ya diseñados para los 3 destinos:
+Las 6 fases (F0–F5) del documento de arquitectura están HECHAS. Ideas de continuación:
 
-1. **`github` adapter** (`adapters/trackers/github/`): comentarios en issue/PR + labels
-   (sin `custom_fields`). Preset `profiles/presets/github.yaml`. Registrar en la factory.
-2. **`jira` adapter**: transiciones + custom fields. Preset `profiles/presets/jira.yaml`.
-3. Reusar el patrón de F2: cliente REST con **transporte inyectable** → todo offline-testable.
-   Añadir su caso al smoke test. No se toca ninguna skill ni el orquestador.
+1. **Adjuntos reales** en github (release assets / git LFS) y jira (multipart `/attachments`).
+2. **Capa `api` OpenAPI**: integrar schemathesis/dredd como runner real.
+3. **Overlays de organización** adicionales (como `flit`) para otros equipos.
+4. **CI**: workflow que corra `node runtime/smoke-test.mjs` en cada push.
+5. **Empaquetado real de delivery** publicado (npm / release) desde `dist/`.
 
 > Patrón a respetar: `core/` es la fuente de verdad; `delivery/*` se GENERA desde core/.
-> Ejecución/transporte inyectables → todo se prueba offline.
+> Skills solo hablan con `tracker-adapter`; ejecución/transporte inyectables → todo offline.
 
 ## Estilo de trabajo con Claude Code
 

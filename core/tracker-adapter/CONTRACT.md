@@ -19,12 +19,12 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 
 Permite que una skill **omita** lo que el tracker no soporta sin romperse:
 
-| Capability | `local` | `azure-devops` | `github` (fase 5) | `jira` (fase 5) |
-|------------|:-------:|:--------------:|:-----------------:|:---------------:|
-| `attachments` | sí (a carpeta) | sí (REST) | sí (issue/PR) | sí |
-| `custom_fields` | **no** | sí (`Custom.*`) | no (labels) | sí (custom fields) |
-| `comments` | no | sí (Discussion) | sí (comments) | sí |
-| `states` | no | sí | sí (labels/close) | sí (transiciones) |
+| Capability | `local` | `azure-devops` | `github` | `jira` |
+|------------|:-------:|:--------------:|:--------:|:------:|
+| `attachments` | sí (a carpeta) | sí (REST) | no (se listan en el comentario) | sí |
+| `custom_fields` | **no** | sí (`Custom.*`) | **no** (labels) | sí (custom fields) |
+| `comments` | no | sí (Discussion) | sí (comments) | sí (ADF) |
+| `states` | no | sí | sí (open/close) | sí (transiciones) |
 | `network` | **no** | sí | sí | sí |
 
 Ejemplo: si `capabilities().custom_fields === false`, la skill **no** intenta escribir `TestStartDate`/`ReTest` — esos campos simplemente no existen en local.
@@ -49,9 +49,12 @@ El `sink` (definido por `evidence.sink` en el perfil) decide el destino:
 - `local` → render md/html en el repo.
 - `dual` (azure-devops) → resumen en Discussion del padre + adjuntos en Task-TC (fase 2).
 
-## Cómo añadir un tracker nuevo (fase 5)
+## Cómo añadir un tracker nuevo
 
-1. Crear `adapters/trackers/<nombre>/<nombre>-adapter.mjs` extendiendo `TrackerAdapter`.
+Trackers implementados: `local`, `azure-devops`, `github`, `jira`. Para añadir otro:
+
+1. Crear `adapters/trackers/<nombre>/<nombre>-adapter.mjs` extendiendo `TrackerAdapter`,
+   con su cliente REST de transporte **inyectable** (`<nombre>-rest.mjs`) → offline-testable.
 2. Implementar los 7 métodos + `capabilities()`.
 3. Registrarlo en `core/tracker-adapter/index.mjs` (`REGISTRY`).
 4. Crear `profiles/presets/<nombre>.yaml` con sus defaults.

@@ -1,0 +1,19 @@
+# Preset de tracker GitHub Issues. Se aplica sobre default.yaml.
+# Uso en el repo:  profile: github  +  env.GITHUB_TOKEN / GITHUB_REPOSITORY
+# Sin custom fields: GitHub usa labels. NO contiene convenciones de organización.
+
+tracker: github
+
+evidence:
+  sink: dual              # comentario en el issue + reporte local
+
+human_gates:
+  publish_test_cases: true
+  publish_bugs: true
+  approve_regression: true
+
+github:
+  defect_label: "qa-defect"      # label aplicada a los issues de defecto
+  certified_label: "qa-certified"
+  pass_state: closed             # estado del issue al cerrar un TC/Bug aprobado
+  fail_state: open
