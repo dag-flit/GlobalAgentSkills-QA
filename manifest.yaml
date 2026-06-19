@@ -9,8 +9,19 @@ core:
     - core/tracker-adapter/CONTRACT.md
     - core/tracker-adapter/tracker-adapter.mjs
     - core/tracker-adapter/index.mjs
-  agents: []          # se portan en F1 (qa-orchestrator, executor, generator, explorer, healer)
-  skills: []          # se portan en F1-F3 (runners + diseño)
+  agents:
+    qa-orchestrator:
+      - core/agents/qa-orchestrator/AGENT.md      # F1-T3: preflight condicional + ciclo (runtime/orchestrator)
+    # executor, generator, explorer, healer: se portan más adelante en F1
+  skills:
+    qa-detect:
+      - core/skills/qa-detect/SKILL.md            # F1-T1: detección de capas/stack (runtime/detect)
+    static-analysis-gate:
+      - core/skills/static-analysis-gate/SKILL.md # F1-T2: runner static → sink (runtime/runners)
+    unit-test-runner:
+      - core/skills/unit-test-runner/SKILL.md     # F1-T4: runner unit → sink (D1 cerrada)
+    e2e-runner:
+      - core/skills/e2e-runner/SKILL.md           # F1-T4: runner e2e → sink (ex playwright-runner)
   templates:
     local:
       - templates/local/README.md
@@ -37,6 +48,14 @@ runtime:
   profile:
     - runtime/profile/yaml-lite.mjs
     - runtime/profile/resolve-profile.mjs
+  detect:
+    - runtime/detect/qa-detect.mjs
+  runners:
+    - runtime/runners/_runner-core.mjs    # lógica común (resolveBin/exec/runLayer)
+    - runtime/runners/static-analysis.mjs
+    - runtime/runners/unit.mjs
+    - runtime/runners/e2e.mjs
+  orchestrator: runtime/orchestrator.mjs
   evidence:
     - runtime/evidence/local-sink.mjs
   smoke_test: runtime/smoke-test.mjs

@@ -16,8 +16,19 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar n
 
 - **F0 (Andamiaje) — HECHO.** Estructura `core/adapters/delivery/profiles`, perfiles por
   capas con deep-merge, contrato `tracker-adapter`, adapter `local` funcionando, sink local
-  (md+html), stub de ADO, manifest sin drift. Smoke test: `node runtime/smoke-test.mjs` → 6/6 OK.
-- **F1 (Local-first corre) — SIGUIENTE.** Ver "Próximas tareas".
+  (md+html), stub de ADO, manifest sin drift.
+- **F1 (Local-first corre) — HECHO.** Un `git clone` cualquiera corre `static/unit/e2e`
+  local y deja `qa-evidence/` sin PAT ni editar perfil. Piezas:
+  - **`qa-detect`** (`runtime/detect/qa-detect.mjs` + skill): detecta capas (señales + deps
+    de `package.json`) y stack/arquitectura; `resolveEnabledLayers` aplica override del perfil.
+  - **Runners** (`runtime/runners/`): `_runner-core.mjs` (lógica común) + `static`/`unit`/`e2e`,
+    cada uno detecta su herramienta, ejecuta (ejecutor **inyectable**) y emite el
+    `EvidenceObject` normalizado al sink. **D1 cerrada** (unit no toca `Custom.Evidences`).
+  - **Orquestador** (`runtime/orchestrator.mjs` `runQaCycle` + `core/agents/qa-orchestrator/`):
+    preflight **condicional** gated por `capabilities().network` (local arranca directo; ADO
+    sin env se detiene antes de runners) → detect → runners → sink.
+  - Smoke test: `node runtime/smoke-test.mjs` → **10/10 OK**.
+- **F2 (ADO como adapter) — SIGUIENTE.** Ver "Próximas tareas".
 
 ## Invariantes (no romper)
 
@@ -55,24 +66,26 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 6/6 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 10/10 OK)
 ```
 
-## Próximas tareas (F1 — en orden)
+## F1 — cerrada (resumen)
 
-1. **`qa-detect`** (`core/skills/qa-detect/` + helper en `runtime/`): detecta capas y stack
-   a partir del repo (playwright.config→e2e, *.csproj/pytest/vitest→unit, openapi→api,
-   migrations/pgtap→db, semgrep/auth→security, eslint/ruff→static). Hace que
-   `layers_enabled: auto` encienda solo lo que existe. Añadir caso al smoke test.
-2. **Portar `static-analysis-gate`** como primer runner de punta a punta: detecta herramienta,
-   ejecuta, y emite el **objeto de evidencia normalizado** al sink local. Sin ADO.
-3. **Preflight condicional** en el orquestador: el preflight de tracker solo corre si
-   `tracker != local`. Con `local`, arranca directo.
-4. Repetir el patrón del paso 2 con `unit` y `e2e` (corrigiendo de paso la deuda D1:
-   `unit-test-runner` no debe mencionar `Custom.Evidences`).
+Las 4 tareas están **HECHAS** (ver "Estado actual"): `qa-detect`, runners `static/unit/e2e`
+con `_runner-core` y ejecutor inyectable (D1 cerrada), y preflight condicional en el
+orquestador. Criterio de salida F1 cumplido y cubierto por el smoke test (10/10).
 
-Criterio de salida F1: `git clone` de un repo cualquiera + correr el kit → ejecuta
-`static/unit/e2e` y deja `qa-evidence/` sin PAT ni editar perfil.
+## Próximas tareas (F2 — ADO como adapter)
+
+1. **Implementar el adapter ADO real** en `adapters/trackers/azure-devops/`: cumplir los 7
+   métodos del contrato sobre el stub actual; `preflight()` valida `.env`+PAT+REST.
+2. **Sink dual opt-in:** `evidence.sink: dual` → resumen en Discussion del padre + adjuntos
+   en Task-TC. El runner NO cambia: sigue emitiendo el `EvidenceObject`; solo cambia el sink.
+3. **Fix D2 (drift del manifest)** ya encarrilado: mantener `manifest.yaml` reflejando solo
+   lo que existe conforme se porten piezas.
+4. Verificar paridad mínima vía overlay `flit` (no byte-a-byte — decisión §9.5 del doc).
+
+> Patrón a respetar: ningún runner habla con ADO; todo pasa por `tracker-adapter` + sink.
 
 ## Estilo de trabajo con Claude Code
 
