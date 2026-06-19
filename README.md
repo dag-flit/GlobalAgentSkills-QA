@@ -1,57 +1,86 @@
-# qa-kit — andamiaje global (F0)
+# qa-kit — QA local-first, sin sesgo
 
-Reescritura **local-first** y sin sesgo del kit QA. Esta entrega es **F0 (andamiaje)**:
-la estructura, los perfiles por capas, el contrato de tracker y el adapter `local` funcionando.
-Los runners y agentes se portan en F1–F3 (ver `qa-kit-arquitectura-global.md`).
+Kit de agentes/skills de QA **portable**. Cualquier repo corre
+`static · unit · e2e · db · security · api` y deja un reporte local, **sin PAT, sin Cursor
+y sin configurar nada**. El tracker es un plug-in opcional: `local` (default), `azure-devops`,
+`github` o `jira` — se cambia con una línea de perfil; ninguna skill se entera.
 
-## Principio
+> **Principio:** lo **local siempre funciona** sin red. El tracker remoto se enciende con un
+> overlay mínimo. Ningún runner habla con un tracker: todos emiten evidencia normalizada a un
+> *sink*, y el *sink* decide el destino.
 
-> Lo **local siempre funciona** sin red ni configuración. El tracker (ADO/GitHub/Jira) es un
-> plug-in opcional que se enciende con un overlay mínimo.
+Estado: **roadmap F0–F5 completo**. Smoke test **19/19**. Node 18+ (cross-platform, `.mjs`).
 
-## Estructura
-
-```
-qa-kit/
-├─ core/tracker-adapter/   # contrato único (CONTRACT.md + base Node + factory)
-├─ adapters/trackers/
-│  ├─ local/               # DEFAULT — sin red, evidencia md+html al repo
-│  └─ azure-devops/        # stub F0 (lógica MCP/REST se porta en F2)
-├─ profiles/
-│  ├─ default.yaml         # local-first: tracker=local, layers=auto
-│  ├─ presets/azure-devops.yaml
-│  └─ overlays/flit.yaml   # único lugar con literales FLIT
-├─ runtime/
-│  ├─ profile/             # cargador YAML + resolver (deep-merge)
-│  ├─ evidence/            # sink local (md+html)
-│  └─ smoke-test.mjs       # prueba el plumbing extremo a extremo
-├─ delivery/{cursor,claude-code,plain}/   # empaque por runtime (F4)
-├─ packs/dev-side/         # dev-tester (opcional, fuera del core)
-└─ manifest.yaml           # inventario real, sin drift
-```
-
-## Probar (sin instalar nada)
+## Inicio rápido (sin instalar nada)
 
 ```bash
-node runtime/smoke-test.mjs
+# correr el ciclo QA sobre un repo (detecta capas y ejecuta lo que el repo permita)
+node runtime/cli.mjs /ruta/al/repo
+
+# verificar el plumbing del kit
+node runtime/smoke-test.mjs        # → 19/19 OK
 ```
 
-Debe imprimir `6/6 OK`. Verifica: deep-merge, resolución de perfil (repo sin config → `local`),
-herencia `default ← azure-devops ← flit`, factory de tracker, preflight local sin red,
-y escritura del reporte local md+html.
+El CLI deja el reporte en `<repo>/qa-evidence/<fecha>/WI-<id>/report.{md,html}` y sale con
+código `0` (sin fallos) · `1` (con fallos) · `2` (preflight de tracker) · `3` (error).
 
-## Resolución de perfil
+## Qué detecta y corre
+
+`qa-detect` enciende **solo** las capas cuya herramienta existe; las demás se omiten con aviso.
+
+| Señal en el repo | Capa | Runner |
+|------------------|------|--------|
+| eslint / tsconfig / ruff / mypy | `static` | linter / type-checker |
+| vitest / jest / pytest / *.csproj | `unit` | runner de tests existentes |
+| playwright / cypress | `e2e` | suite end-to-end |
+| openapi·swagger / colección Postman | `api` | newman (postman) |
+| pgtap / prisma / migrations | `db` | checks de BD (conexión desde `env`) |
+| semgrep / bandit | `security` | escáner (según `target_profile`) |
+
+## Trackers (opcional)
+
+Por defecto `tracker: local` (sin red). Para publicar en un tracker, crea
+`.qa/qa-project.profile.yaml` con `profile: <preset>` y exporta las variables de entorno:
+
+| Tracker | `profile:` | Variables `env` |
+|---------|-----------|-----------------|
+| Azure DevOps | `azure-devops` (o `flit`) | `AZURE_ORG_URL`, `AZURE_PROJECT_NAME`, `AZURE_PAT`, `USER_REAL_EMAIL` |
+| GitHub Issues | `github` | `GITHUB_TOKEN`, `GITHUB_REPOSITORY` |
+| Jira Cloud | `jira` | `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_TOKEN`, `JIRA_PROJECT_KEY` |
+
+Resolución de perfil (deep-merge):
 
 ```
 default.yaml  ←  presets/<tracker>.yaml  ←  overlays/<org>.yaml  ←  qa-project.profile.yaml (repo)
 ```
 
-- Repo nuevo **sin** perfil → usa `default.yaml` (`tracker: local`, `layers: auto`) y corre ya.
-- Repo con `profile: azure-devops` → hereda el preset.
-- Repo con `profile: flit` → hereda `flit ← azure-devops ← default`.
+## Empaquetado multi-target
 
-## Qué sigue (F1)
+El mismo `core/` se **genera** para tres runtimes:
 
-`qa-detect` (auto-encender capas), portar los runners para que emitan el objeto de evidencia
-normalizado, y preflight condicional en el orquestador (`tracker != local`). Tras F1, cualquier
-repo corre `static/unit/e2e` local sin configuración.
+```bash
+node runtime/delivery/build.mjs dist            # plain + claude-code + cursor en dist/
+node runtime/delivery/build.mjs dist -t plain   # solo un target
+node dist/plain/bin/qa.mjs /ruta/al/repo        # el paquete generado corre standalone
+```
+
+## Estructura
+
+```
+core/tracker-adapter/   contrato único (CONTRACT.md + base Node + factory)
+core/skills/  core/agents/   docs portables de skills (runners) y del orquestador
+adapters/trackers/      local · azure-devops · github · jira    (cliente REST inyectable)
+profiles/               default.yaml · presets/* · overlays/flit.yaml
+runtime/                detect · runners · evidence (sink) · profile · orchestrator · cli
+delivery/               docs por target (salida real en dist/)
+docs/                   arquitectura + guías de uso/extensión
+manifest.yaml           inventario real, sin drift
+```
+
+## Documentación
+
+- **[docs/GUIA-USO.md](docs/GUIA-USO.md)** — cómo correr el kit, perfiles, capas, evidencia.
+- **[docs/GUIA-AGENTES-SKILLS.md](docs/GUIA-AGENTES-SKILLS.md)** — catálogo de agentes/skills/archivos.
+- **[docs/GUIA-EXTENSION.md](docs/GUIA-EXTENSION.md)** — añadir un runner, un tracker o un overlay.
+- **[docs/qa-kit-arquitectura-global.md](docs/qa-kit-arquitectura-global.md)** — diseño completo.
+- **[CLAUDE.md](CLAUDE.md)** — memoria del proyecto e invariantes (para Claude Code).

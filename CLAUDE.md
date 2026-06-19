@@ -5,12 +5,14 @@
 
 ## Qué es esto
 
-Reescritura **local-first y sin sesgo** de un kit de agentes/skills de QA que hoy está
+Reescritura **local-first y sin sesgo** de un kit de agentes/skills de QA que antes estaba
 acoplado a Azure DevOps + Cursor + Windows + dominio FLIT. Objetivo: que **cualquier
-proyecto** corra `static / unit / e2e / db / security` y deje un reporte local, **sin PAT,
-sin Cursor y sin configurar nada**. El tracker (ADO/GitHub/Jira) es un plug-in opcional.
+proyecto** corra `static / unit / e2e / db / security / api` y deje un reporte local, **sin
+PAT, sin Cursor y sin configurar nada**. El tracker es un plug-in opcional: hay cuatro
+(`local`, `azure-devops`, `github`, `jira`) y se cambia con una línea de perfil.
 
-Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar nada).
+Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensión en `docs/`.
+**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 19/19.
 
 ## Estado actual
 
@@ -72,8 +74,8 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar n
 2. **Las skills hablan solo con `tracker-adapter`**, nunca con ADO/GitHub/Jira directo.
 3. **Local-first:** ningún paso de red es obligatorio. Con `tracker: local` todo corre sin PAT.
 4. **Evidencia normalizada → sink.** Los runners emiten `{layer, tc_id, status, files, narrative}`
-   y el sink decide destino (`local` = md+html; `dual` = ADO en F2). Un runner nunca escribe
-   en un tracker directamente.
+   y el sink decide destino (`local` = md+html; `dual` = comentario+local en ADO/github/jira).
+   Un runner nunca escribe en un tracker directamente.
 5. **Node `.mjs`, cross-platform.** Sin PowerShell ni Python en `core/`/`runtime/`.
 6. **Tres targets de entrega** (Cursor, Claude Code, repo plano) comparten el mismo `core/`.
 7. **`dev-tester` está fuera del core** (en `packs/dev-side/`, opcional). No lo reincorpores.
@@ -84,12 +86,23 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar n
 
 ```
 core/tracker-adapter/   contrato (CONTRACT.md + base + factory)
-adapters/trackers/      local/ (default) , azure-devops/ (stub→F2)
-profiles/               default.yaml , presets/azure-devops.yaml , overlays/flit.yaml
-runtime/                profile/ (yaml-lite + resolver) , evidence/ (local sink) , smoke-test.mjs
-delivery/               cursor/ , claude-code/ , plain/   (empaque — F4)
+core/skills/            qa-detect , {static-analysis-gate,unit,e2e,db,security,api}-runner (docs)
+core/agents/            qa-orchestrator (doc)
+adapters/trackers/      local (default) , azure-devops , github , jira
+adapters/_shared/       parse-ac (AC desde texto/markdown)
+profiles/               default.yaml , presets/{azure-devops,github,jira}.yaml , overlays/flit.yaml
+runtime/profile/        yaml-lite + resolver (deep-merge)
+runtime/detect/         qa-detect (capas/stack)
+runtime/runners/        _runner-core + static/unit/e2e/db/security/api
+runtime/evidence/       sink local (md+html)
+runtime/orchestrator.mjs  runQaCycle (preflight condicional → detect → runners → sink)
+runtime/cli.mjs         entrypoint del kit
+runtime/delivery/build.mjs  empaqueta core/ a plain/claude-code/cursor
+runtime/smoke-test.mjs  prueba el plumbing extremo a extremo (19/19)
+docs/                   arquitectura + guías (GUIA-USO, GUIA-AGENTES-SKILLS, GUIA-EXTENSION)
+delivery/               docs por target (la salida real se genera en dist/)
 packs/dev-side/         dev-tester (opcional, no se instala)
-manifest.yaml           inventario real
+manifest.yaml           inventario real, sin drift
 ```
 
 ## Resolución de perfil
@@ -105,11 +118,12 @@ node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un rep
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
 ```
 
-## F1 — cerrada (resumen)
+## Documentación / guías
 
-Las 4 tareas están **HECHAS** (ver "Estado actual"): `qa-detect`, runners `static/unit/e2e`
-con `_runner-core` y ejecutor inyectable (D1 cerrada), y preflight condicional en el
-orquestador. Criterio de salida F1 cumplido y cubierto por el smoke test (10/10).
+- `docs/qa-kit-arquitectura-global.md` — plan/diseño completo (leer antes de tocar el core).
+- `docs/GUIA-USO.md` — cómo correr el kit, perfiles/trackers, capas, evidencia.
+- `docs/GUIA-AGENTES-SKILLS.md` — catálogo de agentes/skills/archivos y qué hace cada uno.
+- `docs/GUIA-EXTENSION.md` — cómo añadir un runner, un tracker o un overlay; cómo empaquetar.
 
 ## Roadmap completo — posibles siguientes (fuera del plan original)
 
@@ -127,5 +141,6 @@ Las 6 fases (F0–F5) del documento de arquitectura están HECHAS. Ideas de cont
 ## Estilo de trabajo con Claude Code
 
 - Cambios pequeños y verificables; corre el smoke test antes de dar una tarea por cerrada.
-- Si tocas el contrato `tracker-adapter`, actualiza `CONTRACT.md` y los dos adapters.
-- Al cerrar una fase, actualiza la sección "Estado actual" y "Próximas tareas" de este archivo.
+- Si tocas el contrato `tracker-adapter`, actualiza `CONTRACT.md` y los cuatro adapters.
+- Al cerrar una fase/tarea, actualiza "Estado actual" de este archivo y, si cambia el uso,
+  las guías en `docs/`. Mantén `manifest.yaml` sin drift.
