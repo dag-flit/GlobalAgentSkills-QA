@@ -1,9 +1,11 @@
-// smoke-test.mjs — verifica el plumbing F0 de punta a punta, sin red.
+// smoke-test.mjs — verifica el plumbing del kit de punta a punta, sin red.
 // Corre con: node runtime/smoke-test.mjs
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { resolveProfile, deepMerge } from "./profile/resolve-profile.mjs";
 import { getAdapter } from "../core/tracker-adapter/index.mjs";
 import { detectRepo, resolveEnabledLayers } from "./detect/qa-detect.mjs";
@@ -14,6 +16,10 @@ import { runDbTests } from "./runners/db.mjs";
 import { runSecurityTests } from "./runners/security.mjs";
 import { runApiTests } from "./runners/api.mjs";
 import { runQaCycle } from "./orchestrator.mjs";
+import { buildTarget, TARGETS } from "./delivery/build.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url)); // runtime/
+const REPO_ROOT = path.resolve(HERE, "..");
 
 let passed = 0;
 function ok(name) { console.log(`  ✅ ${name}`); passed++; }
@@ -432,6 +438,42 @@ assert.strictEqual(byLayer.api, "skip"); // openapi sin runner estándar
 fs.rmSync(repoAll, { recursive: true, force: true });
 ok("orquestador: cobertura de las 6 capas (static/unit/e2e/db/security pass, api openapi skip)");
 
-console.log(`\n== ${passed}/15 OK ==`);
+// 16. CLI real end-to-end: corre como subproceso sobre un repo vacío (ruta NO inyectada)
+const repoCli = fs.mkdtempSync(path.join(os.tmpdir(), "qa-cli-"));
+const cli = spawnSync(process.execPath, [path.join(HERE, "cli.mjs"), repoCli], { encoding: "utf8" });
+assert.strictEqual(cli.status, 0);                       // repo sin herramientas → todo skip, sin fallos
+assert.ok(/QA \(local\)/.test(cli.stdout));
+assert.ok(/Reporte:/.test(cli.stdout));
+assert.ok(fs.existsSync(path.join(repoCli, "qa-evidence")));
+fs.rmSync(repoCli, { recursive: true, force: true });
+ok("CLI: node cli.mjs <repo> corre el ciclo local y deja qa-evidence/ (exit 0)");
+
+// 17. empaquetador multi-target: genera plain/claude-code/cursor desde core/
+const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), "qa-delivery-"));
+const built = TARGETS.map((target) => buildTarget({ target, rootDir: REPO_ROOT, outDir: path.join(outRoot, target) }));
+assert.deepStrictEqual(built.map((b) => b.target), ["plain", "claude-code", "cursor"]);
+for (const b of built) {
+  assert.ok(b.files.length > 0);
+  // motor compartido presente y con imports intactos
+  assert.ok(fs.existsSync(path.join(b.outDir, "runtime", "orchestrator.mjs")));
+  assert.ok(fs.existsSync(path.join(b.outDir, "core", "tracker-adapter", "tracker-adapter.mjs")));
+  assert.ok(fs.existsSync(path.join(b.outDir, "profiles", "default.yaml")));
+}
+// envoltorios específicos por target
+const plain = path.join(outRoot, "plain");
+assert.ok(fs.existsSync(path.join(plain, "bin", "qa.mjs")));
+const cc = path.join(outRoot, "claude-code");
+assert.ok(fs.existsSync(path.join(cc, "skills", "qa-detect", "SKILL.md")));
+assert.ok(fs.existsSync(path.join(cc, "CLAUDE.md")));
+const cur = path.join(outRoot, "cursor");
+const mdc = path.join(cur, ".cursor", "skills", "qa-detect.mdc");
+assert.ok(fs.existsSync(mdc));
+const mdcText = fs.readFileSync(mdc, "utf8");
+assert.ok(/alwaysApply: false/.test(mdcText));           // regla NO global en el kit genérico
+assert.ok(/description: \S/.test(mdcText));               // frontmatter plegado resuelto
+fs.rmSync(outRoot, { recursive: true, force: true });
+ok("delivery build: plain/claude-code/cursor generados desde core/ (motor + envoltorios)");
+
+console.log(`\n== ${passed}/17 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

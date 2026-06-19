@@ -1,5 +1,11 @@
-# delivery/cursor — empaque para Cursor (fase 4)
+# delivery/cursor — empaque para Cursor (generado)
 
-Genera `.cursor/{agents,skills,rules,workflows}` desde `core/`. Aquí viven los detalles
-específicos de Cursor: archivos `.mdc` (con `globs`/`alwaysApply`) e `install.ps1`.
-El **contenido** no se edita aquí; se copia/transforma desde `core/`.
+No se edita a mano: se **genera** desde `core/` con `runtime/delivery/build.mjs`.
+
+```bash
+node runtime/delivery/build.mjs dist -t cursor
+```
+
+Produce `dist/cursor/` con `.cursor/{skills,agents}/<name>.mdc` (frontmatter → regla `.mdc`
+con `alwaysApply: false`, NO global en el kit genérico), `install.ps1` y el motor compartido.
+El **contenido** no se edita aquí; se transforma desde `core/`.

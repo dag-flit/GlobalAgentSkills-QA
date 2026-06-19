@@ -47,7 +47,14 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar n
   - Registrados en `RUNNERS`; el orquestador pasa `env` a los runners. Skills `db/security/api`.
   - qa-detect: `db` prefiere herramienta ejecutable (pgtap/prisma) sobre `migrations/` suelto.
   - Smoke test: `node runtime/smoke-test.mjs` → **15/15 OK** (casos 14-15 cubren las 6 capas).
-- **F4 (Multi-delivery) — SIGUIENTE.** Ver "Próximas tareas".
+- **F4 (Multi-delivery) — HECHO.** El mismo `core/` se empaqueta para los tres runtimes.
+  - `runtime/cli.mjs`: entrypoint real (`runQaCycle`); exit 0/1/2/3 según fallos/preflight/error.
+  - `runtime/delivery/build.mjs`: empaquetador. Copia el **motor** (core/runtime/adapters/profiles,
+    imports intactos) y añade envoltorios por target: `plain` (bin/qa.mjs+README), `claude-code`
+    (skills/agents + CLAUDE.md + bin), `cursor` (`.cursor/*.mdc` con `alwaysApply:false` + install.ps1).
+    CLI: `node runtime/delivery/build.mjs dist [-t <target>]`. Salida en `dist/` (gitignored).
+  - Smoke test: `node runtime/smoke-test.mjs` → **17/17 OK** (16 CLI real por subproceso, 17 build).
+- **F5 (Más trackers) — SIGUIENTE.** Ver "Próximas tareas".
 
 ## Invariantes (no romper)
 
@@ -85,7 +92,9 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 15/15 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 17/17 OK)
+node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
+node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
 ```
 
 ## F1 — cerrada (resumen)
@@ -94,15 +103,15 @@ Las 4 tareas están **HECHAS** (ver "Estado actual"): `qa-detect`, runners `stat
 con `_runner-core` y ejecutor inyectable (D1 cerrada), y preflight condicional en el
 orquestador. Criterio de salida F1 cumplido y cubierto por el smoke test (10/10).
 
-## Próximas tareas (F4 — multi-delivery)
+## Próximas tareas (F5 — más trackers)
 
-El mismo `core/` se empaqueta para cada runtime (decisión §9.1: los tres desde el inicio):
+Con el contrato `tracker-adapter` y `capabilities()` ya diseñados para los 3 destinos:
 
-1. **`delivery/claude-code`:** generar `SKILL.md`/`AGENTS.md` con frontmatter estándar desde
-   `core/skills` y `core/agents`. Hoy ya hay frontmatter; falta el empaquetador.
-2. **`delivery/plain`:** carpeta `qa-kit/` + CLI Node (`runQaCycle` como entrypoint).
-3. **`delivery/cursor`:** `.cursor/{agents,skills}`, `.mdc`, `install.ps1` (el target heredado).
-4. **Instalador multi-target** (`install.mjs -Target …`) + mantener manifest sin drift.
+1. **`github` adapter** (`adapters/trackers/github/`): comentarios en issue/PR + labels
+   (sin `custom_fields`). Preset `profiles/presets/github.yaml`. Registrar en la factory.
+2. **`jira` adapter**: transiciones + custom fields. Preset `profiles/presets/jira.yaml`.
+3. Reusar el patrón de F2: cliente REST con **transporte inyectable** → todo offline-testable.
+   Añadir su caso al smoke test. No se toca ninguna skill ni el orquestador.
 
 > Patrón a respetar: `core/` es la fuente de verdad; `delivery/*` se GENERA desde core/.
 > Ejecución/transporte inyectables → todo se prueba offline.

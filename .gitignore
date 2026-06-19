@@ -1,5 +1,6 @@
 node_modules/
 qa-evidence/
+dist/
 .env
 .env.*
 !.env*.example

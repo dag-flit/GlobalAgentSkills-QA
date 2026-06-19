@@ -1,8 +1,8 @@
 # Inventario REAL del qa-kit global — fuente de verdad para los instaladores.
 # Sin drift: lista solo lo que existe en el repo (corrige D2 del documento de arquitectura).
-version: "0.3.0-f3"
-description: "Cobertura de las 6 capas (F3) sobre ADO-adapter (F2) y local-first (F1)"
-status: "active"   # F0 andamiaje · F1 local-first · F2 adapter ADO · F3 db/security/api.
+version: "0.4.0-f4"
+description: "Multi-delivery (F4): CLI + empaquetador a plain/claude-code/cursor desde core/"
+status: "active"   # F0 andamiaje · F1 local-first · F2 ADO · F3 capas · F4 CLI+delivery.
 
 core:
   tracker_adapter:
@@ -67,14 +67,19 @@ runtime:
     - runtime/runners/security.mjs
     - runtime/runners/api.mjs
   orchestrator: runtime/orchestrator.mjs
+  cli: runtime/cli.mjs                   # F4: entrypoint del kit (runQaCycle)
+  delivery_build: runtime/delivery/build.mjs  # F4: empaqueta core/ a cada target
   evidence:
     - runtime/evidence/local-sink.mjs
   smoke_test: runtime/smoke-test.mjs
 
-delivery:        # fase 4 — empaque por runtime, generado desde core/
-  - delivery/cursor/README.md
-  - delivery/claude-code/README.md
-  - delivery/plain/README.md
+delivery:        # F4 — targets generados desde core/ por runtime/delivery/build.mjs
+  generator: runtime/delivery/build.mjs
+  targets: [plain, claude-code, cursor]   # salida en dist/<target>/ (no versionada)
+  docs:
+    - delivery/cursor/README.md
+    - delivery/claude-code/README.md
+    - delivery/plain/README.md
 
 packs:           # opcionales, NO instalados por defecto
   dev-side:
