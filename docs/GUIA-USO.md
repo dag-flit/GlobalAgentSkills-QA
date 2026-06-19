@@ -33,8 +33,16 @@ QA (local) — ✅ 3 · ❌ 1 · ⏭ 2
 Reporte: /ruta/al/repo/qa-evidence/2026-06-18/WI-local/report.md
 ```
 
-Opciones: `--work-item <id>` (etiqueta el reporte / WI padre), `--repo <dir>` (equivalente a
-pasar la ruta posicional).
+Opciones:
+- `--work-item <id>` / `-w` — etiqueta el reporte / HU bajo prueba.
+- `--feature <FT>` / `-f` — Feature (FT) padre; se anexa a la subcarpeta de evidencia.
+- `--developer "<nombre>"` / `-d` — desarrollador responsable; se anexa a la subcarpeta (saneado).
+- `--repo <dir>` / `-C` — equivalente a pasar la ruta posicional.
+
+```bash
+node runtime/cli.mjs /ruta/al/repo -w 10194 -f 10118 -d "Abraham Cañon Vasquez"
+# → qa-evidence/<fecha>/WI-10194__FT-10118__Abraham-Canon-Vasquez/report.md
+```
 
 ### Códigos de salida
 
@@ -81,7 +89,10 @@ testing:
 
 ## 3. Evidencia
 
-Siempre se escribe un reporte local en `<repo>/qa-evidence/<fecha>/WI-<id>/`:
+Siempre se escribe un reporte local en `<repo>/qa-evidence/<fecha>/WI-<id>/`. Si pasas
+`--feature`/`--developer`, la subcarpeta se vuelve `WI-<id>__FT-<feature>__<dev-slug>` (y el
+encabezado del reporte muestra Feature y Desarrollador). Así, corridas de distintos devs sobre
+la misma HU quedan en carpetas separadas y trazables, sin pisarse:
 
 - `report.md` — para diff / CI.
 - `report.html` — para abrir en el navegador.

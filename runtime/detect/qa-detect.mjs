@@ -241,6 +241,10 @@ function detectLayers(m, pyproject) {
     const signals = [];
     let tool = null;
     if (m.hasBase(/^(openapi|swagger)\.(ya?ml|json)$/)) { tool = "openapi"; signals.push("openapi/swagger"); }
+    // Un contrato no siempre se llama openapi.yaml: equipos lo versionan (core-api.v1.yaml)
+    // y lo guardan en una carpeta `openapi/` (p.ej. contracts/openapi/). Cualquier .yaml/.json
+    // que viva DENTRO de un directorio `openapi/` es, por convención, un contrato OpenAPI.
+    if (!tool && m.hasPath(/(^|\/)openapi\/[^/]+\.(ya?ml|json)$/)) { tool = "openapi"; signals.push("contrato en openapi/"); }
     if (m.hasBase(/\.postman_collection\.json$/)) { tool = tool || "postman"; signals.push("postman collection"); }
     layers.api = signals.length
       ? { enabled: true, tool, signals }

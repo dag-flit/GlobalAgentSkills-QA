@@ -32,8 +32,42 @@ function findInRootOrSubdir(repoRoot, isMatch) {
   return null;
 }
 
+// Camina el árbol (acotado, sin node_modules ni ocultos) y devuelve el primer archivo cuya
+// RUTA relativa posix satisface `isMatch`. Determinista (orden lexicográfico) para que dos
+// corridas elijan el mismo contrato. Usado por openapi, donde el spec puede estar 2+ niveles
+// abajo (contracts/openapi/core-api.v1.yaml) y no se llama openapi.yaml.
+function findByPath(repoRoot, isMatch, maxDepth = 4) {
+  const hits = [];
+  function walk(absDir, relDir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const rel = relDir ? `${relDir}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+        walk(path.join(absDir, e.name), rel, depth + 1);
+      } else if (e.isFile() && isMatch(rel.toLowerCase())) {
+        hits.push(rel);
+      }
+    }
+  }
+  walk(repoRoot, "", 0);
+  if (!hits.length) return null;
+  hits.sort();
+  return path.join(repoRoot, hits[0].split("/").join(path.sep));
+}
+
 const isPostman = (n) => /\.postman_collection\.json$/i.test(n);
-const isOpenapi = (n) => /^(openapi|swagger)\.(ya?ml|json)$/i.test(n);
+// Un contrato OpenAPI es: un archivo llamado openapi/swagger.(yaml|json) EN CUALQUIER carpeta,
+// o cualquier .yaml/.json que viva dentro de un directorio `openapi/` (alinea con qa-detect).
+const isOpenapiPath = (p) =>
+  /(^|\/)(openapi|swagger)\.(ya?ml|json)$/i.test(p) ||
+  /(^|\/)openapi\/[^/]+\.(ya?ml|json)$/i.test(p);
 
 const TOOLS = {
   postman: ({ repoRoot }) => {
@@ -48,8 +82,8 @@ const TOOLS = {
   // a skip. (Contract testing contra servidor vivo —schemathesis/dredd— es otro modo,
   // no local-first: requiere la API corriendo; queda fuera de este runner offline.)
   openapi: ({ repoRoot, profile }) => {
-    const spec = findInRootOrSubdir(repoRoot, isOpenapi);
-    if (!spec) return { skip: "contrato OpenAPI detectado pero no localizado en raíz/subcarpeta" };
+    const spec = findByPath(repoRoot, isOpenapiPath);
+    if (!spec) return { skip: "contrato OpenAPI detectado pero no localizado (openapi.yaml o */openapi/*.yaml)" };
     const ruleset = profile?.api?.openapi_ruleset || "minimal";
     return ["npx", "--yes", "@redocly/cli@latest", "lint", spec, `--extends=${ruleset}`, "--format=stylish"];
   },

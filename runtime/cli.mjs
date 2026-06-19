@@ -4,6 +4,10 @@
 // que usan los tres targets de entrega (plain/claude-code/cursor) vía bin/qa.mjs.
 //
 //   node runtime/cli.mjs [repoRoot] [--work-item <id>] [--repo <dir>]
+//                        [--feature <FT>] [--developer "<nombre>"]
+//
+// --feature/-f y --developer/-d se anexan a la subcarpeta de evidencia
+// (qa-evidence/<fecha>/WI-<id>__FT-<feature>__<dev>) para trazar corridas de distintos devs.
 
 import { fileURLToPath } from "node:url";
 import { runQaCycle } from "./orchestrator.mjs";
@@ -11,11 +15,13 @@ import { runQaCycle } from "./orchestrator.mjs";
 const ICONS = { pass: "✅", fail: "❌", skip: "⏭" };
 
 function parseArgs(argv) {
-  const out = { repoRoot: undefined, workItem: "local" };
+  const out = { repoRoot: undefined, workItem: "local", feature: undefined, developer: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--work-item" || a === "-w") out.workItem = argv[++i];
     else if (a === "--repo" || a === "-C") out.repoRoot = argv[++i];
+    else if (a === "--feature" || a === "-f") out.feature = argv[++i];
+    else if (a === "--developer" || a === "-d") out.developer = argv[++i];
     else if (!a.startsWith("-")) out.repoRoot = a;
   }
   return out;
@@ -37,6 +43,8 @@ export async function main(argv = process.argv.slice(2)) {
     repoRoot: args.repoRoot || process.cwd(),
     env: process.env,
     workItemId: args.workItem,
+    featureId: args.feature,
+    developer: args.developer,
   });
 
   if (summary.stopped === "preflight") {
