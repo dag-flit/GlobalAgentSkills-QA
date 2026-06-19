@@ -212,6 +212,145 @@ fs.rmSync(repoFull, { recursive: true, force: true });
 fs.rmSync(repoEmpty, { recursive: true, force: true });
 ok("unit/e2e runners + ciclo completo: static/unit/e2e corren local y dejan reporte sin PAT");
 
-console.log(`\n== ${passed}/10 OK ==`);
+// 11. adapter ADO real con transporte INYECTABLE (offline): contrato completo
+const repoAdo = fs.mkdtempSync(path.join(os.tmpdir(), "qa-ado-"));
+const creds = {
+  AZURE_ORG_URL: "https://dev.azure.com/acme",
+  AZURE_PROJECT_NAME: "Proj",
+  AZURE_PAT: "secret",
+  USER_REAL_EMAIL: "qa@acme.io",
+};
+function makeFakeAdo(routes) {
+  const calls = [];
+  const http = async (req) => {
+    calls.push(req);
+    for (const [match, respond] of routes) if (match(req)) return respond(req);
+    return { status: 200, json: {}, text: "{}" };
+  };
+  const find = (method, sub) => calls.find((c) => c.method === method && c.url.includes(sub));
+  return { http, calls, find };
+}
+const fake = makeFakeAdo([
+  [(r) => r.method === "GET" && r.url.includes("/_apis/projects/Proj"), () => ({ status: 200, json: { id: "p1" } })],
+  [(r) => r.method === "POST" && r.url.includes("/workItems/123/comments"), () => ({ status: 201, json: { id: 55 } })],
+  [(r) => r.method === "GET" && r.url.includes("/wit/workitems/123"), () => ({
+    status: 200,
+    json: { fields: {
+      "System.Title": "Login",
+      "System.State": "Resolved",
+      "Microsoft.VSTS.Common.AcceptanceCriteria": "<div>Scenario: login ok</div><br>- [ ] valida sesión",
+    } },
+  })],
+  [(r) => r.method === "POST" && r.url.includes("/wit/workitems/$Bug"), () => ({ status: 200, json: { id: 999 } })],
+  [(r) => r.method === "PATCH" && r.url.includes("/wit/workitems/77"), () => ({ status: 200, json: { id: 77 } })],
+  [(r) => r.method === "PATCH" && r.url.includes("/wit/workitems/123"), () => ({ status: 200, json: { id: 123 } })],
+]);
+const adoReal = getAdapter({ profile: pFlit, env: creds, repoRoot: repoAdo, http: fake.http });
+
+// 11a. preflight: con env + proyecto accesible → ok (valida vía REST, no solo presencia)
+const pfOk = await adoReal.preflight();
+assert.strictEqual(pfOk.ok, true);
+assert.ok(fake.find("GET", "/_apis/projects/Proj"));
+
+// 11b. getWorkItem: mapea título/estado y normaliza AC (HTML → líneas)
+const wiReal = await adoReal.getWorkItem("123");
+assert.strictEqual(wiReal.title, "Login");
+assert.strictEqual(wiReal.state, "Resolved");
+assert.ok(wiReal.acceptance_criteria.some((a) => /login ok/i.test(a)));
+assert.ok(wiReal.acceptance_criteria.some((a) => /valida sesión/i.test(a)));
+
+// 11c. publishEvidence dual: resumen en Discussion del padre + reporte local md/html
+const pubAdo = await adoReal.publishEvidence(
+  { work_item_id: "123" },
+  { results: [{ layer: "e2e", tc_id: "TC-1", status: "fail", narrative: "login roto" }] }
+);
+assert.strictEqual(pubAdo.sink, "dual");
+assert.strictEqual(pubAdo.parentCommentId, 55);
+assert.ok(fs.existsSync(pubAdo.local.mdPath) && fs.existsSync(pubAdo.local.htmlPath));
+assert.strictEqual(pubAdo.attachments.uploaded, 0); // sin files[] en este resultado
+const commentReq = fake.find("POST", "/workItems/123/comments");
+assert.ok(JSON.parse(commentReq.body).text.includes("Resumen QA"));
+
+// 11d. createDefect: crea Bug con el tag de la org (del overlay flit) y enlace al padre
+const bugId = await adoReal.createDefect({ title: "Falla login", description: "pasos", parent_id: "123" });
+assert.strictEqual(bugId, "999");
+const bugOps = JSON.parse(fake.find("POST", "/wit/workitems/$Bug").body);
+assert.ok(bugOps.some((o) => o.path === "/fields/System.Tags" && o.value === "QA_NOVEDAD"));
+assert.ok(bugOps.some((o) => o.path === "/relations/-"));
+
+// 11e. updateCycle: mapea clave lógica → ref Custom.* del perfil
+const upd = await adoReal.updateCycle("123", { test_start_date: "2026-06-18" });
+assert.strictEqual(upd.ok, true);
+const updOps = JSON.parse(fake.find("PATCH", "/wit/workitems/123").body);
+assert.ok(updOps.some((o) => o.path === "/fields/Custom.TestStartDate"));
+
+// 11f. closeArtifact: TC aprobado → estado pass del perfil (Closed)
+const closed = await adoReal.closeArtifact("77", { type: "tc", passed: true });
+assert.strictEqual(closed.ok, true);
+assert.strictEqual(closed.state, "Closed");
+
+// 11g. preflight degrada sin red real: 203 (PAT inválido) → ok:false con detalle
+const fake203 = makeFakeAdo([[(r) => r.url.includes("/_apis/projects/"), () => ({ status: 203, json: null })]]);
+const adoBadPat = getAdapter({ profile: pFlit, env: creds, repoRoot: repoAdo, http: fake203.http });
+const pfBad = await adoBadPat.preflight();
+assert.strictEqual(pfBad.ok, false);
+assert.ok(/PAT/.test(pfBad.detail));
+
+fs.rmSync(repoAdo, { recursive: true, force: true });
+ok("adapter ADO: preflight REST, getWorkItem/AC, publishEvidence dual, createDefect, updateCycle, closeArtifact");
+
+// 12. tc-match + adjuntos: el png se sube y se enlaza al Task hijo resuelto por mapping_file
+const repoAtt = fs.mkdtempSync(path.join(os.tmpdir(), "qa-att-"));
+fs.mkdirSync(path.join(repoAtt, ".qa", "mappings"), { recursive: true });
+fs.writeFileSync(path.join(repoAtt, ".qa", "mappings", "wi-123.json"), JSON.stringify({ "TC-1": 4567 }));
+const shot = path.join(repoAtt, "shot.png");
+fs.writeFileSync(shot, "PNGDATA");
+const fakeAtt = makeFakeAdo([
+  [(r) => r.method === "POST" && r.url.includes("/wit/attachments"), () => ({ status: 201, json: { id: "att1", url: "https://dev.azure.com/acme/_apis/wit/attachments/att1" } })],
+  [(r) => r.method === "PATCH" && r.url.includes("/wit/workitems/4567"), () => ({ status: 200, json: { id: 4567 } })],
+  [(r) => r.method === "POST" && r.url.includes("/workItems/123/comments"), () => ({ status: 201, json: { id: 1 } })],
+]);
+const adoAtt = getAdapter({ profile: pFlit, env: creds, repoRoot: repoAtt, http: fakeAtt.http });
+const pubAtt = await adoAtt.publishEvidence(
+  { work_item_id: "123" },
+  { results: [
+    { layer: "e2e", tc_id: "TC-1", status: "fail", narrative: "login roto", files: [shot] },
+    { layer: "e2e", tc_id: "TC-9", status: "fail", narrative: "sin task", files: [shot] }, // no mapeado → warn
+  ] }
+);
+assert.strictEqual(pubAtt.attachments.uploaded, 1);
+assert.strictEqual(pubAtt.attachments.linked[0].taskId, "4567");
+assert.strictEqual(pubAtt.attachments.linked[0].strategy, "mapping_file");
+assert.strictEqual(pubAtt.attachments.unmatched.length, 1);   // TC-9 degrada con aviso, no aborta
+assert.ok(fakeAtt.find("POST", "/wit/attachments"));
+const linkOps = JSON.parse(fakeAtt.find("PATCH", "/wit/workitems/4567").body);
+assert.ok(linkOps.some((o) => o.value && o.value.rel === "AttachedFile"));
+fs.rmSync(repoAtt, { recursive: true, force: true });
+ok("tc-match + adjuntos: png subido y enlazado al Task hijo (mapping_file); no-match degrada con aviso");
+
+// 13. ciclo dual end-to-end: orquestador con tracker ADO publica resumen en el padre (offline)
+const repoDual = fs.mkdtempSync(path.join(os.tmpdir(), "qa-dual-"));
+fs.writeFileSync(path.join(repoDual, "package.json"), JSON.stringify({ name: "demo", devDependencies: { eslint: "9" } }));
+fs.writeFileSync(path.join(repoDual, ".eslintrc.json"), "{}");
+const fakeDual = makeFakeAdo([
+  [(r) => r.method === "GET" && r.url.includes("/_apis/projects/Proj"), () => ({ status: 200, json: { id: "p1" } })],
+  [(r) => r.method === "POST" && r.url.includes("/workItems/123/comments"), () => ({ status: 201, json: { id: 77 } })],
+]);
+const cycleDual = await runQaCycle({
+  repoRoot: repoDual, env: creds, profile: pFlit, workItemId: "123",
+  exec: () => ({ code: 0, stdout: "", stderr: "" }), http: fakeDual.http,
+});
+assert.strictEqual(cycleDual.ok, true);
+assert.strictEqual(cycleDual.tracker, "azure-devops");
+assert.ok(cycleDual.preflight && cycleDual.preflight.ok);          // preflight REST corrió y pasó
+assert.strictEqual(cycleDual.report.sink, "dual");
+assert.strictEqual(cycleDual.report.parentCommentId, 77);          // resumen publicado en el padre
+assert.ok(fakeDual.find("POST", "/workItems/123/comments"));
+const staticDual = cycleDual.results.find((r) => r.layer === "static");
+assert.ok(staticDual && staticDual.status === "pass");
+fs.rmSync(repoDual, { recursive: true, force: true });
+ok("ciclo dual: orquestador ADO corre preflight REST + runners y publica resumen en el WI padre");
+
+console.log(`\n== ${passed}/13 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

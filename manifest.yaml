@@ -1,8 +1,8 @@
 # Inventario REAL del qa-kit global — fuente de verdad para los instaladores.
 # Sin drift: lista solo lo que existe en el repo (corrige D2 del documento de arquitectura).
-version: "0.0.1-f0"
-description: "Andamiaje F0 — local-first, tracker-adapter, perfiles por capas"
-status: "scaffold"   # F0: estructura + plumbing. Skills/runners se portan en F1-F3.
+version: "0.2.0-f2"
+description: "Local-first corre (F1) + ADO como adapter completo: dual sink + adjuntos (F2)"
+status: "active"   # F0 andamiaje · F1 runners+orquestador · F2 adapter ADO (REST, dual, tc-match).
 
 core:
   tracker_adapter:
@@ -32,7 +32,9 @@ adapters:
       - adapters/trackers/local/local-adapter.mjs
       - adapters/trackers/local/README.md
     azure-devops:
-      - adapters/trackers/azure-devops/azure-devops-adapter.mjs
+      - adapters/trackers/azure-devops/azure-devops-adapter.mjs   # F2: contrato real (transporte inyectable)
+      - adapters/trackers/azure-devops/ado-rest.mjs               # F2: cliente REST (rutas/auth)
+      - adapters/trackers/azure-devops/tc-match.mjs               # F2.2: tc_id → Task hijo (adjuntos)
       - adapters/trackers/azure-devops/README.md
     # github: []   # fase 5
     # jira: []     # fase 5

@@ -36,6 +36,7 @@ const RUNNERS = {
  * @param {object} [opts.profile]   perfil ya resuelto (si no, se resuelve del repo)
  * @param {string} [opts.workItemId]
  * @param {function} [opts.exec]    ejecutor inyectable para los runners (tests offline)
+ * @param {function} [opts.http]    transporte HTTP inyectable para el adapter (tests offline)
  * @returns {Promise<object>} resumen del ciclo
  */
 export async function runQaCycle({
@@ -44,9 +45,10 @@ export async function runQaCycle({
   profile,
   workItemId = "local",
   exec,
+  http,
 } = {}) {
   const resolvedProfile = profile || resolveProfile({ repoRoot }).profile;
-  const adapter = getAdapter({ profile: resolvedProfile, env, repoRoot });
+  const adapter = getAdapter({ profile: resolvedProfile, env, repoRoot, http });
   const caps = adapter.capabilities();
 
   // ── Preflight CONDICIONAL ──────────────────────────────────────────────────

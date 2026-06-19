@@ -28,7 +28,18 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar n
     preflight **condicional** gated por `capabilities().network` (local arranca directo; ADO
     sin env se detiene antes de runners) → detect → runners → sink.
   - Smoke test: `node runtime/smoke-test.mjs` → **10/10 OK**.
-- **F2 (ADO como adapter) — SIGUIENTE.** Ver "Próximas tareas".
+- **F2 (ADO como adapter) — HECHO.** `tracker: azure-devops` opera el contrato completo
+  contra la REST de ADO, con **transporte HTTP inyectable** (offline-testable). Piezas:
+  - `adapters/trackers/azure-devops/ado-rest.mjs`: cliente REST (único lugar con rutas/auth).
+  - `azure-devops-adapter.mjs`: los 7 métodos — preflight REST, getWorkItem (+AC HTML→líneas),
+    resolveRequirements, publishEvidence **dual** (resumen en Discussion del padre + reporte
+    local md/html + **adjuntos** png/webm por TC→Task), createDefect (Bug+tag+enlace),
+    updateCycle (clave lógica→`Custom.*`), closeArtifact (estado pass/fail del perfil).
+  - `tc-match.mjs`: resuelve `tc_id`→Task hijo (annotation/mapping_file/env_map/WIQL);
+    `on_unmatched: warn` degrada sin abortar.
+  - Orquestador: `runQaCycle` acepta `http` inyectable → ciclo dual end-to-end probado offline.
+  - D1/D2 cerradas. Smoke test: `node runtime/smoke-test.mjs` → **13/13 OK**.
+- **F3 (Cobertura de capas) — SIGUIENTE.** Ver "Próximas tareas".
 
 ## Invariantes (no romper)
 
@@ -66,7 +77,7 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 10/10 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 13/13 OK)
 ```
 
 ## F1 — cerrada (resumen)
@@ -75,17 +86,19 @@ Las 4 tareas están **HECHAS** (ver "Estado actual"): `qa-detect`, runners `stat
 con `_runner-core` y ejecutor inyectable (D1 cerrada), y preflight condicional en el
 orquestador. Criterio de salida F1 cumplido y cubierto por el smoke test (10/10).
 
-## Próximas tareas (F2 — ADO como adapter)
+## Próximas tareas (F3 — cobertura de capas)
 
-1. **Implementar el adapter ADO real** en `adapters/trackers/azure-devops/`: cumplir los 7
-   métodos del contrato sobre el stub actual; `preflight()` valida `.env`+PAT+REST.
-2. **Sink dual opt-in:** `evidence.sink: dual` → resumen en Discussion del padre + adjuntos
-   en Task-TC. El runner NO cambia: sigue emitiendo el `EvidenceObject`; solo cambia el sink.
-3. **Fix D2 (drift del manifest)** ya encarrilado: mantener `manifest.yaml` reflejando solo
-   lo que existe conforme se porten piezas.
-4. Verificar paridad mínima vía overlay `flit` (no byte-a-byte — decisión §9.5 del doc).
+Portar los runners restantes con el mismo patrón (`_runner-core` + detección + `EvidenceObject`):
+
+1. **`db`** (driver auto): checks genéricos; conexión SIEMPRE desde `env` (nunca hardcode).
+   Detectar `migrations/`/prisma/pgtap (ya lo hace qa-detect). Driver `postgres|mysql|sqlite`.
+2. **`security`** (`target_profile: api|web|generic`): OWASP API deja de ser el único modo.
+   Ejecutar semgrep/bandit detectado y emitir evidencia.
+3. **`api`**: contract testing desde openapi/colección Postman detectada.
+4. Añadir cada capa al registro `RUNNERS` del orquestador y su caso al smoke test.
 
 > Patrón a respetar: ningún runner habla con ADO; todo pasa por `tracker-adapter` + sink.
+> Ejecución/transporte inyectables → todo se prueba offline.
 
 ## Estilo de trabajo con Claude Code
 
