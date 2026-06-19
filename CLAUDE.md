@@ -43,9 +43,21 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensió
   - D1/D2 cerradas. Smoke test: `node runtime/smoke-test.mjs` → **13/13 OK**.
 - **F3 (Cobertura de capas) — HECHO.** Las 6 capas tienen runner. `_runner-core` ahora
   acepta specs como **función** (argv dinámico desde env/profile/archivos, o `{skip}`):
-  - `db.mjs`: pgtap/prisma; **conexión SIEMPRE desde env** (`DATABASE_URL`…), nunca cableada.
+  - `db.mjs`: pgtap/prisma; **conexión SIEMPRE desde env** (`DATABASE_URL`/`PG_CONNECTION`/
+    `DB_CONNECTION`), nunca cableada. `prisma` guarda igual que pgtap (sin conexión → skip
+    accionable). `_runner-core` **reenvía `env` al proceso hijo** → cualquier proyecto futuro
+    que exporte su conexión activa la capa sin tocar el kit.
   - `security.mjs`: semgrep/bandit; `security.target_profile` (api|web|generic) ajusta el ruleset.
-  - `api.mjs`: colección Postman → `newman run`; OpenAPI sin runner estándar → skip con aviso.
+    **ZERO-CONFIG:** la capa enciende en CUALQUIER repo (qa-detect elige bandit para Python,
+    semgrep `auto` para el resto) sin exigir `.semgrep.yml`; degrada a skip si el escáner no
+    está instalado. La detección de "no ejecutable" es **locale-independiente** (`isExecutable`
+    resuelve PATH/PATHEXT antes de lanzar: en Windows español cmd.exe no da ENOENT ni 9009).
+    Un spec puede declarar **`skipCodes`** (exit que significa "error de herramienta, no
+    hallazgo"): semgrep/bandit usan `[2]` → un `--config auto` sin red **se omite, no falla**.
+    Hallazgo real = exit 1 → fail.
+  - `api.mjs`: colección Postman → `newman run`; OpenAPI → validación de contrato OFFLINE
+    con `@redocly/cli lint` vía npx (local-first, sin servidor; ruleset por perfil
+    `api.openapi_ruleset`, default `minimal`; degrada a skip si npx/red no resuelven).
   - Registrados en `RUNNERS`; el orquestador pasa `env` a los runners. Skills `db/security/api`.
   - qa-detect: `db` prefiere herramienta ejecutable (pgtap/prisma) sobre `migrations/` suelto.
   - Smoke test: `node runtime/smoke-test.mjs` → **15/15 OK** (casos 14-15 cubren las 6 capas).
@@ -141,7 +153,7 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 19/19 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 22/22 OK)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
 ```
@@ -158,7 +170,9 @@ node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
 Las 6 fases (F0–F5) del documento de arquitectura están HECHAS. Ideas de continuación:
 
 1. **Adjuntos reales** en github (release assets / git LFS) y jira (multipart `/attachments`).
-2. **Capa `api` OpenAPI**: integrar schemathesis/dredd como runner real.
+2. **Capa `api` OpenAPI — modo servidor vivo**: la validación de contrato OFFLINE
+   (`redocly lint`) ya está HECHA. Falta el contract testing contra servidor vivo
+   (schemathesis/dredd), que NO es local-first (requiere la API corriendo + base URL).
 3. **Overlays de organización** adicionales (como `flit`) para otros equipos.
 4. **CI**: workflow que corra `node runtime/smoke-test.mjs` en cada push.
 5. **Empaquetado real de delivery** publicado (npm / release) desde `dist/`.

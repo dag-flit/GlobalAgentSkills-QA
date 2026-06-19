@@ -9,7 +9,7 @@ y sin configurar nada**. El tracker es un plug-in opcional: `local` (default), `
 > overlay mínimo. Ningún runner habla con un tracker: todos emiten evidencia normalizada a un
 > *sink*, y el *sink* decide el destino.
 
-Estado: **roadmap F0–F5 completo**. Smoke test **19/19**. Node 18+ (cross-platform, `.mjs`).
+Estado: **roadmap F0–F5 completo**. Smoke test **22/22**. Node 18+ (cross-platform, `.mjs`).
 
 ## Inicio rápido (sin instalar nada)
 
@@ -18,7 +18,7 @@ Estado: **roadmap F0–F5 completo**. Smoke test **19/19**. Node 18+ (cross-plat
 node runtime/cli.mjs /ruta/al/repo
 
 # verificar el plumbing del kit
-node runtime/smoke-test.mjs        # → 19/19 OK
+node runtime/smoke-test.mjs        # → 22/22 OK
 ```
 
 El CLI deja el reporte en `<repo>/qa-evidence/<fecha>/WI-<id>/report.{md,html}` y sale con
@@ -26,16 +26,17 @@ código `0` (sin fallos) · `1` (con fallos) · `2` (preflight de tracker) · `3
 
 ## Qué detecta y corre
 
-`qa-detect` enciende **solo** las capas cuya herramienta existe; las demás se omiten con aviso.
+`qa-detect` enciende las capas según el repo; lo que no se pueda ejecutar se omite con aviso
+(`skip`), nunca rompe el ciclo. `security` es **zero-config**: se intenta en todo repo.
 
 | Señal en el repo | Capa | Runner |
 |------------------|------|--------|
 | eslint / tsconfig / ruff / mypy | `static` | linter / type-checker |
 | vitest / jest / pytest / *.csproj | `unit` | runner de tests existentes |
 | playwright / cypress | `e2e` | suite end-to-end |
-| openapi·swagger / colección Postman | `api` | newman (postman) |
+| colección Postman / openapi·swagger | `api` | newman (postman) · `redocly lint` (validación de contrato OpenAPI, offline) |
 | pgtap / prisma / migrations | `db` | checks de BD (conexión desde `env`) |
-| semgrep / bandit | `security` | escáner (según `target_profile`) |
+| *(siempre)* | `security` | semgrep `auto` / bandit — **zero-config**; skip si el escáner no está instalado |
 
 ## Trackers (opcional)
 
