@@ -15,6 +15,7 @@ import { runE2eTests } from "./runners/e2e.mjs";
 import { runDbTests } from "./runners/db.mjs";
 import { runSecurityTests } from "./runners/security.mjs";
 import { runApiTests } from "./runners/api.mjs";
+import { defaultExec } from "./runners/_runner-core.mjs";
 import { runQaCycle } from "./orchestrator.mjs";
 import { buildTarget, TARGETS } from "./delivery/build.mjs";
 
@@ -114,8 +115,8 @@ const repoStatic = fs.mkdtempSync(path.join(os.tmpdir(), "qa-static-"));
 fs.writeFileSync(path.join(repoStatic, "package.json"), JSON.stringify({ name: "demo", devDependencies: { eslint: "9" } }));
 fs.writeFileSync(path.join(repoStatic, ".eslintrc.json"), "{}");
 
-// 8a. lint limpio → pass
-const evPass = runStaticAnalysis({ repoRoot: repoStatic, exec: () => ({ code: 0, stdout: "", stderr: "" }) });
+// 8a. lint limpio → pass  (los runners devuelven N resultados; repo plano → 1)
+const evPass = runStaticAnalysis({ repoRoot: repoStatic, exec: () => ({ code: 0, stdout: "", stderr: "" }) })[0];
 assert.strictEqual(evPass.layer, "static");
 assert.strictEqual(evPass.status, "pass");
 assert.strictEqual(evPass.metrics.tool, "eslint");
@@ -124,17 +125,17 @@ assert.strictEqual(evPass.metrics.tool, "eslint");
 const evFail = runStaticAnalysis({
   repoRoot: repoStatic,
   exec: () => ({ code: 1, stdout: "/src/a.ts: 'x' is defined but never used", stderr: "" }),
-});
+})[0];
 assert.strictEqual(evFail.status, "fail");
 assert.ok(evFail.narrative.includes("eslint") && evFail.narrative.includes("never used"));
 
 // 8c. binario no instalable → skip con aviso, no aborta
-const evSkipBin = runStaticAnalysis({ repoRoot: repoStatic, exec: () => ({ code: 127, stdout: "", stderr: "" }) });
+const evSkipBin = runStaticAnalysis({ repoRoot: repoStatic, exec: () => ({ code: 127, stdout: "", stderr: "" }) })[0];
 assert.strictEqual(evSkipBin.status, "skip");
 
 // 8d. repo sin linter → skip con razón de detección
 const repoNoStatic = fs.mkdtempSync(path.join(os.tmpdir(), "qa-nostatic-"));
-const evSkip = runStaticAnalysis({ repoRoot: repoNoStatic });
+const evSkip = runStaticAnalysis({ repoRoot: repoNoStatic })[0];
 assert.strictEqual(evSkip.status, "skip");
 assert.ok(/linter|type-checker/.test(evSkip.narrative));
 
@@ -188,20 +189,20 @@ fs.writeFileSync(path.join(repoFull, "vitest.config.ts"), "export default {}");
 fs.writeFileSync(path.join(repoFull, "playwright.config.ts"), "export default {}");
 
 // 10a. unit con fallos → fail; e2e limpio → pass (cada runner detecta su herramienta)
-const evUnitFail = runUnitTests({ repoRoot: repoFull, exec: () => ({ code: 1, stdout: "2 failed", stderr: "" }) });
+const evUnitFail = runUnitTests({ repoRoot: repoFull, exec: () => ({ code: 1, stdout: "2 failed", stderr: "" }) })[0];
 assert.strictEqual(evUnitFail.layer, "unit");
 assert.strictEqual(evUnitFail.status, "fail");
 assert.strictEqual(evUnitFail.metrics.tool, "vitest");
 assert.ok(evUnitFail.narrative.includes("vitest") && evUnitFail.narrative.includes("2 failed"));
-const evE2ePass = runE2eTests({ repoRoot: repoFull, exec: () => ({ code: 0, stdout: "", stderr: "" }) });
+const evE2ePass = runE2eTests({ repoRoot: repoFull, exec: () => ({ code: 0, stdout: "", stderr: "" }) })[0];
 assert.strictEqual(evE2ePass.layer, "e2e");
 assert.strictEqual(evE2ePass.status, "pass");
 assert.strictEqual(evE2ePass.metrics.tool, "playwright");
 
 // 10b. repo sin tests → unit/e2e se omiten con aviso (no abortan)
 const repoEmpty = fs.mkdtempSync(path.join(os.tmpdir(), "qa-empty-"));
-assert.strictEqual(runUnitTests({ repoRoot: repoEmpty }).status, "skip");
-assert.strictEqual(runE2eTests({ repoRoot: repoEmpty }).status, "skip");
+assert.strictEqual(runUnitTests({ repoRoot: repoEmpty })[0].status, "skip");
+assert.strictEqual(runE2eTests({ repoRoot: repoEmpty })[0].status, "skip");
 
 // 10c. ciclo completo local: static + unit + e2e corren y publican un solo reporte, sin PAT
 const cycleFull = await runQaCycle({
@@ -374,11 +375,11 @@ function capturingExec(code, out = {}) {
 // db: pgtap sin conexión → skip; con DATABASE_URL → corre con la conexión de env
 const repoDb = fs.mkdtempSync(path.join(os.tmpdir(), "qa-db-"));
 fs.writeFileSync(path.join(repoDb, "schema.pgtap"), "-- tests");
-const dbSkip = runDbTests({ repoRoot: repoDb, env: {} });
+const dbSkip = runDbTests({ repoRoot: repoDb, env: {} })[0];
 assert.strictEqual(dbSkip.status, "skip");
 assert.ok(/DATABASE_URL/.test(dbSkip.narrative)); // conexión nunca cableada
 const capDb = capturingExec(0);
-const dbPass = runDbTests({ repoRoot: repoDb, env: { DATABASE_URL: "postgres://u@h/db" }, exec: capDb.exec });
+const dbPass = runDbTests({ repoRoot: repoDb, env: { DATABASE_URL: "postgres://u@h/db" }, exec: capDb.exec })[0];
 assert.strictEqual(dbPass.status, "pass");
 assert.strictEqual(dbPass.metrics.tool, "pgtap");
 assert.ok(capDb.calls[0].args.includes("postgres://u@h/db"));
@@ -388,11 +389,11 @@ fs.rmSync(repoDb, { recursive: true, force: true });
 const repoSec = fs.mkdtempSync(path.join(os.tmpdir(), "qa-sec-"));
 fs.writeFileSync(path.join(repoSec, ".semgrep.yml"), "rules: []");
 const capSec = capturingExec(0);
-const secPass = runSecurityTests({ repoRoot: repoSec, profile: { security: { target_profile: "api" } }, exec: capSec.exec });
+const secPass = runSecurityTests({ repoRoot: repoSec, profile: { security: { target_profile: "api" } }, exec: capSec.exec })[0];
 assert.strictEqual(secPass.status, "pass");
 assert.strictEqual(secPass.metrics.tool, "semgrep");
 assert.ok(capSec.calls[0].args.includes("p/owasp-top-ten")); // target_profile=api
-const secFail = runSecurityTests({ repoRoot: repoSec, exec: capturingExec(1, { stdout: "1 finding" }).exec });
+const secFail = runSecurityTests({ repoRoot: repoSec, exec: capturingExec(1, { stdout: "1 finding" }).exec })[0];
 assert.strictEqual(secFail.status, "fail");
 fs.rmSync(repoSec, { recursive: true, force: true });
 
@@ -400,7 +401,7 @@ fs.rmSync(repoSec, { recursive: true, force: true });
 const repoApi = fs.mkdtempSync(path.join(os.tmpdir(), "qa-api-"));
 fs.writeFileSync(path.join(repoApi, "smoke.postman_collection.json"), "{}");
 const capApi = capturingExec(0);
-const apiPass = runApiTests({ repoRoot: repoApi, exec: capApi.exec });
+const apiPass = runApiTests({ repoRoot: repoApi, exec: capApi.exec })[0];
 assert.strictEqual(apiPass.status, "pass");
 assert.strictEqual(apiPass.metrics.tool, "postman");
 assert.strictEqual(capApi.calls[0].args[0], "run");
@@ -408,7 +409,7 @@ assert.ok(/postman_collection/.test(capApi.calls[0].args[1]));
 fs.rmSync(repoApi, { recursive: true, force: true });
 const repoOas = fs.mkdtempSync(path.join(os.tmpdir(), "qa-oas-"));
 fs.writeFileSync(path.join(repoOas, "openapi.yaml"), "openapi: 3.0.0");
-const oasSkip = runApiTests({ repoRoot: repoOas, exec: capturingExec(0).exec });
+const oasSkip = runApiTests({ repoRoot: repoOas, exec: capturingExec(0).exec })[0];
 assert.strictEqual(oasSkip.status, "skip");
 assert.strictEqual(oasSkip.metrics.tool, "openapi");
 fs.rmSync(repoOas, { recursive: true, force: true });
@@ -546,6 +547,101 @@ assert.strictEqual(jClose.transitionId, "31");
 fs.rmSync(repoJira, { recursive: true, force: true });
 ok("adapter Jira: preflight, getWorkItem/AC, comentario ADF, createDefect, updateCycle (customfield), transición");
 
-console.log(`\n== ${passed}/19 OK ==`);
+// 20. monorepo pnpm: herramientas en un subpaquete (frontend/), NO en la raíz.
+// qa-detect debe ubicar la cwd de cada capa en el subpaquete y el runner debe
+// resolver el binario de frontend/node_modules/.bin y EJECUTAR ahí (no en la raíz).
+const repoMono = fs.mkdtempSync(path.join(os.tmpdir(), "qa-mono-"));
+// raíz: solo workspace manifest, SIN deps de test ni node_modules
+fs.writeFileSync(path.join(repoMono, "package.json"), JSON.stringify({ name: "root", private: true, workspaces: ["frontend"] }));
+fs.writeFileSync(path.join(repoMono, "pnpm-workspace.yaml"), "packages:\n  - frontend\n");
+// subpaquete frontend/ con vitest + playwright + tsconfig y sus binarios locales
+const feDir = path.join(repoMono, "frontend");
+fs.mkdirSync(feDir, { recursive: true });
+fs.writeFileSync(path.join(feDir, "package.json"), JSON.stringify({
+  name: "@app/frontend", devDependencies: { vitest: "1", "@playwright/test": "1", typescript: "5" },
+}));
+fs.writeFileSync(path.join(feDir, "vitest.config.ts"), "export default {}");
+fs.writeFileSync(path.join(feDir, "playwright.config.ts"), "export default {}");
+fs.writeFileSync(path.join(feDir, "tsconfig.json"), "{}");
+// binarios "instalados" SOLO en frontend/node_modules/.bin (layout pnpm)
+const feBin = path.join(feDir, "node_modules", ".bin");
+fs.mkdirSync(feBin, { recursive: true });
+for (const b of ["vitest", "playwright", "tsc"]) fs.writeFileSync(path.join(feBin, b + (process.platform === "win32" ? ".cmd" : "")), "");
+
+// 20a. detección: capas encendidas con cwd = "frontend" (no la raíz)
+const monoDet = detectRepo({ repoRoot: repoMono });
+assert.deepStrictEqual(monoDet.enabled.sort(), ["e2e", "static", "unit"]);
+assert.strictEqual(monoDet.layers.unit.cwd, "frontend");
+assert.strictEqual(monoDet.layers.e2e.cwd, "frontend");
+assert.strictEqual(monoDet.layers.static.cwd, "frontend");
+
+// 20b. el runner ejecuta en frontend/ y resuelve el bin del subpaquete (no cae a PATH)
+const monoCalls = [];
+const monoExec = (cmd, args, ctx) => { monoCalls.push({ cmd, args, cwd: ctx.cwd }); return { code: 0, stdout: "", stderr: "" }; };
+const monoUnit = runUnitTests({ repoRoot: repoMono, detection: monoDet, exec: monoExec })[0];
+assert.strictEqual(monoUnit.status, "pass");
+assert.strictEqual(monoUnit.metrics.tool, "vitest");
+assert.strictEqual(monoCalls[0].cwd, feDir);                       // corrió EN frontend/
+assert.ok(monoCalls[0].cmd.includes(path.join("frontend", "node_modules", ".bin", "vitest"))); // bin del subpaquete
+fs.rmSync(repoMono, { recursive: true, force: true });
+ok("monorepo pnpm: qa-detect ubica cwd en el subpaquete y el runner resuelve/ejecuta el bin local de frontend/");
+
+// 21. monorepo de STACK MIXTO: una misma capa con DOS herramientas en dos paquetes.
+// unit = vitest (frontend, bin local) + dotnet-test (backend .NET, vía PATH). El kit debe
+// correr AMBAS (no solo la de mayor prioridad) → dos EvidenceObjects para la capa unit.
+const repoMix = fs.mkdtempSync(path.join(os.tmpdir(), "qa-mix-"));
+fs.writeFileSync(path.join(repoMix, "package.json"), JSON.stringify({ name: "root", private: true, workspaces: ["frontend"] }));
+const mxFe = path.join(repoMix, "frontend");
+fs.mkdirSync(path.join(mxFe, "node_modules", ".bin"), { recursive: true });
+fs.writeFileSync(path.join(mxFe, "package.json"), JSON.stringify({ name: "@app/web", devDependencies: { vitest: "1" } }));
+fs.writeFileSync(path.join(mxFe, "vitest.config.ts"), "export default {}");
+fs.writeFileSync(path.join(mxFe, "node_modules", ".bin", "vitest" + (process.platform === "win32" ? ".cmd" : "")), "");
+// backend .NET SIN package.json → su csproj de test pertenece al scope raíz
+const mxBe = path.join(repoMix, "backend", "Api.Tests");
+fs.mkdirSync(mxBe, { recursive: true });
+fs.writeFileSync(path.join(mxBe, "Api.Tests.csproj"), "<Project/>");
+
+const mixDet = detectRepo({ repoRoot: repoMix });
+const unitTools = mixDet.layers.unit.targets.map((t) => `${t.tool}@${t.cwd}`).sort();
+assert.deepStrictEqual(unitTools, ["dotnet-test@", "vitest@frontend"]); // DOS objetivos
+const mixCalls = [];
+const mixExec = (cmd, args, ctx) => { mixCalls.push({ cmd, args, cwd: ctx.cwd }); return { code: 0, stdout: "", stderr: "" }; };
+const mixUnit = runUnitTests({ repoRoot: repoMix, detection: mixDet, exec: mixExec });
+assert.strictEqual(mixUnit.length, 2);                                  // corre AMBOS
+assert.ok(mixUnit.every((r) => r.status === "pass"));
+const byTool = Object.fromEntries(mixUnit.map((r) => [r.metrics.tool, r]));
+assert.strictEqual(byTool.vitest.metrics.cwd, "frontend");
+assert.strictEqual(byTool["dotnet-test"].metrics.cwd, "");
+// vitest resuelto al bin del subpaquete y ejecutado ahí; dotnet vía PATH desde la raíz
+const vitestCall = mixCalls.find((c) => c.cmd.includes("vitest"));
+assert.ok(vitestCall.cmd.includes(path.join("frontend", "node_modules", ".bin", "vitest")));
+assert.strictEqual(vitestCall.cwd, mxFe);
+const dotnetCall = mixCalls.find((c) => c.cmd === "dotnet");
+assert.strictEqual(dotnetCall.cwd, repoMix);
+fs.rmSync(repoMix, { recursive: true, force: true });
+ok("monorepo mixto: la capa unit corre vitest@frontend Y dotnet-test@backend (N objetivos por capa)");
+
+// 22. ejecución con RUTA CON ESPACIOS (regresión Windows real): un binario en una carpeta
+// con espacios debe EJECUTARSE, no partirse en el shell ("C:\FLIT\TEST no se reconoce…").
+const spRoot = fs.mkdtempSync(path.join(os.tmpdir(), "qa sp-"));
+const spDir = path.join(spRoot, "with space");
+fs.mkdirSync(spDir, { recursive: true });
+const spOutExpected = "hello-kit";
+let spBin;
+if (process.platform === "win32") {
+  spBin = path.join(spDir, "hello.cmd");
+  fs.writeFileSync(spBin, `@echo ${spOutExpected}\r\n`);
+} else {
+  spBin = path.join(spDir, "hello.sh");
+  fs.writeFileSync(spBin, `#!/bin/sh\necho ${spOutExpected}\n`);
+  fs.chmodSync(spBin, 0o755);
+}
+const spRes = defaultExec(spBin, [], { cwd: spDir });
+assert.strictEqual(spRes.code, 0, "binario en ruta con espacios debe ejecutar (no 'no se reconoce')");
+assert.ok(spRes.stdout.includes(spOutExpected));
+fs.rmSync(spRoot, { recursive: true, force: true });
+ok("ejecución robusta: binario en ruta con espacios se ejecuta citado (regresión Windows)");
+
+console.log(`\n== ${passed}/22 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

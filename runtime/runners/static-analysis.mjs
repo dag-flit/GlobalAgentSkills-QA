@@ -13,7 +13,7 @@ const TOOLS = {
   mypy: ["mypy", "."],
 };
 
-/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject} */
+/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
 export function runStaticAnalysis(opts = {}) {
   return runLayer({ layer: "static", tools: TOOLS, ...opts });
 }

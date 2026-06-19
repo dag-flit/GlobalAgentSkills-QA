@@ -39,7 +39,7 @@ const TOOLS = {
   openapi: () => ({ skip: "contrato OpenAPI detectado: sin runner estándar instalado (pendiente schemathesis/dredd)" }),
 };
 
-/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject} */
+/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
 export function runApiTests(opts = {}) {
   return runLayer({ layer: "api", tools: TOOLS, ...opts });
 }

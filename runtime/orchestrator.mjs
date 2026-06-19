@@ -92,7 +92,8 @@ export async function runQaCycle({
       });
       continue;
     }
-    results.push(runner({ repoRoot, profile: resolvedProfile, env, detection, exec, workItemId }));
+    // Cada runner devuelve N EvidenceObjects (uno por objetivo/paquete en monorepo).
+    results.push(...runner({ repoRoot, profile: resolvedProfile, env, detection, exec, workItemId }));
   }
 
   // Capas omitidas por detección (herramienta ausente): al reporte, con su razón.

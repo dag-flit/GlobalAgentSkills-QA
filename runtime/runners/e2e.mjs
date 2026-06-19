@@ -11,7 +11,7 @@ const TOOLS = {
   cypress: ["cypress", "run"],
 };
 
-/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject} */
+/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
 export function runE2eTests(opts = {}) {
   return runLayer({ layer: "e2e", tools: TOOLS, ...opts });
 }

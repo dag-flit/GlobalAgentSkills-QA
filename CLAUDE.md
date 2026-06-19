@@ -12,7 +12,7 @@ PAT, sin Cursor y sin configurar nada**. El tracker es un plug-in opcional: hay 
 (`local`, `azure-devops`, `github`, `jira`) y se cambia con una línea de perfil.
 
 Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensión en `docs/`.
-**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 19/19.
+**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 22/22.
 
 ## Estado actual
 
@@ -65,6 +65,34 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensió
   - `adapters/_shared/parse-ac.mjs`: AC desde texto/markdown (reuso github+jira).
   - Registrados en la factory; cero cambios en skills/orquestador. CONTRACT actualizado.
   - Smoke test: `node runtime/smoke-test.mjs` → **19/19 OK** (casos 18 github, 19 jira).
+- **Monorepos + stack mixto (pnpm/yarn/npm workspaces) — HECHO.** El kit se adapta a CUALQUIER
+  layout: repo plano, o monorepo donde herramientas/binarios viven en subpaquetes, incluso con
+  **varias herramientas por capa** (p.ej. `unit` = vitest@frontend **y** dotnet-test@backend).
+  - **Contrato nuevo: N objetivos por capa.** `detection.layers[layer].targets` = lista de
+    `{tool, cwd, signals}`, un objetivo por (herramienta × paquete) donde la capa enciende.
+    `qa-detect` corre la detección **por paquete** (cada `package.json` define un scope; los
+    archivos sin `package.json` propio —p.ej. `*.csproj`— caen al scope ancestro). `collapseTargets`
+    descarta, para una MISMA herramienta, el cwd que es ancestro de otro (dep hoisteada en raíz +
+    config en subpaquete → conserva el subpaquete); herramientas distintas y paquetes hermanos
+    conviven. `layers[layer].tool`/`.cwd` siguen existiendo como **primario** (compat).
+  - **Los runners devuelven `EvidenceObject[]`** (uno por objetivo). `_runner-core.runTarget`
+    ejecuta cada objetivo en su `cwd`; `runLayer` mapea sobre `targets`. El orquestador hace
+    `results.push(...runner(...))`. La narrativa/`metrics` incluyen `tool` y `cwd` para distinguir
+    objetivos de la misma capa en el reporte. Specs función (api/db/security) reciben el `cwd` del
+    objetivo como base (buscan colección/escáner en ese paquete).
+  - **`resolveBin(repoRoot, tool, startDir)`** sube desde el `cwd` del objetivo hasta la raíz
+    mirando `node_modules/.bin` en cada nivel → cubre pnpm (bins por paquete) y npm/yarn
+    (hoisteados); cae a PATH solo si no aparece (pytest/dotnet/ruff/mypy).
+  - **Ejecución robusta (Windows + .NET):** `defaultExec` en Windows construye la línea de
+    comando **citada** y la pasa como string única a `shell:true` → una RUTA CON ESPACIOS
+    (p.ej. `C:\FLIT\TEST FLIT 2.0\…\vitest.cmd`) ya NO se parte (era el `"C:\FLIT\TEST" no se
+    reconoce…`). En POSIX sigue `shell:false` con array de args. El objetivo `dotnet-test`
+    **localiza el `.sln`** (o `*Tests.csproj`) y lo pasa explícito, así `dotnet test` no depende
+    de la cwd (el proyecto puede vivir en `backend/`). `summarize()` quita códigos ANSI.
+  - Validado E2E sobre repo real (monorepo pnpm + .NET): tsc@frontend ok, dotnet-test ok,
+    vitest@frontend corre (fail = test real), playwright@frontend ok.
+  - Smoke test: `node runtime/smoke-test.mjs` → **22/22 OK** (20 pnpm; 21 stack mixto unit
+    vitest+dotnet; 22 ruta con espacios — regresión Windows).
 
 ## Invariantes (no romper)
 

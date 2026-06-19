@@ -23,7 +23,7 @@ const ALL_LAYERS = ["static", "unit", "api", "e2e", "db", "security"];
 function scanRepo(repoRoot, { maxDepth = 5 } = {}) {
   const files = [];      // rutas relativas posix, p.ej. "tests/login.spec.ts"
   const dirs = new Set(); // nombres de carpeta vistos, p.ej. "migrations"
-  const pkgs = [];        // contenidos parseados de cada package.json
+  const pkgs = [];        // { dir, json } — package.json con SU directorio (monorepo-aware)
 
   function walk(absDir, relDir, depth) {
     if (depth > maxDepth) return;
@@ -46,7 +46,8 @@ function scanRepo(repoRoot, { maxDepth = 5 } = {}) {
         files.push(rel);
         if (name === "package.json") {
           try {
-            pkgs.push(JSON.parse(fs.readFileSync(path.join(absDir, name), "utf8")));
+            const json = JSON.parse(fs.readFileSync(path.join(absDir, name), "utf8"));
+            pkgs.push({ dir: relDir, json });
           } catch { /* package.json inválido: se ignora */ }
         }
       }
@@ -55,6 +56,78 @@ function scanRepo(repoRoot, { maxDepth = 5 } = {}) {
 
   walk(repoRoot, "", 0);
   return { files, dirs, pkgs };
+}
+
+// ── Soporte de workspaces (monorepo) ─────────────────────────────────────────
+// El kit debe adaptarse a CUALQUIER proyecto: repo plano, o monorepo pnpm/yarn/npm
+// donde las herramientas (vitest/playwright/tsc…) y sus binarios viven en un
+// subpaquete (p.ej. `frontend/`), NO en la raíz. Para eso cada capa registra el
+// directorio (`cwd`, relativo al repo) donde su herramienta fue detectada; el
+// runner ejecuta ahí y resuelve el binario subiendo hasta la raíz.
+
+function dirOf(p) {
+  const i = p.lastIndexOf("/");
+  return i >= 0 ? p.slice(0, i) : "";
+}
+
+// Conjunto de directorios que contienen un package.json (siempre incluye la raíz "").
+function pkgDirSetOf(pkgs) {
+  const set = new Set([""]);
+  for (const p of pkgs) set.add(p.dir);
+  return set;
+}
+
+// Paquete "dueño" de un directorio: el package.json más profundo que lo contiene.
+function ownerPkgDir(dir, pkgDirSet) {
+  let cur = dir;
+  while (true) {
+    if (pkgDirSet.has(cur)) return cur;
+    if (cur === "") return "";
+    cur = dirOf(cur);
+  }
+}
+
+// Recorta el scan a UN paquete: sus archivos (relativos al paquete) y su package.json.
+// Permite detectar capas "como si" el subpaquete fuese un repo aparte → ubica la capa.
+function buildScope(scan, scopeDir, pkgDirSet) {
+  const prefix = scopeDir ? scopeDir + "/" : "";
+  const files = [];
+  const dirs = new Set();
+  for (const f of scan.files) {
+    if (ownerPkgDir(dirOf(f), pkgDirSet) !== scopeDir) continue;
+    const rel = scopeDir ? f.slice(prefix.length) : f;
+    files.push(rel);
+    const segs = rel.split("/");
+    for (let i = 0; i < segs.length - 1; i++) dirs.add(segs[i].toLowerCase());
+  }
+  const pkgs = scan.pkgs.filter((p) => p.dir === scopeDir).map((p) => p.json);
+  return { files, dirs, pkgs };
+}
+
+function depthOf(dir) {
+  return dir === "" ? 0 : dir.split("/").length;
+}
+
+// ¿`a` es ancestro de `b`? (raíz "" es ancestro de todo lo demás)
+function isAncestorDir(a, b) {
+  if (a === b) return false;
+  if (a === "") return true;
+  return b.startsWith(a + "/");
+}
+
+// Colapsa objetivos: para una MISMA herramienta, descarta el cwd que es ancestro de
+// otro (dep hoisteada en raíz + config en subpaquete → conserva el subpaquete). Mantiene
+// herramientas DISTINTAS y paquetes hermanos (vitest@web + jest@api conviven).
+function collapseTargets(targets) {
+  const out = [];
+  for (const t of targets) {
+    const dominated = targets.some(
+      (o) => o !== t && o.tool === t.tool && isAncestorDir(t.cwd, o.cwd)
+    );
+    if (dominated) continue;
+    if (!out.some((o) => o.tool === t.tool && o.cwd === t.cwd)) out.push(t);
+  }
+  return out;
 }
 
 // ── Utilidades de coincidencia ───────────────────────────────────────────────
@@ -87,9 +160,9 @@ function makeMatchers({ files, dirs, pkgs }) {
   };
 }
 
-// lee pyproject.toml del root si existe, para detectar [tool.ruff] etc.
-function readPyproject(repoRoot) {
-  const p = path.join(repoRoot, "pyproject.toml");
+// lee pyproject.toml de un directorio si existe, para detectar [tool.ruff] etc.
+function readPyproject(dir) {
+  const p = path.join(dir, "pyproject.toml");
   try {
     return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
   } catch {
@@ -221,13 +294,50 @@ function detectLayers(m, pyproject) {
  */
 export function detectRepo({ repoRoot = process.cwd() } = {}) {
   const scan = scanRepo(repoRoot);
-  const m = makeMatchers(scan);
-  m.pkgsExist = scan.pkgs.length > 0;
+  // Detección GLOBAL (mezcla todos los package.json): determina qué capa enciende y
+  // con qué herramienta. Idéntica al comportamiento previo → no cambia la selección.
+  const jsonPkgs = scan.pkgs.map((p) => p.json);
+  const m = makeMatchers({ files: scan.files, dirs: scan.dirs, pkgs: jsonPkgs });
+  m.pkgsExist = jsonPkgs.length > 0;
   const pyproject = readPyproject(repoRoot);
 
   const layers = detectLayers(m, pyproject);
   const stack = detectStack(m);
   const architecture = detectArchitecture(stack, layers, scan.pkgs.length);
+
+  // Detección por PAQUETE (workspace-aware): "como si" cada subpaquete fuese un repo,
+  // para ubicar DÓNDE vive la herramienta de cada capa (monorepo pnpm/yarn/npm).
+  const pkgDirSet = pkgDirSetOf(scan.pkgs);
+  const scopeDetections = [...pkgDirSet].sort().map((dir) => {
+    const scope = buildScope(scan, dir, pkgDirSet);
+    const sm = makeMatchers(scope);
+    sm.pkgsExist = scope.pkgs.length > 0;
+    return { dir, layers: detectLayers(sm, readPyproject(path.join(repoRoot, dir))) };
+  });
+
+  // Cada capa encendida recibe `targets`: UN objetivo por (herramienta, paquete) donde la
+  // capa enciende. Así un monorepo corre `unit` en TODOS sus paquetes (vitest@frontend +
+  // dotnet-test@backend), no solo el de mayor prioridad. Repo plano → un único target cwd "".
+  for (const layer of ALL_LAYERS) {
+    if (!layers[layer].enabled) { layers[layer].cwd = ""; layers[layer].targets = []; continue; }
+    const raw = [];
+    for (const sd of scopeDetections) {
+      const ls = sd.layers[layer];
+      if (ls?.enabled) raw.push({ tool: ls.tool, cwd: sd.dir, signals: ls.signals || [] });
+    }
+    let targets = collapseTargets(raw);
+    // Defensa: si ningún scope reprodujo la detección global, usa el global como único target.
+    if (!targets.length) targets = [{ tool: layers[layer].tool, cwd: "", signals: layers[layer].signals || [] }];
+    targets.sort((a, b) => (a.cwd === b.cwd ? a.tool.localeCompare(b.tool) : a.cwd.localeCompare(b.cwd)));
+    layers[layer].targets = targets;
+    // Primario (compat con lectores de `.tool`/`.cwd`): el objetivo de la herramienta global,
+    // el más profundo; si no aparece, el primero.
+    const primary =
+      targets.filter((t) => t.tool === layers[layer].tool).sort((a, b) => depthOf(b.cwd) - depthOf(a.cwd))[0] ||
+      targets[0];
+    layers[layer].tool = primary.tool;
+    layers[layer].cwd = primary.cwd;
+  }
 
   const enabled = ALL_LAYERS.filter((l) => layers[l].enabled);
   const skipped = ALL_LAYERS

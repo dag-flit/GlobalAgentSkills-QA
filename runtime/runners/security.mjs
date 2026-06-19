@@ -18,7 +18,7 @@ const TOOLS = {
   bandit: () => ["bandit", "-r", "."],
 };
 
-/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject} */
+/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
 export function runSecurityTests(opts = {}) {
   return runLayer({ layer: "security", tools: TOOLS, ...opts });
 }

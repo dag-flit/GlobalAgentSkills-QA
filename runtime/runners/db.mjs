@@ -22,7 +22,7 @@ const TOOLS = {
   testcontainers: () => ({ skip: "testcontainers corre dentro de la capa unit, no como check db aparte" }),
 };
 
-/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject} */
+/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
 export function runDbTests(opts = {}) {
   return runLayer({ layer: "db", tools: TOOLS, ...opts });
 }
