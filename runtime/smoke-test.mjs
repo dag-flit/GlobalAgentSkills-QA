@@ -10,6 +10,9 @@ import { detectRepo, resolveEnabledLayers } from "./detect/qa-detect.mjs";
 import { runStaticAnalysis } from "./runners/static-analysis.mjs";
 import { runUnitTests } from "./runners/unit.mjs";
 import { runE2eTests } from "./runners/e2e.mjs";
+import { runDbTests } from "./runners/db.mjs";
+import { runSecurityTests } from "./runners/security.mjs";
+import { runApiTests } from "./runners/api.mjs";
 import { runQaCycle } from "./orchestrator.mjs";
 
 let passed = 0;
@@ -351,6 +354,84 @@ assert.ok(staticDual && staticDual.status === "pass");
 fs.rmSync(repoDual, { recursive: true, force: true });
 ok("ciclo dual: orquestador ADO corre preflight REST + runners y publica resumen en el WI padre");
 
-console.log(`\n== ${passed}/13 OK ==`);
+// helper: ejecutor que captura los argv (para verificar conexión/ruleset/colección)
+function capturingExec(code, out = {}) {
+  const calls = [];
+  const exec = (cmd, args) => {
+    calls.push({ cmd, args });
+    return { code, stdout: out.stdout || "", stderr: out.stderr || "" };
+  };
+  return { exec, calls };
+}
+
+// 14. runners db/security/api: argv dinámico desde env/profile/archivos
+// db: pgtap sin conexión → skip; con DATABASE_URL → corre con la conexión de env
+const repoDb = fs.mkdtempSync(path.join(os.tmpdir(), "qa-db-"));
+fs.writeFileSync(path.join(repoDb, "schema.pgtap"), "-- tests");
+const dbSkip = runDbTests({ repoRoot: repoDb, env: {} });
+assert.strictEqual(dbSkip.status, "skip");
+assert.ok(/DATABASE_URL/.test(dbSkip.narrative)); // conexión nunca cableada
+const capDb = capturingExec(0);
+const dbPass = runDbTests({ repoRoot: repoDb, env: { DATABASE_URL: "postgres://u@h/db" }, exec: capDb.exec });
+assert.strictEqual(dbPass.status, "pass");
+assert.strictEqual(dbPass.metrics.tool, "pgtap");
+assert.ok(capDb.calls[0].args.includes("postgres://u@h/db"));
+fs.rmSync(repoDb, { recursive: true, force: true });
+
+// security: semgrep; target_profile ajusta el ruleset; hallazgos → fail
+const repoSec = fs.mkdtempSync(path.join(os.tmpdir(), "qa-sec-"));
+fs.writeFileSync(path.join(repoSec, ".semgrep.yml"), "rules: []");
+const capSec = capturingExec(0);
+const secPass = runSecurityTests({ repoRoot: repoSec, profile: { security: { target_profile: "api" } }, exec: capSec.exec });
+assert.strictEqual(secPass.status, "pass");
+assert.strictEqual(secPass.metrics.tool, "semgrep");
+assert.ok(capSec.calls[0].args.includes("p/owasp-top-ten")); // target_profile=api
+const secFail = runSecurityTests({ repoRoot: repoSec, exec: capturingExec(1, { stdout: "1 finding" }).exec });
+assert.strictEqual(secFail.status, "fail");
+fs.rmSync(repoSec, { recursive: true, force: true });
+
+// api: postman → newman run <colección>; openapi solo → skip con aviso
+const repoApi = fs.mkdtempSync(path.join(os.tmpdir(), "qa-api-"));
+fs.writeFileSync(path.join(repoApi, "smoke.postman_collection.json"), "{}");
+const capApi = capturingExec(0);
+const apiPass = runApiTests({ repoRoot: repoApi, exec: capApi.exec });
+assert.strictEqual(apiPass.status, "pass");
+assert.strictEqual(apiPass.metrics.tool, "postman");
+assert.strictEqual(capApi.calls[0].args[0], "run");
+assert.ok(/postman_collection/.test(capApi.calls[0].args[1]));
+fs.rmSync(repoApi, { recursive: true, force: true });
+const repoOas = fs.mkdtempSync(path.join(os.tmpdir(), "qa-oas-"));
+fs.writeFileSync(path.join(repoOas, "openapi.yaml"), "openapi: 3.0.0");
+const oasSkip = runApiTests({ repoRoot: repoOas, exec: capturingExec(0).exec });
+assert.strictEqual(oasSkip.status, "skip");
+assert.strictEqual(oasSkip.metrics.tool, "openapi");
+fs.rmSync(repoOas, { recursive: true, force: true });
+ok("runners db/security/api: conexión desde env, target_profile ruleset, newman; openapi degrada con aviso");
+
+// 15. orquestador con cobertura de las 6 capas en un solo reporte
+const repoAll = fs.mkdtempSync(path.join(os.tmpdir(), "qa-all-"));
+fs.writeFileSync(path.join(repoAll, "package.json"), JSON.stringify({
+  name: "demo", devDependencies: { eslint: "9", vitest: "1", "@playwright/test": "1" },
+}));
+fs.writeFileSync(path.join(repoAll, ".eslintrc.json"), "{}");
+fs.writeFileSync(path.join(repoAll, "vitest.config.ts"), "export default {}");
+fs.writeFileSync(path.join(repoAll, "playwright.config.ts"), "export default {}");
+fs.writeFileSync(path.join(repoAll, "schema.pgtap"), "-- tests");
+fs.writeFileSync(path.join(repoAll, ".semgrep.yml"), "rules: []");
+fs.writeFileSync(path.join(repoAll, "openapi.yaml"), "openapi: 3.0.0");
+const cycleAll = await runQaCycle({
+  repoRoot: repoAll, env: { DATABASE_URL: "postgres://u@h/db" }, workItemId: "ALL",
+  exec: () => ({ code: 0, stdout: "", stderr: "" }),
+});
+assert.strictEqual(cycleAll.ok, true);
+const byLayer = Object.fromEntries(cycleAll.results.map((r) => [r.layer, r.status]));
+for (const l of ["static", "unit", "e2e", "db", "security"]) {
+  assert.strictEqual(byLayer[l], "pass", `capa ${l} debería pasar en el ciclo completo`);
+}
+assert.strictEqual(byLayer.api, "skip"); // openapi sin runner estándar
+fs.rmSync(repoAll, { recursive: true, force: true });
+ok("orquestador: cobertura de las 6 capas (static/unit/e2e/db/security pass, api openapi skip)");
+
+console.log(`\n== ${passed}/15 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

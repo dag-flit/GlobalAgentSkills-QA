@@ -39,7 +39,15 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`** (léelo antes de tocar n
     `on_unmatched: warn` degrada sin abortar.
   - Orquestador: `runQaCycle` acepta `http` inyectable → ciclo dual end-to-end probado offline.
   - D1/D2 cerradas. Smoke test: `node runtime/smoke-test.mjs` → **13/13 OK**.
-- **F3 (Cobertura de capas) — SIGUIENTE.** Ver "Próximas tareas".
+- **F3 (Cobertura de capas) — HECHO.** Las 6 capas tienen runner. `_runner-core` ahora
+  acepta specs como **función** (argv dinámico desde env/profile/archivos, o `{skip}`):
+  - `db.mjs`: pgtap/prisma; **conexión SIEMPRE desde env** (`DATABASE_URL`…), nunca cableada.
+  - `security.mjs`: semgrep/bandit; `security.target_profile` (api|web|generic) ajusta el ruleset.
+  - `api.mjs`: colección Postman → `newman run`; OpenAPI sin runner estándar → skip con aviso.
+  - Registrados en `RUNNERS`; el orquestador pasa `env` a los runners. Skills `db/security/api`.
+  - qa-detect: `db` prefiere herramienta ejecutable (pgtap/prisma) sobre `migrations/` suelto.
+  - Smoke test: `node runtime/smoke-test.mjs` → **15/15 OK** (casos 14-15 cubren las 6 capas).
+- **F4 (Multi-delivery) — SIGUIENTE.** Ver "Próximas tareas".
 
 ## Invariantes (no romper)
 
@@ -77,7 +85,7 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 13/13 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 15/15 OK)
 ```
 
 ## F1 — cerrada (resumen)
@@ -86,18 +94,17 @@ Las 4 tareas están **HECHAS** (ver "Estado actual"): `qa-detect`, runners `stat
 con `_runner-core` y ejecutor inyectable (D1 cerrada), y preflight condicional en el
 orquestador. Criterio de salida F1 cumplido y cubierto por el smoke test (10/10).
 
-## Próximas tareas (F3 — cobertura de capas)
+## Próximas tareas (F4 — multi-delivery)
 
-Portar los runners restantes con el mismo patrón (`_runner-core` + detección + `EvidenceObject`):
+El mismo `core/` se empaqueta para cada runtime (decisión §9.1: los tres desde el inicio):
 
-1. **`db`** (driver auto): checks genéricos; conexión SIEMPRE desde `env` (nunca hardcode).
-   Detectar `migrations/`/prisma/pgtap (ya lo hace qa-detect). Driver `postgres|mysql|sqlite`.
-2. **`security`** (`target_profile: api|web|generic`): OWASP API deja de ser el único modo.
-   Ejecutar semgrep/bandit detectado y emitir evidencia.
-3. **`api`**: contract testing desde openapi/colección Postman detectada.
-4. Añadir cada capa al registro `RUNNERS` del orquestador y su caso al smoke test.
+1. **`delivery/claude-code`:** generar `SKILL.md`/`AGENTS.md` con frontmatter estándar desde
+   `core/skills` y `core/agents`. Hoy ya hay frontmatter; falta el empaquetador.
+2. **`delivery/plain`:** carpeta `qa-kit/` + CLI Node (`runQaCycle` como entrypoint).
+3. **`delivery/cursor`:** `.cursor/{agents,skills}`, `.mdc`, `install.ps1` (el target heredado).
+4. **Instalador multi-target** (`install.mjs -Target …`) + mantener manifest sin drift.
 
-> Patrón a respetar: ningún runner habla con ADO; todo pasa por `tracker-adapter` + sink.
+> Patrón a respetar: `core/` es la fuente de verdad; `delivery/*` se GENERA desde core/.
 > Ejecución/transporte inyectables → todo se prueba offline.
 
 ## Estilo de trabajo con Claude Code

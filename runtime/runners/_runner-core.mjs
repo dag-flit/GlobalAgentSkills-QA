@@ -59,6 +59,7 @@ export function runLayer({
   tools,
   repoRoot = process.cwd(),
   profile = {},
+  env = {},
   detection,
   exec = defaultExec,
   workItemId,
@@ -78,7 +79,21 @@ export function runLayer({
     return { ...base, status: "skip", narrative: `herramienta '${tool}' sin invocación soportada`, metrics: { tool } };
   }
 
-  const [name, ...args] = spec;
+  // El spec puede ser un argv fijo (array) o una función que lo construye desde el
+  // contexto (env/profile/detección). La función puede devolver { skip: "razón" } para
+  // omitir con aviso (p.ej. falta una conexión que NUNCA se cablea).
+  let argv;
+  if (typeof spec === "function") {
+    const resolved = spec({ repoRoot, profile, env, detection: det, info, tool });
+    if (!resolved || resolved.skip) {
+      return { ...base, status: "skip", narrative: (resolved && resolved.skip) || `'${tool}' sin configuración suficiente`, metrics: { tool } };
+    }
+    argv = Array.isArray(resolved) ? resolved : resolved.argv;
+  } else {
+    argv = spec;
+  }
+
+  const [name, ...args] = argv;
   const bin = resolveBin(repoRoot, name);
   const out = exec(bin, args, { cwd: repoRoot });
 

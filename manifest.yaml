@@ -1,8 +1,8 @@
 # Inventario REAL del qa-kit global — fuente de verdad para los instaladores.
 # Sin drift: lista solo lo que existe en el repo (corrige D2 del documento de arquitectura).
-version: "0.2.0-f2"
-description: "Local-first corre (F1) + ADO como adapter completo: dual sink + adjuntos (F2)"
-status: "active"   # F0 andamiaje · F1 runners+orquestador · F2 adapter ADO (REST, dual, tc-match).
+version: "0.3.0-f3"
+description: "Cobertura de las 6 capas (F3) sobre ADO-adapter (F2) y local-first (F1)"
+status: "active"   # F0 andamiaje · F1 local-first · F2 adapter ADO · F3 db/security/api.
 
 core:
   tracker_adapter:
@@ -22,6 +22,12 @@ core:
       - core/skills/unit-test-runner/SKILL.md     # F1-T4: runner unit → sink (D1 cerrada)
     e2e-runner:
       - core/skills/e2e-runner/SKILL.md           # F1-T4: runner e2e → sink (ex playwright-runner)
+    db-test-runner:
+      - core/skills/db-test-runner/SKILL.md       # F3: runner db (driver auto, conexión env)
+    security-test-runner:
+      - core/skills/security-test-runner/SKILL.md # F3: runner security (target_profile)
+    api-test-runner:
+      - core/skills/api-test-runner/SKILL.md       # F3: runner api (postman/newman)
   templates:
     local:
       - templates/local/README.md
@@ -57,6 +63,9 @@ runtime:
     - runtime/runners/static-analysis.mjs
     - runtime/runners/unit.mjs
     - runtime/runners/e2e.mjs
+    - runtime/runners/db.mjs
+    - runtime/runners/security.mjs
+    - runtime/runners/api.mjs
   orchestrator: runtime/orchestrator.mjs
   evidence:
     - runtime/evidence/local-sink.mjs

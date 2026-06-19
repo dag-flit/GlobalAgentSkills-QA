@@ -185,14 +185,15 @@ function detectLayers(m, pyproject) {
       : { enabled: false, tool: null, signals: [], reason: "sin runner e2e (playwright/cypress)" };
   }
 
-  // db
+  // db — se prefiere una herramienta EJECUTABLE (pgtap/prisma) sobre el directorio
+  // migrations/ suelto (que es señal pero no tiene runner universal).
   {
     const signals = [];
     let tool = null;
-    if (m.hasDir("migrations")) { tool = "migrations"; signals.push("migrations/"); }
+    if (m.hasBase(/\.pgtap$/) || m.hasDep("pgtap")) { tool = "pgtap"; signals.push("pgtap"); }
     if (m.hasPath(/prisma\/schema\.prisma$/)) { tool = tool || "prisma"; signals.push("prisma"); }
-    if (m.hasBase(/\.pgtap$/) || m.hasDep("pgtap")) { tool = tool || "pgtap"; signals.push("pgtap"); }
     if (m.hasDep("testcontainers")) { tool = tool || "testcontainers"; signals.push("testcontainers"); }
+    if (m.hasDir("migrations")) { tool = tool || "migrations"; signals.push("migrations/"); }
     layers.db = signals.length
       ? { enabled: true, tool, signals }
       : { enabled: false, tool: null, signals: [], reason: "sin migraciones/pgtap/testcontainers" };

@@ -19,13 +19,18 @@ import { detectRepo, resolveEnabledLayers } from "./detect/qa-detect.mjs";
 import { runStaticAnalysis } from "./runners/static-analysis.mjs";
 import { runUnitTests } from "./runners/unit.mjs";
 import { runE2eTests } from "./runners/e2e.mjs";
+import { runApiTests } from "./runners/api.mjs";
+import { runDbTests } from "./runners/db.mjs";
+import { runSecurityTests } from "./runners/security.mjs";
 
-// Registro de runners portados. Las capas habilitadas sin runner aún se omiten
-// con aviso (no abortan): api/db/security se portan en F3.
+// Registro de runners portados (todas las capas del kit).
 const RUNNERS = {
   static: runStaticAnalysis,
   unit: runUnitTests,
   e2e: runE2eTests,
+  api: runApiTests,
+  db: runDbTests,
+  security: runSecurityTests,
 };
 
 /**
@@ -87,7 +92,7 @@ export async function runQaCycle({
       });
       continue;
     }
-    results.push(runner({ repoRoot, profile: resolvedProfile, detection, exec, workItemId }));
+    results.push(runner({ repoRoot, profile: resolvedProfile, env, detection, exec, workItemId }));
   }
 
   // Capas omitidas por detección (herramienta ausente): al reporte, con su razón.
