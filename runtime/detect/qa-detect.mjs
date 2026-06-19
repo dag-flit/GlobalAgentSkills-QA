@@ -272,15 +272,21 @@ function detectLayers(m, pyproject) {
       : { enabled: false, tool: null, signals: [], reason: "sin migraciones/pgtap/testcontainers" };
   }
 
-  // security
+  // security — ZERO-CONFIG: corre en CUALQUIER repo con código, sin exigir `.semgrep.yml`.
+  // Config explícita (.semgrep / bandit) tiene prioridad; si no hay señal, se elige el
+  // escáner por stack: bandit (offline) para Python, semgrep (ruleset `auto`) para el resto.
+  // El runner degrada a skip si el escáner no está instalado (igual que `api` con redocly).
   {
     const signals = [];
     let tool = null;
-    if (m.hasBase(/^\.?semgrep\.ya?ml$/) || m.hasDir(".semgrep")) { tool = "semgrep"; signals.push("semgrep"); }
-    if (m.hasBase(/^\.bandit$/) || m.hasDep("bandit") || /\[tool\.bandit\]/.test(pyproject)) { tool = tool || "bandit"; signals.push("bandit"); }
-    layers.security = signals.length
-      ? { enabled: true, tool, signals }
-      : { enabled: false, tool: null, signals: [], reason: "sin escáner (semgrep/bandit)" };
+    if (m.hasBase(/^\.?semgrep\.ya?ml$/) || m.hasDir(".semgrep")) { tool = "semgrep"; signals.push("semgrep config"); }
+    if (m.hasBase(/^\.bandit$/) || m.hasDep("bandit") || /\[tool\.bandit\]/.test(pyproject)) { tool = tool || "bandit"; signals.push("bandit config"); }
+    if (!tool) {
+      const isPython = m.hasBase(/^(pyproject\.toml|requirements\.txt|setup\.py|setup\.cfg)$/) || pyproject.length > 0;
+      tool = isPython ? "bandit" : "semgrep";
+      signals.push("zero-config");
+    }
+    layers.security = { enabled: true, tool, signals };
   }
 
   return layers;

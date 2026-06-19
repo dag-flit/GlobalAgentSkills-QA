@@ -31,12 +31,23 @@ const TOOLS = {
     if (!env.MI_CONEXION) return { skip: "falta MI_CONEXION en env (nunca se cablea)" };
     return ["otra-cli", "--url", env.MI_CONEXION];
   },
+  // o { argv, skipCodes }: declara exit codes que significan "error de herramienta, NO un
+  // hallazgo" → se mapean a `skip` en vez de `fail` (p.ej. semgrep exit 2 = sin red/config):
+  escaner: ({ profile }) => ({ argv: ["escaner", "--scan"], skipCodes: [2] }),
 };
 
 export function runMiCapa(opts = {}) {
   return runLayer({ layer: "micapa", tools: TOOLS, ...opts });
 }
 ```
+
+Notas del motor (`_runner-core`):
+- **`exec` resuelve el binario antes de lanzar** (`isExecutable`: PATH/PATHEXT, locale-independiente):
+  herramienta ausente → exit `127` → `skip`. No te fíes del exit/mensaje de `cmd.exe` en Windows.
+- **`env` se reenvía al proceso hijo** (mezclado sobre `process.env`): una conexión/credencial que
+  el proyecto exporte llega a la herramienta sin cablearla.
+- **Monorepo:** una capa puede tener **N objetivos** (`detection.layers.<capa>.targets`, uno por
+  herramienta×paquete); el runner devuelve un `EvidenceObject` por objetivo, ejecutando en su `cwd`.
 
 **Paso 3 — registrar** en `runtime/orchestrator.mjs` (`RUNNERS`).
 

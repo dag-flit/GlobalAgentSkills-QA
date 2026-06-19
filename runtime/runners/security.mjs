@@ -13,9 +13,15 @@ function semgrepConfig(profile) {
   return "auto";
 }
 
+// Exit codes que significan "el escáner NO concluyó" (error de config/red/parseo), NO un
+// hallazgo de seguridad real: semgrep y bandit usan `2` para esto. El runner los OMITE en vez
+// de marcar fail → un `--config auto` sin red, o un repo que el escáner no parsea, no rompe el
+// ciclo. Hallazgos reales siguen siendo exit 1 (con `--error` en semgrep) → fail.
+const SCANNER_ERROR = [2];
+
 const TOOLS = {
-  semgrep: ({ profile }) => ["semgrep", "--error", "--quiet", "--config", semgrepConfig(profile)],
-  bandit: () => ["bandit", "-r", "."],
+  semgrep: ({ profile }) => ({ argv: ["semgrep", "--error", "--quiet", "--config", semgrepConfig(profile)], skipCodes: SCANNER_ERROR }),
+  bandit: () => ({ argv: ["bandit", "-r", "."], skipCodes: SCANNER_ERROR }),
 };
 
 /** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */

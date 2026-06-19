@@ -41,18 +41,44 @@ function quoteWin(s) {
   return /[\s"&|<>^()%!]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// ¿`name` es ejecutable? Ruta con separador/absoluta → el archivo debe existir. Nombre
+// suelto → búsqueda en PATH (con PATHEXT en Windows). Es LOCALE-INDEPENDIENTE: no depende
+// del mensaje de cmd.exe ("is not recognized…" / "no se reconoce…") ni de un ERRORLEVEL
+// concreto, que varían por idioma de Windows.
+export function isExecutable(name) {
+  if (!name) return false;
+  if (path.isAbsolute(name) || name.includes("/") || name.includes("\\")) return fs.existsSync(name);
+  const PATH = process.env.PATH || process.env.Path || "";
+  const exts = process.platform === "win32"
+    ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").map((e) => e.trim()).filter(Boolean)
+    : [""];
+  for (const dir of PATH.split(path.delimiter).filter(Boolean)) {
+    if (process.platform !== "win32" && fs.existsSync(path.join(dir, name))) return true;
+    for (const ext of exts) if (fs.existsSync(path.join(dir, name + ext))) return true;
+  }
+  return false;
+}
+
 // Ejecutor por defecto (real). Inyectable para tests deterministas/offline.
-export function defaultExec(cmd, args, { cwd }) {
+// `env` (opcional) se MEZCLA sobre process.env del hijo: así una conexión de BD u otra
+// var que el proyecto exporte (DATABASE_URL…) llega a la herramienta sin cablearla.
+export function defaultExec(cmd, args, { cwd, env } = {}) {
+  // Comando NO resoluble (no instalado / fuera de PATH) → 127 SIN invocar el shell, para que
+  // el runner lo OMITA (skip). Es la vía robusta: en Windows en español, cmd.exe devuelve un
+  // exit ambiguo (1) con mensaje localizado, así que NO podemos fiarnos de él. Como los tests
+  // inyectan su propio `exec`, este chequeo solo afecta a las corridas reales.
+  if (!isExecutable(cmd)) return { code: 127, stdout: "", stderr: "", spawnError: null };
+  const childEnv = env && Object.keys(env).length ? { ...process.env, ...env } : undefined;
   let r;
   if (process.platform === "win32") {
     // Windows necesita shell para resolver shims .cmd/.bat, pero el shell NO cita: si la
     // ruta del binario o un argumento tiene espacios, se parte. Construimos la línea
     // ya citada y la pasamos como string única (control total del quoting).
     const line = [cmd, ...args].map(quoteWin).join(" ");
-    r = spawnSync(line, [], { cwd, encoding: "utf8", shell: true });
+    r = spawnSync(line, [], { cwd, env: childEnv, encoding: "utf8", shell: true });
   } else {
     // POSIX: sin shell, el array de args ya respeta espacios; nada que citar.
-    r = spawnSync(cmd, args, { cwd, encoding: "utf8", shell: false });
+    r = spawnSync(cmd, args, { cwd, env: childEnv, encoding: "utf8", shell: false });
   }
   return {
     code: typeof r.status === "number" ? r.status : 127,
@@ -99,21 +125,25 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
 
   // El spec puede ser un argv fijo (array) o una función que lo construye desde el
   // contexto. La función opera sobre el paquete del objetivo (recibe su cwd como repoRoot),
-  // y puede devolver { skip: "razón" } para omitir con aviso (p.ej. conexión NO cableada).
+  // y puede devolver { skip: "razón" } para omitir con aviso (p.ej. conexión NO cableada),
+  // o { argv, skipCodes } para declarar exit codes que significan "la herramienta NO concluyó"
+  // (p.ej. semgrep exit 2 = error de escáner por red/config) → se OMITE en vez de fallar.
   let argv;
+  let skipCodes = [];
   if (typeof spec === "function") {
     const resolved = spec({ repoRoot: cwd, profile, env, detection, info: { ...info, tool, cwd: target.cwd }, tool });
     if (!resolved || resolved.skip) {
       return { ...base, status: "skip", narrative: (resolved && resolved.skip) || `'${tool}'${where} sin configuración suficiente`, metrics: { tool, cwd: target.cwd } };
     }
     argv = Array.isArray(resolved) ? resolved : resolved.argv;
+    if (!Array.isArray(resolved) && Array.isArray(resolved.skipCodes)) skipCodes = resolved.skipCodes;
   } else {
     argv = spec;
   }
 
   const [name, ...args] = argv;
   const bin = resolveBin(repoRoot, name, cwd);
-  const out = exec(bin, args, { cwd });
+  const out = exec(bin, args, { cwd, env });
 
   // No se pudo lanzar el binario (no instalado / fuera de PATH): omitir con aviso.
   if (out.spawnError || out.code === 127) {
@@ -125,8 +155,19 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
     };
   }
 
-  const status = out.code === 0 ? "pass" : "fail";
   const detail = summarize(out);
+
+  // Exit declarado como "error de herramienta" (no un hallazgo real): OMITIR, no fallar.
+  if (out.code !== 0 && skipCodes.includes(out.code)) {
+    return {
+      ...base,
+      status: "skip",
+      narrative: `${tool}${where} no concluyó (exit ${out.code}, error de herramienta) — objetivo omitido${detail ? ` — ${detail}` : ""}`,
+      metrics: { tool, cwd: target.cwd, exitCode: out.code },
+    };
+  }
+
+  const status = out.code === 0 ? "pass" : "fail";
   const narrative = status === "pass" ? `${tool}${where}: ok` : `${tool}${where}: exit ${out.code}${detail ? ` — ${detail}` : ""}`;
 
   return { ...base, status, narrative, metrics: { tool, cwd: target.cwd, exitCode: out.code } };

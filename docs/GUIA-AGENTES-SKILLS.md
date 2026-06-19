@@ -74,15 +74,25 @@ herramientas (`tool → argv`, fijo o función).
 | `unit-test-runner` | `runners/unit.mjs` | `unit` | vitest `run` · jest · pytest · dotnet `test` |
 | `e2e-runner` | `runners/e2e.mjs` | `e2e` | playwright `test` · cypress `run` |
 | `db-test-runner` | `runners/db.mjs` | `db` | pg_prove (conexión desde `env`) · prisma `migrate status` |
-| `security-test-runner` | `runners/security.mjs` | `security` | semgrep (config según `target_profile`) · bandit |
-| `api-test-runner` | `runners/api.mjs` | `api` | newman `run <colección>` (openapi → skip) |
+| `security-test-runner` | `runners/security.mjs` | `security` | semgrep `auto`/`target_profile` · bandit — **zero-config** |
+| `api-test-runner` | `runners/api.mjs` | `api` | newman `run <colección>` · `redocly lint <spec>` (OpenAPI, offline) |
 
 Mapeo de resultado común: exit `0` → `pass`; exit `≠0` → `fail`; herramienta ausente, sin
-conexión o sin runner → `skip` **con aviso**. Notas por capa:
+conexión o sin runner → `skip` **con aviso**. Un spec puede declarar **`skipCodes`** (exit que
+significa "error de herramienta, no hallazgo") → ese código se mapea a `skip` en vez de `fail`.
+Notas por capa:
 
-- **db**: la conexión **siempre** viene de `env` (`DATABASE_URL`/`PG_CONNECTION`/`DB_CONNECTION`).
-  Nunca se cablea host/puerto. `migrations/` y testcontainers se omiten (sin runner standalone).
-- **security**: `security.target_profile` (api|web|generic|auto) decide el ruleset de semgrep.
+- **db**: la conexión **siempre** viene de `env` (`DATABASE_URL`/`PG_CONNECTION`/`DB_CONNECTION`);
+  `_runner-core` la **reenvía al proceso hijo**, así que cualquier proyecto que la exporte activa
+  la capa sin tocar el kit. `prisma` también guarda la conexión (sin ella → `skip` accionable).
+  `migrations/` y testcontainers se omiten (sin runner standalone).
+- **security · zero-config**: enciende en **cualquier** repo sin `.semgrep.yml` (qa-detect elige
+  `bandit` para Python, `semgrep auto` para el resto). `security.target_profile` (api|web|generic|auto)
+  decide el ruleset de semgrep. Hallazgo → `fail`; error del escáner (exit 2, sin red/config) →
+  `skip` (`skipCodes: [2]`); escáner no instalado → `skip`. La detección de "no ejecutable" es
+  locale-independiente (`isExecutable` resuelve PATH/PATHEXT antes de lanzar).
+- **api · OpenAPI**: `redocly lint` valida el contrato **sin servidor** (vía `npx`, zero-config;
+  ruleset por perfil `api.openapi_ruleset`, default `minimal`). Errores de contrato → `fail`.
 - **unit**: **no genera** tests ni asume stack; solo corre los existentes (D1: jamás escribe
   `Custom.Evidences`). La generación es del pack opcional `dev-side`, fuera del core.
 
@@ -130,7 +140,7 @@ Resolución: `default ← presets/<tracker> ← overlays/<org> ← .qa/qa-projec
 | `runtime/evidence/local-sink.mjs` | renderiza el reporte local md+html |
 | `runtime/cli.mjs` | entrypoint del kit (códigos de salida 0/1/2/3) |
 | `runtime/delivery/build.mjs` | empaqueta `core/` a plain/claude-code/cursor |
-| `runtime/smoke-test.mjs` | prueba todo el plumbing sin red (19/19) |
+| `runtime/smoke-test.mjs` | prueba todo el plumbing sin red (22/22) |
 | `adapters/_shared/parse-ac.mjs` | normaliza AC desde texto/markdown (github+jira) |
 
 ## Cómo se invocan

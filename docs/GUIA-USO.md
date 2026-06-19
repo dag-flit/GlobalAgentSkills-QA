@@ -16,8 +16,9 @@ node runtime/cli.mjs /ruta/al/repo
 
 El CLI:
 1. Resuelve el perfil del repo (sin perfil → `tracker: local`, `layers: auto`).
-2. `qa-detect` inspecciona el repo y enciende **solo** las capas cuya herramienta existe.
-3. Ejecuta los runners de esas capas (las demás se omiten **con aviso**, nunca aborta).
+2. `qa-detect` inspecciona el repo y enciende las capas detectadas (`security` es **zero-config**:
+   se intenta siempre).
+3. Ejecuta los runners de esas capas (lo que no se pueda ejecutar se omite **con aviso**, nunca aborta).
 4. Escribe el reporte y sale con un código según el resultado.
 
 Salida de ejemplo:
@@ -51,12 +52,22 @@ pasar la ruta posicional).
 | `eslint` / `tsconfig.json` / `ruff` / `mypy` | `static` | el linter/type-checker detectado |
 | `vitest` / `jest` / `pytest` / `*.csproj` (test) | `unit` | `vitest run` · `jest` · `pytest` · `dotnet test` |
 | `playwright.config` / `cypress.config` | `e2e` | `playwright test` · `cypress run` |
-| `openapi`·`swagger` / `*.postman_collection.json` | `api` | `newman run <colección>` (openapi → skip) |
-| `pgtap` / `prisma` / `migrations/` | `db` | `pg_prove` · `prisma migrate status` |
-| `semgrep` / `bandit` | `security` | `semgrep …` · `bandit -r .` |
+| `*.postman_collection.json` / `openapi`·`swagger` | `api` | `newman run <colección>` · `redocly lint <spec>` (validación de contrato OpenAPI, offline) |
+| `pgtap` / `prisma` / `migrations/` | `db` | `pg_prove` · `prisma migrate status` (conexión desde `env`) |
+| *(siempre — zero-config)* | `security` | `semgrep --config auto` · `bandit -r .` |
 
 > Las herramientas deben estar instaladas en el repo/PATH para ejecutarse. Si no, la capa
-> se omite con aviso (`skip`), no rompe el ciclo.
+> se omite con aviso (`skip`), no rompe el ciclo. Detalles por capa:
+>
+> - **`api` · OpenAPI**: valida el contrato **sin servidor** con `redocly lint` (vía `npx`,
+>   zero-config; ruleset por perfil `api.openapi_ruleset`, default `minimal`). Errores de
+>   contrato → `fail`. El contract testing contra un servidor vivo (schemathesis/dredd) es otro
+>   modo, no local-first, y no está incluido.
+> - **`security` · zero-config**: se intenta en **cualquier** repo sin pedir `.semgrep.yml`
+>   (qa-detect elige `bandit` para Python, `semgrep auto` para el resto). Hallazgo real → `fail`;
+>   error del escáner (sin red/config, exit 2) → `skip`; escáner no instalado → `skip`.
+> - **`db`**: la conexión llega **del entorno** (`DATABASE_URL`/`PG_CONNECTION`/`DB_CONNECTION`);
+>   el kit la reenvía al proceso. Sin conexión o sin pgtap/prisma → `skip` accionable.
 
 ### Forzar capas (override)
 
@@ -117,7 +128,7 @@ node dist/plain/bin/qa.mjs /ruta/al/repo       # el paquete corre standalone
 ## 6. Verificar el kit
 
 ```bash
-node runtime/smoke-test.mjs        # → 19/19 OK
+node runtime/smoke-test.mjs        # → 22/22 OK
 ```
 
 Cubre, sin red, todo el plumbing: resolución de perfiles, detección, los 6 runners, el
