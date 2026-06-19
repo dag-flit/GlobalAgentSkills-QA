@@ -95,20 +95,23 @@ fs.writeFileSync(path.join(repoDet, "playwright.config.ts"), "export default {}"
 fs.writeFileSync(path.join(repoDet, "vitest.config.ts"), "export default {}");
 fs.writeFileSync(path.join(repoDet, ".eslintrc.json"), "{}");
 const det = detectRepo({ repoRoot: repoDet });
-assert.deepStrictEqual(det.enabled, ["static", "unit", "e2e"]);
+// security es ZERO-CONFIG: enciende en cualquier repo con código (aquí, semgrep por stack).
+assert.deepStrictEqual(det.enabled, ["static", "unit", "e2e", "security"]);
 assert.strictEqual(det.layers.e2e.tool, "playwright");
+assert.strictEqual(det.layers.security.tool, "semgrep");      // node/react → semgrep
+assert.ok(det.layers.security.signals.includes("zero-config")); // sin .semgrep.yml
 assert.strictEqual(det.stack.frontend, "react");
 assert.strictEqual(det.stack.db, "postgres");
 const skippedLayers = det.skipped.map((s) => s.layer);
-assert.deepStrictEqual(skippedLayers, ["api", "db", "security"]);
+assert.deepStrictEqual(skippedLayers, ["api", "db"]);          // security ya no se omite
 assert.ok(det.skipped.every((s) => typeof s.reason === "string" && s.reason.length));
 // override explícito en el perfil gana sobre la detección
 const autoSel = resolveEnabledLayers({ testing: { layers_enabled: "auto" } }, det);
-assert.deepStrictEqual(autoSel, { enabled: ["static", "unit", "e2e"], source: "auto" });
+assert.deepStrictEqual(autoSel, { enabled: ["static", "unit", "e2e", "security"], source: "auto" });
 const fixedSel = resolveEnabledLayers({ testing: { layers_enabled: ["static"] } }, det);
 assert.deepStrictEqual(fixedSel, { enabled: ["static"], source: "profile" });
 fs.rmSync(repoDet, { recursive: true, force: true });
-ok("qa-detect: auto enciende static/unit/e2e y omite api/db/security con razón; perfil explícito gana");
+ok("qa-detect: auto enciende static/unit/e2e + security zero-config; omite api/db con razón; perfil explícito gana");
 
 // 8. static-analysis-gate end-to-end: detecta tool, ejecuta (exec inyectado) y publica al sink local
 const repoStatic = fs.mkdtempSync(path.join(os.tmpdir(), "qa-static-"));
@@ -384,8 +387,22 @@ assert.strictEqual(dbPass.status, "pass");
 assert.strictEqual(dbPass.metrics.tool, "pgtap");
 assert.ok(capDb.calls[0].args.includes("postgres://u@h/db"));
 fs.rmSync(repoDb, { recursive: true, force: true });
+// prisma: guarda igual que pgtap → sin conexión skip; con conexión (de cualquier var
+// soportada) corre `prisma migrate status`. Cablear a un proyecto futuro = exportar la var.
+const repoPrisma = fs.mkdtempSync(path.join(os.tmpdir(), "qa-prisma-"));
+fs.mkdirSync(path.join(repoPrisma, "prisma"));
+fs.writeFileSync(path.join(repoPrisma, "prisma", "schema.prisma"), "datasource db {}");
+const prismaSkip = runDbTests({ repoRoot: repoPrisma, env: {} })[0];
+assert.strictEqual(prismaSkip.status, "skip");
+assert.strictEqual(prismaSkip.metrics.tool, "prisma");
+const capPrisma = capturingExec(0);
+const prismaPass = runDbTests({ repoRoot: repoPrisma, env: { PG_CONNECTION: "postgres://u@h/db" }, exec: capPrisma.exec })[0];
+assert.strictEqual(prismaPass.status, "pass");
+assert.deepStrictEqual(capPrisma.calls[0].args, ["migrate", "status"]);
+fs.rmSync(repoPrisma, { recursive: true, force: true });
 
-// security: semgrep; target_profile ajusta el ruleset; hallazgos → fail
+// security: ZERO-CONFIG. Con .semgrep.yml usa esa config + target_profile; SIN config corre
+// igual (semgrep `auto`); hallazgos → fail; escáner no instalado → skip.
 const repoSec = fs.mkdtempSync(path.join(os.tmpdir(), "qa-sec-"));
 fs.writeFileSync(path.join(repoSec, ".semgrep.yml"), "rules: []");
 const capSec = capturingExec(0);
@@ -394,10 +411,26 @@ assert.strictEqual(secPass.status, "pass");
 assert.strictEqual(secPass.metrics.tool, "semgrep");
 assert.ok(capSec.calls[0].args.includes("p/owasp-top-ten")); // target_profile=api
 const secFail = runSecurityTests({ repoRoot: repoSec, exec: capturingExec(1, { stdout: "1 finding" }).exec })[0];
-assert.strictEqual(secFail.status, "fail");
+assert.strictEqual(secFail.status, "fail");                 // exit 1 = hallazgo real → fail
+// exit 2 = error de escáner (config/red), NO un hallazgo → skip, no rompe el ciclo
+const secErr = runSecurityTests({ repoRoot: repoSec, exec: capturingExec(2, { stderr: "could not reach registry" }).exec })[0];
+assert.strictEqual(secErr.status, "skip");
+assert.strictEqual(secErr.metrics.exitCode, 2);
 fs.rmSync(repoSec, { recursive: true, force: true });
+// zero-config: repo SIN ninguna config de seguridad → la capa corre igual con semgrep auto
+const repoSecZero = fs.mkdtempSync(path.join(os.tmpdir(), "qa-seczero-"));
+fs.writeFileSync(path.join(repoSecZero, "package.json"), JSON.stringify({ name: "z" }));
+const capSecZero = capturingExec(0);
+const secZero = runSecurityTests({ repoRoot: repoSecZero, exec: capSecZero.exec })[0];
+assert.strictEqual(secZero.status, "pass");
+assert.strictEqual(secZero.metrics.tool, "semgrep");
+assert.ok(capSecZero.calls[0].args.includes("auto")); // ruleset por defecto sin config
+// escáner no instalado (127) → skip, nunca aborta
+const secNoBin = runSecurityTests({ repoRoot: repoSecZero, exec: capturingExec(127).exec })[0];
+assert.strictEqual(secNoBin.status, "skip");
+fs.rmSync(repoSecZero, { recursive: true, force: true });
 
-// api: postman → newman run <colección>; openapi solo → skip con aviso
+// api: postman → newman run <colección>; openapi → redocly lint (validación offline)
 const repoApi = fs.mkdtempSync(path.join(os.tmpdir(), "qa-api-"));
 fs.writeFileSync(path.join(repoApi, "smoke.postman_collection.json"), "{}");
 const capApi = capturingExec(0);
@@ -407,13 +440,27 @@ assert.strictEqual(apiPass.metrics.tool, "postman");
 assert.strictEqual(capApi.calls[0].args[0], "run");
 assert.ok(/postman_collection/.test(capApi.calls[0].args[1]));
 fs.rmSync(repoApi, { recursive: true, force: true });
+// openapi: corre `redocly lint` (validación de contrato offline). Ruleset por defecto
+// `minimal`; el perfil puede sobreescribirlo. Exit 0 inyectado → pass.
 const repoOas = fs.mkdtempSync(path.join(os.tmpdir(), "qa-oas-"));
-fs.writeFileSync(path.join(repoOas, "openapi.yaml"), "openapi: 3.0.0");
-const oasSkip = runApiTests({ repoRoot: repoOas, exec: capturingExec(0).exec })[0];
-assert.strictEqual(oasSkip.status, "skip");
-assert.strictEqual(oasSkip.metrics.tool, "openapi");
+fs.mkdirSync(path.join(repoOas, "docs"));
+fs.writeFileSync(path.join(repoOas, "docs", "openapi.yaml"), "openapi: 3.1.0");
+const capOas = capturingExec(0);
+const oasRun = runApiTests({ repoRoot: repoOas, exec: capOas.exec })[0];
+assert.strictEqual(oasRun.status, "pass");
+assert.strictEqual(oasRun.metrics.tool, "openapi");
+assert.ok(capOas.calls[0].args.includes("lint"));
+assert.ok(capOas.calls[0].args.some((a) => /openapi\.yaml$/.test(a))); // spec localizada en subcarpeta
+assert.ok(capOas.calls[0].args.includes("--extends=minimal")); // ruleset por defecto
+// el perfil sobreescribe el ruleset
+const capOasStrict = capturingExec(0);
+runApiTests({ repoRoot: repoOas, profile: { api: { openapi_ruleset: "recommended" } }, exec: capOasStrict.exec });
+assert.ok(capOasStrict.calls[0].args.includes("--extends=recommended"));
+// exit ≠ 0 (errores de contrato) → fail
+const oasFail = runApiTests({ repoRoot: repoOas, exec: capturingExec(1, { stdout: "Validation failed" }).exec })[0];
+assert.strictEqual(oasFail.status, "fail");
 fs.rmSync(repoOas, { recursive: true, force: true });
-ok("runners db/security/api: conexión desde env, target_profile ruleset, newman; openapi degrada con aviso");
+ok("runners db/security/api: conexión desde env, target_profile ruleset, newman; openapi → redocly lint offline");
 
 // 15. orquestador con cobertura de las 6 capas en un solo reporte
 const repoAll = fs.mkdtempSync(path.join(os.tmpdir(), "qa-all-"));
@@ -432,12 +479,11 @@ const cycleAll = await runQaCycle({
 });
 assert.strictEqual(cycleAll.ok, true);
 const byLayer = Object.fromEntries(cycleAll.results.map((r) => [r.layer, r.status]));
-for (const l of ["static", "unit", "e2e", "db", "security"]) {
+for (const l of ["static", "unit", "e2e", "db", "security", "api"]) {
   assert.strictEqual(byLayer[l], "pass", `capa ${l} debería pasar en el ciclo completo`);
 }
-assert.strictEqual(byLayer.api, "skip"); // openapi sin runner estándar
 fs.rmSync(repoAll, { recursive: true, force: true });
-ok("orquestador: cobertura de las 6 capas (static/unit/e2e/db/security pass, api openapi skip)");
+ok("orquestador: cobertura de las 6 capas (static/unit/e2e/db/security/api pass con exec inyectado)");
 
 // 16. CLI real end-to-end: corre como subproceso sobre un repo vacío (ruta NO inyectada)
 const repoCli = fs.mkdtempSync(path.join(os.tmpdir(), "qa-cli-"));
@@ -568,9 +614,10 @@ const feBin = path.join(feDir, "node_modules", ".bin");
 fs.mkdirSync(feBin, { recursive: true });
 for (const b of ["vitest", "playwright", "tsc"]) fs.writeFileSync(path.join(feBin, b + (process.platform === "win32" ? ".cmd" : "")), "");
 
-// 20a. detección: capas encendidas con cwd = "frontend" (no la raíz)
+// 20a. detección: capas encendidas con cwd = "frontend" (no la raíz). security es
+// zero-config → siempre presente (no afecta la ubicación de las capas con tooling).
 const monoDet = detectRepo({ repoRoot: repoMono });
-assert.deepStrictEqual(monoDet.enabled.sort(), ["e2e", "static", "unit"]);
+assert.deepStrictEqual(monoDet.enabled.sort(), ["e2e", "security", "static", "unit"]);
 assert.strictEqual(monoDet.layers.unit.cwd, "frontend");
 assert.strictEqual(monoDet.layers.e2e.cwd, "frontend");
 assert.strictEqual(monoDet.layers.static.cwd, "frontend");
@@ -639,6 +686,9 @@ if (process.platform === "win32") {
 const spRes = defaultExec(spBin, [], { cwd: spDir });
 assert.strictEqual(spRes.code, 0, "binario en ruta con espacios debe ejecutar (no 'no se reconoce')");
 assert.ok(spRes.stdout.includes(spOutExpected));
+// binario INEXISTENTE → code 127 (→ skip), cross-platform: ENOENT en POSIX, 9009/"is not
+// recognized" en Windows. Garantiza que un escáner ausente se OMITA, no se reporte fail.
+assert.strictEqual(defaultExec("qa-bin-inexistente-zzz", [], { cwd: spDir }).code, 127);
 fs.rmSync(spRoot, { recursive: true, force: true });
 ok("ejecución robusta: binario en ruta con espacios se ejecuta citado (regresión Windows)");
 
