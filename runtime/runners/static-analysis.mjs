@@ -3,13 +3,15 @@
 // La mecánica (resolución de binario, ejecución, mapeo) vive en _runner-core.mjs.
 
 import { runLayer } from "./_runner-core.mjs";
+import { parseEslint, parseRuff } from "./parse-cases.mjs";
 
 // El orden de prioridad ya lo fija qa-detect (eslint > tsc > ruff > mypy);
-// aquí solo mapeamos cada herramienta a su invocación neutra.
+// aquí solo mapeamos cada herramienta a su invocación neutra. eslint/ruff exponen sus
+// hallazgos como TC vía su salida JSON nativa; tsc/mypy no traen JSON: resumen de texto.
 const TOOLS = {
-  eslint: ["eslint", "."],
+  eslint: () => ({ argv: ["eslint", ".", "-f", "json"], parseCases: parseEslint }),
   tsc: ["tsc", "--noEmit"],
-  ruff: ["ruff", "check", "."],
+  ruff: () => ({ argv: ["ruff", "check", ".", "--output-format=json"], parseCases: parseRuff }),
   mypy: ["mypy", "."],
 };
 

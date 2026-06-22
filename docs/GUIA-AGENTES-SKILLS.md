@@ -29,9 +29,19 @@ Todos los runners devuelven este objeto (ver `core/tracker-adapter/CONTRACT.md`)
   files: ["shot1.png"],         // rutas locales, opcional
   narrative: "login redirect roto",
   metrics: { tool: "playwright", exitCode: 1 },
+  cases: [                      // TC individuales de la capa, opcional (ver abajo)
+    { name: "auth › login", status: "pass", duration: 45, message: null },
+  ],
   work_item_id: "123"           // opcional
 }
 ```
+
+**`cases[]` — detalle por TC.** Cuando la herramienta expone un reporter JSON nativo
+(`vitest`/`jest`/`playwright`/`eslint`/`ruff`/`semgrep`/`bandit`), el runner extrae los casos
+individuales (`runtime/runners/parse-cases.mjs`) y los adjunta como `cases`: cada uno con
+`{ name, status, duration, message }`. El sink local y los adapters remotos lo renderizan como
+sección de detalle por capa. Si la salida no es el JSON esperado, se OMITE `cases` y queda solo
+la `narrative` (degradación, nunca rompe el ciclo).
 
 ## Agente
 
@@ -140,7 +150,7 @@ Resolución: `default ← presets/<tracker> ← overlays/<org> ← .qa/qa-projec
 | `runtime/evidence/local-sink.mjs` | renderiza el reporte local md+html |
 | `runtime/cli.mjs` | entrypoint del kit (códigos de salida 0/1/2/3) |
 | `runtime/delivery/build.mjs` | empaqueta `core/` a plain/claude-code/cursor |
-| `runtime/smoke-test.mjs` | prueba todo el plumbing sin red (22/22) |
+| `runtime/smoke-test.mjs` | prueba todo el plumbing sin red (23/23) |
 | `adapters/_shared/parse-ac.mjs` | normaliza AC desde texto/markdown (github+jira) |
 
 ## Cómo se invocan

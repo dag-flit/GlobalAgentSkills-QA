@@ -12,7 +12,7 @@ PAT, sin Cursor y sin configurar nada**. El tracker es un plug-in opcional: hay 
 (`local`, `azure-devops`, `github`, `jira`) y se cambia con una línea de perfil.
 
 Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensión en `docs/`.
-**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 22/22.
+**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 23/23.
 
 ## Estado actual
 
@@ -159,18 +159,31 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 22/22 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 23/23 OK)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
 node runtime/cli.mjs [repoRoot] -w <HU> -f <FT> -d "<dev>"   # con trazabilidad por dev
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
 ```
 
-**Trazabilidad de evidencia (FT + dev):** el sink local escribe en
-`qa-evidence/<fecha>/WI-<HU>[__FT-<feature>][__<dev-slug>]/`. Los flags `--feature/-f` y
-`--developer/-d` (propagados cli→`runQaCycle`→`publishEvidence`→`writeLocalReport`) anexan el
-Feature padre y el desarrollador a la subcarpeta, y aparecen en el encabezado del reporte. El
-nombre del dev se sanea con `slug()` (tildes/ñ/espacios → ASCII-safe). Sin flags → `WI-<HU>`
-como antes. Así, corridas de distintos devs sobre la misma HU no se pisan.
+**Trazabilidad de evidencia (FT + dev):** el sink local nombra la subcarpeta **netamente con el
+Feature y el dev**: `qa-evidence/<fecha>/FT-<feature>__<dev-slug>/`. Los flags `--feature/-f` y
+`--developer/-d` (propagados cli→`runQaCycle`→`publishEvidence`→`writeLocalReport`) componen ese
+nombre y aparecen en el encabezado del reporte. El nombre del dev se sanea con `slug()` (tildes/ñ/
+espacios → ASCII-safe). Solo si no llega ni FT ni dev se usa el fallback `WI-<HU>` para que la
+carpeta nunca quede sin nombre. Así, corridas de distintos devs sobre el mismo feature no se pisan.
+El título del reporte es solo «Reporte QA local» (sin `WI <id>`).
+
+**Detalle por TC en la evidencia:** además de la tabla-resumen (un `EvidenceObject` por capa),
+el reporte plasma los **TC individuales ejecutados por debajo de cada capa** (sección «Detalle de
+pruebas»). Piezas: `runtime/runners/parse-cases.mjs` convierte el **reporter JSON nativo** de cada
+herramienta (vitest/jest `--json`/`--reporter=json`, playwright json, eslint `-f json`, ruff
+`--output-format=json`, semgrep `--json`, bandit `-f json`) en `cases: [{name,status,duration,
+message}]`; el spec del runner declara `parseCases` y `_runner-core` lo invoca best-effort (si la
+salida no es el JSON esperado → omite `cases`, degrada al resumen de texto, nunca rompe). El sink
+local (`local-sink.casesHtml`/md) y los tres adapters remotos (`azure-devops` HTML,
+`github` markdown, `jira` texto→ADF) renderizan el mismo detalle. Herramientas sin JSON nativo
+(tsc/mypy/pytest/dotnet/cypress/newman/redocly/pgtap/prisma) quedan con resumen de texto.
+Smoke test caso 23 cubre parseo + render.
 
 ## Documentación / guías
 

@@ -41,9 +41,19 @@ Los runners no saben de ningún tracker. Emiten:
   files: ["shot1.png"],    // rutas locales (opcional)
   narrative: "…",          // texto legible (opcional)
   metrics: { ms: 1234 },   // opcional
+  cases: [                 // TC individuales ejecutados por debajo de la capa (opcional)
+    { name: "auth › login", status: "pass", duration: 45, message: null },
+    { name: "cart › cupón", status: "fail", duration: 88, message: "AssertionError: …" },
+  ],
   work_item_id: "123"      // opcional
 }
 ```
+
+`cases[]` lo rellena el runner cuando la herramienta expone un reporter JSON nativo (vitest,
+jest, playwright, eslint, ruff, semgrep, bandit). Cada caso es `{ name, status: pass|fail|skip,
+duration: ms|null, message: string|null }`. Si la herramienta no trae JSON o la salida no se
+puede parsear, el runner OMITE `cases` y deja solo la `narrative` de resumen (degradación). El
+sink local y los adapters remotos (ADO/GitHub/Jira) renderizan este detalle por capa.
 
 El `sink` (definido por `evidence.sink` en el perfil) decide el destino:
 - `local` → render md/html en el repo.

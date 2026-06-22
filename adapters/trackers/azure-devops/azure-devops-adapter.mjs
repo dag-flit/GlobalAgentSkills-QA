@@ -80,11 +80,14 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const parentId = (target && target.work_item_id) || (payload && payload.work_item_id) || null;
 
-    // 1) Reporte local SIEMPRE (artefacto md/html para CI/diff).
+    // 1) Reporte local SIEMPRE (artefacto md/html para CI/diff). FT/dev se propagan para que
+    // la subcarpeta de evidencia se nombre igual que en local (FT-<feature>__<dev>).
     const local = writeLocalReport({
       repoRoot: this.repoRoot,
       profile: this.profile,
       workItemId: parentId || "local",
+      featureId: (target && target.feature_id) ?? (payload && payload.feature_id),
+      developer: (target && target.developer) ?? (payload && payload.developer),
       results,
     });
 
@@ -243,9 +246,33 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
         : "";
     return (
       `${prefix}<p><strong>Resumen QA</strong> — ✅ ${count("pass")} · ❌ ${count("fail")} · ⏭ ${count("skip")}</p>` +
-      `<table><thead><tr><th>Capa</th><th>TC</th><th>Resultado</th><th>Notas</th></tr></thead><tbody>${rows}</tbody></table>`
+      `<table><thead><tr><th>Capa</th><th>TC</th><th>Resultado</th><th>Notas</th></tr></thead><tbody>${rows}</tbody></table>` +
+      casesHtml(results)
     );
   }
+}
+
+// Detalle de los TC ejecutados por debajo de cada capa (mismo nivel de detalle que la
+// evidencia local), para que la Discussion del WI padre no muestre solo el agregado.
+function casesHtml(results) {
+  const withCases = results.filter((r) => Array.isArray(r.cases) && r.cases.length);
+  if (!withCases.length) return "";
+  const blocks = withCases
+    .map((r) => {
+      const c = (s) => r.cases.filter((x) => x.status === s).length;
+      const where = r.metrics && r.metrics.cwd ? ` @ ${esc(r.metrics.cwd)}` : "";
+      const items = r.cases
+        .map((tc) => {
+          const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : "⏭";
+          const d = typeof tc.duration === "number" ? ` (${tc.duration} ms)` : "";
+          const msg = tc.status === "fail" && tc.message ? `<br/><em>${esc(String(tc.message).split(/\r?\n/).slice(0, 3).join(" ⏎ "))}</em>` : "";
+          return `<li>${ic} ${esc(tc.name)}${d}${msg}</li>`;
+        })
+        .join("");
+      return `<p><strong>${esc(r.layer)} — ${esc((r.metrics && r.metrics.tool) || "")}</strong>${where} · ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}</p><ul>${items}</ul>`;
+    })
+    .join("");
+  return `<p><strong>Detalle de pruebas (TC ejecutados)</strong></p>${blocks}`;
 }
 
 // AC en ADO es HTML: lo normalizamos a líneas (gherkin / checklist / viñetas).

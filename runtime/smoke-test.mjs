@@ -16,6 +16,7 @@ import { runDbTests } from "./runners/db.mjs";
 import { runSecurityTests } from "./runners/security.mjs";
 import { runApiTests } from "./runners/api.mjs";
 import { defaultExec } from "./runners/_runner-core.mjs";
+import { writeLocalReport } from "./evidence/local-sink.mjs";
 import { runQaCycle } from "./orchestrator.mjs";
 import { buildTarget, TARGETS } from "./delivery/build.mjs";
 
@@ -179,16 +180,16 @@ assert.strictEqual(cycleAdo.tracker, "azure-devops");
 assert.strictEqual(cycleAdo.preflight.ok, false);
 assert.deepStrictEqual(cycleAdo.results, []);              // no se corrió ningún runner
 
-// 9c. trazabilidad: --feature y --developer se anexan a la subcarpeta de evidencia (slug del dev),
-// para separar corridas de distintos devs sobre la misma HU/feature sin pisarse.
+// 9c. trazabilidad: la subcarpeta de evidencia se nombra netamente con el Feature (FT) y el dev
+// (slug), para separar corridas de distintos devs sobre el mismo feature sin pisarse.
 const cycleTrace = await runQaCycle({
-  repoRoot: repoCycle, env: {}, workItemId: "10194", featureId: "10118", developer: "Abraham Cañon Vasquez",
+  repoRoot: repoCycle, env: {}, workItemId: "10194", featureId: "10118", developer: "Dev Ñoño Pérez",
   exec: () => ({ code: 0, stdout: "", stderr: "" }),
 });
 const traceDir = path.basename(cycleTrace.report.dir);
-assert.strictEqual(traceDir, "WI-10194__FT-10118__Abraham-Canon-Vasquez"); // ñ/espacios saneados
+assert.strictEqual(traceDir, "FT-10118__Dev-Nono-Perez"); // FT + dev (ñ/tildes/espacios saneados)
 const traceMd = fs.readFileSync(cycleTrace.report.mdPath, "utf8");
-assert.ok(/Feature \(FT\):\*\* 10118/.test(traceMd) && /Desarrollador:\*\* Abraham/.test(traceMd));
+assert.ok(/Feature \(FT\):\*\* 10118/.test(traceMd) && /Desarrollador:\*\* Dev/.test(traceMd));
 
 fs.rmSync(repoCycle, { recursive: true, force: true });
 ok("orquestador: local arranca directo sin preflight; ADO sin env se detiene en preflight; FT+dev trazados en la carpeta");
@@ -361,7 +362,7 @@ const fakeDual = makeFakeAdo([
   [(r) => r.method === "POST" && r.url.includes("/workItems/123/comments"), () => ({ status: 201, json: { id: 77 } })],
 ]);
 const cycleDual = await runQaCycle({
-  repoRoot: repoDual, env: creds, profile: pFlit, workItemId: "123",
+  repoRoot: repoDual, env: creds, profile: pFlit, workItemId: "123", featureId: "10118", developer: "Dev Ñoño Pérez",
   exec: () => ({ code: 0, stdout: "", stderr: "" }), http: fakeDual.http,
 });
 assert.strictEqual(cycleDual.ok, true);
@@ -370,6 +371,8 @@ assert.ok(cycleDual.preflight && cycleDual.preflight.ok);          // preflight 
 assert.strictEqual(cycleDual.report.sink, "dual");
 assert.strictEqual(cycleDual.report.parentCommentId, 77);          // resumen publicado en el padre
 assert.ok(fakeDual.find("POST", "/workItems/123/comments"));
+// FT/dev se propagan al reporte local también con tracker remoto (carpeta unificada con local)
+assert.strictEqual(path.basename(cycleDual.report.local.dir), "FT-10118__Dev-Nono-Perez");
 const staticDual = cycleDual.results.find((r) => r.layer === "static");
 assert.ok(staticDual && staticDual.status === "pass");
 fs.rmSync(repoDual, { recursive: true, force: true });
@@ -728,6 +731,51 @@ assert.strictEqual(defaultExec("qa-bin-inexistente-zzz", [], { cwd: spDir }).cod
 fs.rmSync(spRoot, { recursive: true, force: true });
 ok("ejecución robusta: binario en ruta con espacios se ejecuta citado (regresión Windows)");
 
-console.log(`\n== ${passed}/22 OK ==`);
+// 23. detalle por TC: el reporter JSON de la herramienta se parsea a casos estructurados
+// (nombre/estado/duración/error) y se plasma bajo cada capa en la evidencia (local + remoto).
+// 23a. el runner pide el reporter JSON y mapea su salida a `cases`.
+const repoCases = fs.mkdtempSync(path.join(os.tmpdir(), "qa-cases-"));
+fs.writeFileSync(path.join(repoCases, "package.json"), JSON.stringify({ name: "c", devDependencies: { vitest: "1" } }));
+fs.writeFileSync(path.join(repoCases, "vitest.config.ts"), "export default {}");
+const vitestJson = JSON.stringify({
+  testResults: [{
+    assertionResults: [
+      { ancestorTitles: ["auth"], title: "login redirige al dashboard", status: "passed", duration: 45, failureMessages: [] },
+      { ancestorTitles: ["cart"], title: "aplica cupón de descuento", status: "failed", duration: 88, failureMessages: ["AssertionError: expected 90 to be 80"] },
+    ],
+  }],
+});
+let casesArgs = null;
+const evCases = runUnitTests({ repoRoot: repoCases, exec: (cmd, args) => { casesArgs = args; return { code: 1, stdout: vitestJson, stderr: "" }; } })[0];
+assert.ok(casesArgs.includes("--reporter=json"));               // pidió el reporter JSON nativo
+assert.ok(Array.isArray(evCases.cases) && evCases.cases.length === 2);
+assert.deepStrictEqual(evCases.cases.map((c) => c.status), ["pass", "fail"]);
+assert.strictEqual(evCases.cases[0].name, "auth › login redirige al dashboard");
+assert.strictEqual(evCases.cases[0].duration, 45);
+assert.ok(/AssertionError/.test(evCases.cases[1].message));     // mensaje de error del TC fallido
+assert.ok(/2 TC/.test(evCases.narrative));                      // narrativa derivada de los casos
+// salida que NO es el JSON esperado → degrada a null (resumen de texto), nunca rompe
+const evNoCases = runUnitTests({ repoRoot: repoCases, exec: () => ({ code: 1, stdout: "2 failed", stderr: "" }) })[0];
+assert.strictEqual(evNoCases.cases, undefined);
+assert.ok(/2 failed/.test(evNoCases.narrative));
+fs.rmSync(repoCases, { recursive: true, force: true });
+// 23b. el sink local plasma el detalle de TC bajo cada capa en md y html.
+const repoSink = fs.mkdtempSync(path.join(os.tmpdir(), "qa-sink-cases-"));
+const sinkOut = writeLocalReport({
+  repoRoot: repoSink, profile: {}, workItemId: "TCDETAIL",
+  results: [{ layer: "unit", status: "fail", narrative: "vitest: exit 1", metrics: { tool: "vitest" }, cases: [
+    { name: "auth › login", status: "pass", duration: 45, message: null },
+    { name: "cart › cupón", status: "fail", duration: 88, message: "AssertionError: expected 90 to be 80" },
+  ] }],
+});
+const sinkMd = fs.readFileSync(sinkOut.mdPath, "utf8");
+assert.ok(/Detalle de pruebas \(TC ejecutados\)/.test(sinkMd));
+assert.ok(/auth › login/.test(sinkMd) && /cart › cupón/.test(sinkMd) && /AssertionError/.test(sinkMd));
+const sinkHtml = fs.readFileSync(sinkOut.htmlPath, "utf8");
+assert.ok(/Detalle de pruebas/.test(sinkHtml) && /<details/.test(sinkHtml));
+fs.rmSync(repoSink, { recursive: true, force: true });
+ok("detalle por TC: runner mapea el reporter JSON a `cases` (degrada a resumen si no hay JSON) y el sink lo plasma en md/html");
+
+console.log(`\n== ${passed}/23 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

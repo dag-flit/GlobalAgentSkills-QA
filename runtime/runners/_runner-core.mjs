@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { detectRepo } from "../detect/qa-detect.mjs";
+import { casesSummary } from "./parse-cases.mjs";
 
 // Resuelve el binario subiendo desde `startDir` (la cwd de la capa) hasta `repoRoot`,
 // mirando el `node_modules/.bin` de cada nivel. Esto cubre TODO layout:
@@ -126,17 +127,24 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
   // El spec puede ser un argv fijo (array) o una función que lo construye desde el
   // contexto. La función opera sobre el paquete del objetivo (recibe su cwd como repoRoot),
   // y puede devolver { skip: "razón" } para omitir con aviso (p.ej. conexión NO cableada),
-  // o { argv, skipCodes } para declarar exit codes que significan "la herramienta NO concluyó"
-  // (p.ej. semgrep exit 2 = error de escáner por red/config) → se OMITE en vez de fallar.
+  // o { argv, skipCodes, parseCases } donde:
+  //   - skipCodes  = exit codes que significan "la herramienta NO concluyó" (p.ej. semgrep
+  //                  exit 2 = error de escáner por red/config) → se OMITE en vez de fallar.
+  //   - parseCases = (out, {repoRoot}) => TC[] : extrae los casos individuales del reporter
+  //                  JSON de la herramienta; si no puede, devuelve null y se degrada al resumen.
   let argv;
   let skipCodes = [];
+  let parseCases = null;
   if (typeof spec === "function") {
     const resolved = spec({ repoRoot: cwd, profile, env, detection, info: { ...info, tool, cwd: target.cwd }, tool });
     if (!resolved || resolved.skip) {
       return { ...base, status: "skip", narrative: (resolved && resolved.skip) || `'${tool}'${where} sin configuración suficiente`, metrics: { tool, cwd: target.cwd } };
     }
     argv = Array.isArray(resolved) ? resolved : resolved.argv;
-    if (!Array.isArray(resolved) && Array.isArray(resolved.skipCodes)) skipCodes = resolved.skipCodes;
+    if (!Array.isArray(resolved)) {
+      if (Array.isArray(resolved.skipCodes)) skipCodes = resolved.skipCodes;
+      if (typeof resolved.parseCases === "function") parseCases = resolved.parseCases;
+    }
   } else {
     argv = spec;
   }
@@ -168,9 +176,28 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
   }
 
   const status = out.code === 0 ? "pass" : "fail";
-  const narrative = status === "pass" ? `${tool}${where}: ok` : `${tool}${where}: exit ${out.code}${detail ? ` — ${detail}` : ""}`;
 
-  return { ...base, status, narrative, metrics: { tool, cwd: target.cwd, exitCode: out.code } };
+  // TC individuales desde el reporter JSON (cuando el spec aporta parser). Best-effort: si la
+  // salida no es el JSON esperado, `cases` queda null y la narrativa cae al resumen de texto.
+  let cases = null;
+  if (parseCases) {
+    try {
+      cases = parseCases(out, { repoRoot: cwd });
+    } catch {
+      cases = null;
+    }
+  }
+  const hasCases = Array.isArray(cases) && cases.length > 0;
+  const casesDetail = hasCases ? casesSummary(cases) : null;
+
+  const narrative =
+    status === "pass"
+      ? `${tool}${where}: ok${casesDetail ? ` — ${casesDetail}` : ""}`
+      : `${tool}${where}: exit ${out.code}${casesDetail ? ` — ${casesDetail}` : detail ? ` — ${detail}` : ""}`;
+
+  const ev = { ...base, status, narrative, metrics: { tool, cwd: target.cwd, exitCode: out.code } };
+  if (hasCases) ev.cases = cases;
+  return ev;
 }
 
 /**

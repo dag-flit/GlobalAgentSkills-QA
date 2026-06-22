@@ -70,6 +70,7 @@ runtime:
     - runtime/detect/qa-detect.mjs
   runners:
     - runtime/runners/_runner-core.mjs    # lógica común (resolveBin/exec/runLayer)
+    - runtime/runners/parse-cases.mjs     # extrae TC individuales del reporter JSON por herramienta
     - runtime/runners/static-analysis.mjs
     - runtime/runners/unit.mjs
     - runtime/runners/e2e.mjs

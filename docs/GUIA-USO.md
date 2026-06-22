@@ -40,8 +40,8 @@ Opciones:
 - `--repo <dir>` / `-C` — equivalente a pasar la ruta posicional.
 
 ```bash
-node runtime/cli.mjs /ruta/al/repo -w 10194 -f 10118 -d "Abraham Cañon Vasquez"
-# → qa-evidence/<fecha>/WI-10194__FT-10118__Abraham-Canon-Vasquez/report.md
+node runtime/cli.mjs /ruta/al/repo -w 10194 -f 10118 -d "Dev Ñoño Pérez"
+# → qa-evidence/<fecha>/FT-10118__Dev-Nono-Perez/report.md
 ```
 
 ### Códigos de salida
@@ -89,16 +89,30 @@ testing:
 
 ## 3. Evidencia
 
-Siempre se escribe un reporte local en `<repo>/qa-evidence/<fecha>/WI-<id>/`. Si pasas
-`--feature`/`--developer`, la subcarpeta se vuelve `WI-<id>__FT-<feature>__<dev-slug>` (y el
-encabezado del reporte muestra Feature y Desarrollador). Así, corridas de distintos devs sobre
-la misma HU quedan en carpetas separadas y trazables, sin pisarse:
+Siempre se escribe un reporte local en `<repo>/qa-evidence/<fecha>/<subcarpeta>/`. La subcarpeta
+se nombra **netamente con el Feature y el dev**: `FT-<feature>__<dev-slug>` (y el encabezado del
+reporte muestra Feature y Desarrollador). Si no pasas `--feature`/`--developer`, cae al fallback
+`WI-<id>` para que la carpeta nunca quede sin nombre. Así, corridas de distintos devs sobre el
+mismo feature quedan en carpetas separadas y trazables, sin pisarse:
 
 - `report.md` — para diff / CI.
 - `report.html` — para abrir en el navegador.
 
-Cada fila es un `EvidenceObject`: `{ layer, tc_id, status, narrative, metrics }`. Con un
-tracker remoto, además se publica un resumen (ver abajo); el reporte local **siempre** queda.
+Cada fila de la tabla-resumen es un `EvidenceObject`: `{ layer, tc_id, status, narrative, metrics }`.
+Con un tracker remoto, además se publica un resumen (ver abajo); el reporte local **siempre** queda.
+
+### Detalle por TC (qué se ejecutó por debajo de cada capa)
+
+Bajo la tabla-resumen, el reporte incluye una sección **«Detalle de pruebas (TC ejecutados)»**
+con los casos individuales que corrió cada capa, agrupados por herramienta: por cada TC su
+**nombre, estado (✅/❌/⏭), duración y —si falló— el mensaje de error**. Así la evidencia no
+muestra solo «unit ✅», sino los TC concretos que respaldan ese resultado. El **mismo detalle**
+se publica en el tracker remoto (Discussion de ADO, comentario de GitHub/Jira).
+
+El detalle se obtiene del **reporter JSON nativo** de cada herramienta (sin instalar nada):
+`vitest`, `jest`, `playwright`, `eslint`, `ruff`, `semgrep`, `bandit`. Las herramientas sin
+JSON nativo (`tsc`, `mypy`, `pytest`, `dotnet test`, `cypress`, `newman`, `redocly`, `pgtap`/
+`prisma`) mantienen el resumen de texto, sin detalle por TC.
 
 ## 4. Publicar en un tracker (opcional)
 
@@ -139,7 +153,7 @@ node dist/plain/bin/qa.mjs /ruta/al/repo       # el paquete corre standalone
 ## 6. Verificar el kit
 
 ```bash
-node runtime/smoke-test.mjs        # → 22/22 OK
+node runtime/smoke-test.mjs        # → 23/23 OK
 ```
 
 Cubre, sin red, todo el plumbing: resolución de perfiles, detección, los 6 runners, el

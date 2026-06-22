@@ -4,10 +4,13 @@
 // adapter ADO en F2, solo si el sink lo requiere). En local arranca sin preflight.
 
 import { runLayer } from "./_runner-core.mjs";
+import { parsePlaywright } from "./parse-cases.mjs";
 
 // Prioridad fijada por qa-detect (playwright > cypress).
+// playwright emite el detalle por TC con su reporter JSON nativo → parsePlaywright.
+// cypress no trae JSON estándar a stdout: queda con el resumen de texto.
 const TOOLS = {
-  playwright: ["playwright", "test"],
+  playwright: () => ({ argv: ["playwright", "test", "--reporter=json"], parseCases: parsePlaywright }),
   cypress: ["cypress", "run"],
 };
 

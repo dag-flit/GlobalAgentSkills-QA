@@ -64,7 +64,14 @@ export class GithubAdapter extends TrackerAdapter {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const issue = (target && target.work_item_id) || (payload && payload.work_item_id) || null;
 
-    const local = writeLocalReport({ repoRoot: this.repoRoot, profile: this.profile, workItemId: issue || "local", results });
+    const local = writeLocalReport({
+      repoRoot: this.repoRoot,
+      profile: this.profile,
+      workItemId: issue || "local",
+      featureId: (target && target.feature_id) ?? (payload && payload.feature_id),
+      developer: (target && target.developer) ?? (payload && payload.developer),
+      results,
+    });
 
     let comment = null;
     if (issue) {
@@ -106,9 +113,31 @@ export class GithubAdapter extends TrackerAdapter {
       .join("\n");
     return (
       `**Resumen QA** — ✅ ${count("pass")} · ❌ ${count("fail")} · ⏭ ${count("skip")}\n\n` +
-      `| Capa | TC | Resultado | Notas |\n|------|----|-----------|-------|\n${rows}\n`
+      `| Capa | TC | Resultado | Notas |\n|------|----|-----------|-------|\n${rows}\n` +
+      casesMarkdown(results)
     );
   }
+}
+
+// Detalle de los TC ejecutados por debajo de cada capa, en Markdown (listas anidadas).
+function casesMarkdown(results) {
+  const withCases = results.filter((r) => Array.isArray(r.cases) && r.cases.length);
+  if (!withCases.length) return "";
+  const blocks = withCases.map((r) => {
+    const c = (s) => r.cases.filter((x) => x.status === s).length;
+    const where = r.metrics && r.metrics.cwd ? ` @ ${r.metrics.cwd}` : "";
+    const lines = r.cases.map((tc) => {
+      const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : "⏭";
+      const d = typeof tc.duration === "number" ? ` _(${tc.duration} ms)_` : "";
+      let line = `- ${ic} ${(tc.name || "").replace(/\|/g, "\\|")}${d}`;
+      if (tc.status === "fail" && tc.message) {
+        line += `\n  - ⚠ ${String(tc.message).split(/\r?\n/).slice(0, 3).join(" ⏎ ")}`;
+      }
+      return line;
+    });
+    return `**${r.layer} — ${(r.metrics && r.metrics.tool) || ""}**${where} · ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}\n${lines.join("\n")}`;
+  });
+  return `\n### Detalle de pruebas (TC ejecutados)\n\n${blocks.join("\n\n")}\n`;
 }
 
 export default GithubAdapter;

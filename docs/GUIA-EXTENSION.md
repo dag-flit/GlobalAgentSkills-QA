@@ -34,6 +34,10 @@ const TOOLS = {
   // o { argv, skipCodes }: declara exit codes que significan "error de herramienta, NO un
   // hallazgo" → se mapean a `skip` en vez de `fail` (p.ej. semgrep exit 2 = sin red/config):
   escaner: ({ profile }) => ({ argv: ["escaner", "--scan"], skipCodes: [2] }),
+  // o { argv, parseCases }: pide el reporter JSON de la herramienta y declara un parser que
+  // extrae los TC individuales `[{name,status,duration,message}]`. _runner-core lo invoca
+  // best-effort: si la salida no es el JSON esperado, omite `cases` y degrada al resumen.
+  mitest: () => ({ argv: ["mi-cli", "test", "--reporter=json"], parseCases: (out, { repoRoot }) => parseMiCli(out) }),
 };
 
 export function runMiCapa(opts = {}) {

@@ -4,6 +4,7 @@
 // ser el único modo. Hallazgos (exit != 0) → fail; sin escáner → skip con aviso.
 
 import { runLayer } from "./_runner-core.mjs";
+import { parseSemgrep, parseBandit } from "./parse-cases.mjs";
 
 // target_profile → config de semgrep. `generic`/`auto` usan el ruleset por defecto.
 function semgrepConfig(profile) {
@@ -26,9 +27,11 @@ const SCANNER_ERROR = [2];
 // fnmatch en Windows normaliza `/`→`\`, así que estos globs matchean en ambas plataformas.
 const BANDIT_EXCLUDE = "*/tests/*,*/test/*,*/.venv/*,*/venv/*,*/node_modules/*";
 
+// `--json` (semgrep) / `-f json` (bandit) hacen que cada hallazgo se plasme como un TC en la
+// evidencia, sin cambiar el mapeo de exit (hallazgo → fail; error de escáner exit 2 → skip).
 const TOOLS = {
-  semgrep: ({ profile }) => ({ argv: ["semgrep", "--error", "--quiet", "--config", semgrepConfig(profile)], skipCodes: SCANNER_ERROR }),
-  bandit: () => ({ argv: ["bandit", "-r", ".", "--exclude", BANDIT_EXCLUDE], skipCodes: SCANNER_ERROR }),
+  semgrep: ({ profile }) => ({ argv: ["semgrep", "--error", "--quiet", "--json", "--config", semgrepConfig(profile)], skipCodes: SCANNER_ERROR, parseCases: parseSemgrep }),
+  bandit: () => ({ argv: ["bandit", "-r", ".", "-f", "json", "--exclude", BANDIT_EXCLUDE], skipCodes: SCANNER_ERROR, parseCases: parseBandit }),
 };
 
 /** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */

@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runLayer } from "./_runner-core.mjs";
+import { parseJestLike } from "./parse-cases.mjs";
 
 // Busca el destino de `dotnet test` bajo baseDir: prefiere una solución (.sln) —corre TODOS
 // los proyectos de test— y si no hay, el primer proyecto de test (*.csproj con Test/Tests).
@@ -36,9 +37,11 @@ function findDotnetTarget(baseDir, { maxDepth = 4 } = {}) {
 }
 
 // Prioridad fijada por qa-detect (vitest > jest > pytest > *.csproj).
+// vitest/jest emiten el detalle por TC en formato Jest-JSON (reporter nativo, sin instalar
+// nada) → parseJestLike. pytest/dotnet no traen JSON nativo: quedan con el resumen de texto.
 const TOOLS = {
-  vitest: ["vitest", "run"],
-  jest: ["jest"],
+  vitest: () => ({ argv: ["vitest", "run", "--reporter=json"], parseCases: parseJestLike }),
+  jest: () => ({ argv: ["jest", "--json"], parseCases: parseJestLike }),
   pytest: ["pytest"],
   // función: localiza el .sln/.csproj y lo pasa explícito (recibe la cwd del objetivo como
   // base). Sin destino localizable → skip con aviso, no aborta.

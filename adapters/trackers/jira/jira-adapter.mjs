@@ -63,7 +63,14 @@ export class JiraAdapter extends TrackerAdapter {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const issue = (target && target.work_item_id) || (payload && payload.work_item_id) || null;
 
-    const local = writeLocalReport({ repoRoot: this.repoRoot, profile: this.profile, workItemId: issue || "local", results });
+    const local = writeLocalReport({
+      repoRoot: this.repoRoot,
+      profile: this.profile,
+      workItemId: issue || "local",
+      featureId: (target && target.feature_id) ?? (payload && payload.feature_id),
+      developer: (target && target.developer) ?? (payload && payload.developer),
+      results,
+    });
 
     let comment = null;
     if (issue) {
@@ -107,7 +114,25 @@ export class JiraAdapter extends TrackerAdapter {
   _summaryText(results) {
     const count = (s) => results.filter((r) => r.status === s).length;
     const lines = results.map((r) => `${r.status.toUpperCase()} ${r.layer}${r.tc_id ? " " + r.tc_id : ""}: ${r.narrative || ""}`);
-    return `Resumen QA — pass ${count("pass")} / fail ${count("fail")} / skip ${count("skip")}\n` + lines.join("\n");
+    let text = `Resumen QA — pass ${count("pass")} / fail ${count("fail")} / skip ${count("skip")}\n` + lines.join("\n");
+
+    // Detalle de los TC ejecutados por debajo de cada capa.
+    const withCases = results.filter((r) => Array.isArray(r.cases) && r.cases.length);
+    if (withCases.length) {
+      text += "\n\nDetalle de pruebas (TC ejecutados):";
+      for (const r of withCases) {
+        const c = (s) => r.cases.filter((x) => x.status === s).length;
+        const where = r.metrics && r.metrics.cwd ? ` @ ${r.metrics.cwd}` : "";
+        text += `\n${r.layer} — ${(r.metrics && r.metrics.tool) || ""}${where} · pass ${c("pass")} / fail ${c("fail")} / skip ${c("skip")}`;
+        for (const tc of r.cases) {
+          const mark = tc.status === "pass" ? "[OK]" : tc.status === "fail" ? "[X]" : "[-]";
+          const d = typeof tc.duration === "number" ? ` (${tc.duration} ms)` : "";
+          text += `\n  ${mark} ${tc.name}${d}`;
+          if (tc.status === "fail" && tc.message) text += `\n      ${String(tc.message).split(/\r?\n/).slice(0, 2).join(" ⏎ ")}`;
+        }
+      }
+    }
+    return text;
   }
 
   _adfToText(node) {
