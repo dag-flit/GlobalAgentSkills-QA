@@ -139,6 +139,30 @@ preflight: arranca directo.
 > El tipo de bug, estados, campos custom y transiciones se configuran en el **preset** del
 > tracker (`profiles/presets/<tracker>.yaml`), no en el código.
 
+### Manejo de novedades (Bug + reactivación + trazabilidad)
+
+Con un tracker remoto y `-w <HU>`, **cada corrida publica en la HU lo ejecutado** (resumen +
+detalle de TC). Si además hay **fallas**, el ciclo maneja la novedad **automáticamente**:
+agrupa las fallas por la HU a la que pertenecen (la HU del ciclo `-w`, o la `work_item_id` que
+declare cada resultado) y, por cada HU con fallas:
+
+1. **Crea un Bug enlazado a esa HU** (título `[QA] Novedad en HU <id>` + capas/casos fallidos
+   en la descripción; en ADO se enlaza con `Hierarchy-Reverse` al padre).
+2. **Reactiva la HU** al estado de novedad del perfil — ADO `System.State` ←
+   `azure.work_item.on_defect_reactivate_state` (p.ej. `Active`); GitHub reabre el issue; Jira
+   aplica `jira.transitions.reactivate`. **Nunca** se cierra la HU (eso es del PO).
+3. **Deja la trazabilidad** del Bug en un comentario de la **misma HU**: enlace al Bug + lista
+   de hallazgos que originaron la novedad.
+
+Aplica solo a trackers con estados (ADO/GitHub/Jira); `local` no dispara nada (no hay HU remota
+que reactivar; la traza del defecto queda en `qa-evidence/defects/`). El resultado se expone en
+`summary.novelties[]`. Si algún paso falla (red/permisos/workflow) **degrada con aviso**, no
+aborta el ciclo ni las demás HUs.
+
+> **Guarda sin `-w`:** un tracker remoto **sin** work item degrada a **solo reporte local +
+> aviso** (`summary.warnings[]`, que el CLI imprime con `⚠`): no intenta comentar sobre una HU
+> inexistente. Para `local` no aplica. Pasa siempre `-w <HU>` al publicar en un tracker remoto.
+
 ## 5. Empaquetar para otro runtime
 
 ```bash
@@ -153,8 +177,9 @@ node dist/plain/bin/qa.mjs /ruta/al/repo       # el paquete corre standalone
 ## 6. Verificar el kit
 
 ```bash
-node runtime/smoke-test.mjs        # → 23/23 OK
+node runtime/smoke-test.mjs        # → 25/25 OK
 ```
 
 Cubre, sin red, todo el plumbing: resolución de perfiles, detección, los 6 runners, el
-orquestador (local y dual), los 4 adapters de tracker, el CLI y el empaquetador.
+orquestador (local y dual), el manejo de novedades (Bug + reactivación + trazabilidad) y la
+guarda sin `-w`, los 4 adapters de tracker, el CLI y el empaquetador.

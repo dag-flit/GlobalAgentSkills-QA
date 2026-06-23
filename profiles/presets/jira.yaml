@@ -21,3 +21,4 @@ jira:
   transitions:            # ids de transición del workflow (ajustar por proyecto)
     pass: "31"            # p.ej. "Done"
     fail: "21"            # p.ej. "In Progress"
+    reactivate: "21"      # transición al reactivar una HU con novedad (p.ej. "In Progress")

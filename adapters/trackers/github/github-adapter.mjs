@@ -103,6 +103,38 @@ export class GithubAdapter extends TrackerAdapter {
     return { ok: res.status >= 200 && res.status < 300, state, status: res.status };
   }
 
+  // Reactiva la HU con novedad: en GitHub equivale a REABRIR el issue (state: open) y dejar
+  // la trazabilidad del defecto en un comentario del mismo issue.
+  async reactivateRequirement(id, info = {}) {
+    const out = { ok: true, mode: MODE, id: String(id) };
+    const re = await this.client.updateIssue(id, { state: "open" });
+    out.state = "open";
+    out.stateOk = re.status >= 200 && re.status < 300;
+    if (!out.stateOk) out.stateStatus = re.status;
+
+    const c = await this.client.addComment(id, this._traceMarkdown(info));
+    out.commentOk = c.status >= 200 && c.status < 300;
+    out.commentId = (c.json && c.json.id) ?? null;
+    if (!out.commentOk) out.commentStatus = c.status;
+
+    out.ok = out.stateOk && out.commentOk;
+    return out;
+  }
+
+  _traceMarkdown(info = {}) {
+    const bug = info.bugId ? `#${info.bugId}` : "(no se pudo crear el issue de defecto)";
+    const items = Array.isArray(info.items) ? info.items : [];
+    const lines = items.map((r) => {
+      const tc = r.tc_id ? ` ${r.tc_id}` : "";
+      const tool = r.metrics && r.metrics.tool ? ` [${r.metrics.tool}]` : "";
+      return `- ❌ ${r.layer}${tool}${tc} — ${(r.narrative || "falla").replace(/\|/g, "\\|")}`;
+    });
+    return (
+      `🔴 **Novedad QA** — issue reabierto. Defecto de trazabilidad: ${bug}\n\n` +
+      `Hallazgos que originaron la novedad:\n${lines.join("\n")}`
+    );
+  }
+
   _summaryMarkdown(results) {
     const count = (s) => results.filter((r) => r.status === s).length;
     const rows = results

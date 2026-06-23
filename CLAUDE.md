@@ -12,7 +12,7 @@ PAT, sin Cursor y sin configurar nada**. El tracker es un plug-in opcional: hay 
 (`local`, `azure-devops`, `github`, `jira`) y se cambia con una línea de perfil.
 
 Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensión en `docs/`.
-**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 23/23.
+**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 25/25.
 
 ## Estado actual
 
@@ -112,6 +112,36 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensió
   - Smoke test: `node runtime/smoke-test.mjs` → **22/22 OK** (20 pnpm; 21 stack mixto unit
     vitest+dotnet; 22 ruta con espacios — regresión Windows).
 
+## Manejo de novedades (Bug + reactivación + trazabilidad) — HECHO
+
+Cuando una corrida deja **fallas**, el orquestador (`runQaCycle`, tras `publishEvidence`) maneja
+la **novedad automáticamente**, agrupando las fallas por la **HU** a la que pertenecen:
+- **`groupFailuresByRequirement`**: cada `EvidenceObject` con `status:"fail"` se asigna a su HU
+  efectiva (`result.work_item_id` si lo declara; si no, la HU del ciclo `-w`). Sin HU real
+  (`local`) no hay novedad. Una HU por grupo.
+- Por cada HU con fallas: **`createDefect`** (Bug **enlazado a esa HU** vía `parent_id`; título
+  `[QA] Novedad en HU <id>` + capas/casos fallidos en la descripción) → **`reactivateRequirement`**.
+- **Contrato nuevo `reactivateRequirement(id, {bugId, items})`** (en los 4 adapters + base +
+  CONTRACT): reactiva la HU al estado de novedad del perfil (**NUNCA** Closed — exclusivo PO) y
+  deja un **comentario de trazabilidad** en la MISMA HU enlazando el Bug y listando los hallazgos.
+  - `azure-devops`: PATCH `System.State` ← `azure.work_item.on_defect_reactivate_state` (`Active`)
+    + comentario HTML con enlace clicable al Bug (`ado-rest.workItemWebUrl`). `_supervisionPrefix`
+    se reusa en resumen y trazabilidad.
+  - `github`: reabre el issue (`state:open`) + comentario markdown. `jira`: transición
+    `jira.transitions.reactivate` (preset) + comentario ADF. `local`: no-op trazable (sin red).
+- Gated por `capabilities().states` → local no dispara nada (no hay HU remota que reactivar).
+  Degrada con aviso: un fallo de red en un paso se registra en `summary.novelties[]`, no aborta.
+- **Punto ya cubierto:** "al ejecutar cualquier prueba, plasmar en ADO lo ejecutado" lo hace
+  `publishEvidence` (resumen + detalle de TC en la Discussion de la HU) en CADA corrida — no
+  requirió cambios.
+- Smoke test caso 24: reactivación unit (PATCH Active + comentario con enlace al Bug) + ciclo
+  completo (falla → Bug enlazado a la HU + reactivación) offline.
+- **Guarda online (paridad offline↔online):** un tracker remoto sin `-w` (workItemId=`local`)
+  NO intenta comentar sobre una HU inexistente (que daría 404 online): `runQaCycle` calcula
+  `requirementId` (null si remoto sin HU real) y degrada a SOLO reporte local + `summary.warnings[]`
+  (el CLI los imprime con `⚠`). Para `local` no aplica (`local` es nombre de carpeta válido). Las
+  novedades igual se crean para resultados que declaren su propia `work_item_id`. Smoke test caso 25.
+
 ## Invariantes (no romper)
 
 1. **`core/` es portable.** Cero literales de dominio: nada de `FLIT`, `abrahamc`, `flitsas`,
@@ -144,7 +174,7 @@ runtime/evidence/       sink local (md+html)
 runtime/orchestrator.mjs  runQaCycle (preflight condicional → detect → runners → sink)
 runtime/cli.mjs         entrypoint del kit
 runtime/delivery/build.mjs  empaqueta core/ a plain/claude-code/cursor
-runtime/smoke-test.mjs  prueba el plumbing extremo a extremo (19/19)
+runtime/smoke-test.mjs  prueba el plumbing extremo a extremo (25/25)
 docs/                   arquitectura + guías (GUIA-USO, GUIA-AGENTES-SKILLS, GUIA-EXTENSION)
 delivery/               docs por target (la salida real se genera en dist/)
 packs/dev-side/         dev-tester (opcional, no se instala)
@@ -159,7 +189,7 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 23/23 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 25/25 OK)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
 node runtime/cli.mjs [repoRoot] -w <HU> -f <FT> -d "<dev>"   # con trazabilidad por dev
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/

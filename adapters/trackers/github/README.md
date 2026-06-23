@@ -5,7 +5,7 @@ Implementa el contrato `tracker-adapter` sobre la REST de GitHub Issues. Se sele
 
 ## Archivos
 
-- `github-adapter.mjs` — los 7 métodos + `capabilities`.
+- `github-adapter.mjs` — los 8 métodos + `capabilities`.
 - `github-rest.mjs` — cliente REST (rutas/auth). `owner/repo` y token desde env.
 
 ## Variables (`env`)
@@ -23,6 +23,7 @@ Implementa el contrato `tracker-adapter` sobre la REST de GitHub Issues. Se sele
 | `createDefect(defect)` | crea issue con la label de defecto del preset |
 | `updateCycle(id, fields)` | **no-op** (GitHub no tiene custom fields; usa labels) |
 | `closeArtifact(id, result)` | PATCH issue a `closed`/`open` según pass/fail |
+| `reactivateRequirement(id, info)` | reabre el issue (`state: open`) + comentario markdown de trazabilidad con el defecto y los hallazgos |
 
 `capabilities()`: `custom_fields:false`, `comments/states:true`. Los adjuntos binarios no se
 suben por la REST de issues: los archivos de evidencia se **listan** en el comentario

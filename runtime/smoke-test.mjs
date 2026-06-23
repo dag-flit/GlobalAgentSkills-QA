@@ -776,6 +776,70 @@ assert.ok(/Detalle de pruebas/.test(sinkHtml) && /<details/.test(sinkHtml));
 fs.rmSync(repoSink, { recursive: true, force: true });
 ok("detalle por TC: runner mapea el reporter JSON a `cases` (degrada a resumen si no hay JSON) y el sink lo plasma en md/html");
 
-console.log(`\n== ${passed}/23 OK ==`);
+// 24. Novedad → Bug enlazado a la HU + reactivación de la HU + trazabilidad en su comentario.
+// 24a. reactivateRequirement (ADO, unit): PATCH estado a "Active" + comentario con enlace al Bug.
+const repoNov = fs.mkdtempSync(path.join(os.tmpdir(), "qa-nov-"));
+const fakeNov = makeFakeAdo([
+  [(r) => r.method === "POST" && r.url.includes("/workItems/123/comments"), () => ({ status: 201, json: { id: 77 } })],
+  [(r) => r.method === "PATCH" && r.url.includes("/wit/workitems/123"), () => ({ status: 200, json: { id: 123 } })],
+]);
+const adoNov = getAdapter({ profile: pFlit, env: creds, repoRoot: repoNov, http: fakeNov.http });
+const react = await adoNov.reactivateRequirement("123", {
+  bugId: "999",
+  items: [{ layer: "e2e", tc_id: "TC-1", status: "fail", narrative: "login roto", metrics: { tool: "playwright" } }],
+});
+assert.strictEqual(react.ok, true);
+assert.strictEqual(react.state, "Active");                       // on_defect_reactivate_state del preset
+const reactPatch = JSON.parse(fakeNov.find("PATCH", "/wit/workitems/123").body);
+assert.ok(reactPatch.some((o) => o.path === "/fields/System.State" && o.value === "Active"));
+const reactComment = JSON.parse(fakeNov.find("POST", "/workItems/123/comments").body);
+assert.ok(/Novedad QA/.test(reactComment.text));
+assert.ok(/_workitems\/edit\/999/.test(reactComment.text));      // enlace de trazabilidad al Bug
+assert.ok(/login roto/.test(reactComment.text));                 // hallazgo listado en la HU
+
+// 24b. ciclo completo (runQaCycle, ADO offline): una falla dispara createDefect + reactivación.
+fs.writeFileSync(path.join(repoNov, "package.json"), JSON.stringify({ name: "nov", devDependencies: { vitest: "1" } }));
+fs.writeFileSync(path.join(repoNov, "vitest.config.ts"), "export default {}");
+const pNov = deepMerge(pFlit, { testing: { layers_enabled: ["unit"] } });   // acota la corrida a unit
+const fakeCycle = makeFakeAdo([
+  [(r) => r.method === "GET" && r.url.includes("/_apis/projects/Proj"), () => ({ status: 200, json: { id: "p1" } })],
+  [(r) => r.method === "POST" && r.url.includes("/workItems/123/comments"), () => ({ status: 201, json: { id: 1 } })],
+  [(r) => r.method === "POST" && r.url.includes("/wit/workitems/$Bug"), () => ({ status: 200, json: { id: 999 } })],
+  [(r) => r.method === "PATCH" && r.url.includes("/wit/workitems/123"), () => ({ status: 200, json: { id: 123 } })],
+]);
+const novCycle = await runQaCycle({
+  repoRoot: repoNov, env: creds, profile: pNov, workItemId: "123", http: fakeCycle.http,
+  exec: () => ({ code: 1, stdout: "1 failed", stderr: "" }),
+});
+assert.ok(Array.isArray(novCycle.novelties) && novCycle.novelties.length === 1);
+assert.strictEqual(novCycle.novelties[0].work_item_id, "123");
+assert.strictEqual(novCycle.novelties[0].bugId, "999");
+assert.strictEqual(novCycle.novelties[0].reactivation.state, "Active");
+const bugPayload = JSON.parse(fakeCycle.find("POST", "/wit/workitems/$Bug").body);
+assert.ok(bugPayload.some((o) => o.path === "/relations/-"));    // Bug enlazado a la HU padre
+fs.rmSync(repoNov, { recursive: true, force: true });
+ok("novedad: crea Bug enlazado a la HU, la reactiva (Active) y deja trazabilidad en su comentario");
+
+// 25. Guarda online: tracker remoto SIN -w (workItemId="local") NO comenta sobre una HU
+// inexistente (evitaría un 404 online); degrada a solo reporte local + aviso.
+const repoGuard = fs.mkdtempSync(path.join(os.tmpdir(), "qa-guard-"));
+fs.writeFileSync(path.join(repoGuard, "package.json"), JSON.stringify({ name: "g", devDependencies: { vitest: "1" } }));
+fs.writeFileSync(path.join(repoGuard, "vitest.config.ts"), "export default {}");
+const pGuard = deepMerge(pFlit, { testing: { layers_enabled: ["unit"] } });
+const fakeGuard = makeFakeAdo([
+  [(r) => r.method === "GET" && r.url.includes("/_apis/projects/Proj"), () => ({ status: 200, json: { id: "p1" } })],
+]);
+const guardCycle = await runQaCycle({
+  repoRoot: repoGuard, env: creds, profile: pGuard, http: fakeGuard.http,   // SIN workItemId → "local"
+  exec: () => ({ code: 1, stdout: "1 failed", stderr: "" }),
+});
+assert.ok(Array.isArray(guardCycle.warnings) && guardCycle.warnings.some((w) => /-w/.test(w)));
+assert.ok(!fakeGuard.calls.some((c) => c.method === "POST" && /\/comments/.test(c.url)));   // NO comentó en la HU
+assert.ok(!fakeGuard.calls.some((c) => /\$Bug/.test(c.url)));                                // NO creó Bug (sin HU real)
+assert.ok(guardCycle.report && guardCycle.report.local && fs.existsSync(guardCycle.report.local.mdPath)); // sí dejó reporte local
+fs.rmSync(repoGuard, { recursive: true, force: true });
+ok("guarda online: tracker remoto sin -w no comenta sobre HU inexistente; degrada a reporte local + aviso");
+
+console.log(`\n== ${passed}/25 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

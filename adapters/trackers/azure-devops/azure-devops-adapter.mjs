@@ -213,6 +213,33 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     return { ok: res.status >= 200 && res.status < 300, state, status: res.status };
   }
 
+  // Reactiva la HU con novedad y deja la TRAZABILIDAD del Bug en su Discussion.
+  // El estado destino sale del perfil (azure.work_item.on_defect_reactivate_state, p.ej.
+  // "Active"); NUNCA Closed — eso es exclusivo del PO. Si el perfil no lo define, no toca
+  // el estado pero igual deja el comentario de trazabilidad (degrada con aviso).
+  async reactivateRequirement(id, info = {}) {
+    const wi = this._wi();
+    const out = { ok: true, mode: MODE, id: String(id) };
+
+    const state = wi.on_defect_reactivate_state;
+    if (state) {
+      const res = await this.client.patchWorkItem(id, [{ op: "add", path: "/fields/System.State", value: state }]);
+      out.state = state;
+      out.stateOk = res.status >= 200 && res.status < 300;
+      if (!out.stateOk) out.stateStatus = res.status;
+    } else {
+      out.stateSkipped = "sin azure.work_item.on_defect_reactivate_state en el perfil";
+    }
+
+    const res = await this.client.addComment(id, this._traceHtml(info));
+    out.commentOk = res.status >= 200 && res.status < 300;
+    out.commentId = (res.json && res.json.id) ?? null;
+    if (!out.commentOk) out.commentStatus = res.status;
+
+    out.ok = out.stateOk !== false && out.commentOk;
+    return out;
+  }
+
   // ── helpers internos ────────────────────────────────────────────────────────
   _wi() {
     return (this.profile.azure && this.profile.azure.work_item) || {};
@@ -222,6 +249,16 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
   }
   _field(key, fallback) {
     return this._fields()[key] || fallback;
+  }
+
+  // Bloque de supervisión (reusado por el resumen y la trazabilidad). Vacío si no aplica.
+  _supervisionPrefix() {
+    const sup = this.profile.supervision;
+    if (!sup || !sup.enabled) return "";
+    const text = (sup.comment_prefix || "")
+      .replace("{agent_or_skill}", "qa-orchestrator")
+      .replace("{lead_email}", this.env[(sup.lead_email || "").replace(/^env\./, "")] || sup.lead_email || "");
+    return `<p><em>${esc(text)}</em></p>`;
   }
 
   _summaryHtml(results) {
@@ -234,20 +271,36 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
         )}</td><td>${esc(r.narrative || "")}</td></tr>`;
       })
       .join("");
-    const sup = this.profile.supervision;
-    const prefix =
-      sup && sup.enabled
-        ? `<p><em>${esc(
-            (sup.comment_prefix || "").replace("{agent_or_skill}", "qa-orchestrator").replace(
-              "{lead_email}",
-              this.env[(sup.lead_email || "").replace(/^env\./, "")] || sup.lead_email || ""
-            )
-          )}</em></p>`
-        : "";
     return (
-      `${prefix}<p><strong>Resumen QA</strong> — ✅ ${count("pass")} · ❌ ${count("fail")} · ⏭ ${count("skip")}</p>` +
+      `${this._supervisionPrefix()}<p><strong>Resumen QA</strong> — ✅ ${count("pass")} · ❌ ${count("fail")} · ⏭ ${count("skip")}</p>` +
       `<table><thead><tr><th>Capa</th><th>TC</th><th>Resultado</th><th>Notas</th></tr></thead><tbody>${rows}</tbody></table>` +
       casesHtml(results)
+    );
+  }
+
+  // Comentario de trazabilidad que se deja en la HU reactivada: enlaza el Bug creado y
+  // lista los hallazgos (capa/TC/narrativa) que originaron la novedad.
+  _traceHtml(info = {}) {
+    const wi = this._wi();
+    const bugId = info.bugId;
+    const link = bugId
+      ? `<a href="${esc(this.client.workItemWebUrl(bugId))}">#${esc(bugId)}</a>`
+      : "(no se pudo crear el Bug)";
+    const items = Array.isArray(info.items) ? info.items : [];
+    const rows = items
+      .map((r) => {
+        const tc = r.tc_id ? ` ${esc(r.tc_id)}` : "";
+        const tool = r.metrics && r.metrics.tool ? ` [${esc(r.metrics.tool)}]` : "";
+        return `<li>❌ ${esc(r.layer)}${tool}${tc} — ${esc(r.narrative || "falla")}</li>`;
+      })
+      .join("");
+    const stateNote = wi.on_defect_reactivate_state
+      ? ` Historia reactivada a <strong>${esc(wi.on_defect_reactivate_state)}</strong>.`
+      : "";
+    return (
+      `${this._supervisionPrefix()}` +
+      `<p>🔴 <strong>Novedad QA</strong> — se registró el Bug de trazabilidad ${link}.${stateNote}</p>` +
+      `<p>Hallazgos que originaron la novedad:</p><ul>${rows}</ul>`
     );
   }
 }

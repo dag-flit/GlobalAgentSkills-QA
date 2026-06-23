@@ -111,6 +111,40 @@ export class JiraAdapter extends TrackerAdapter {
     return { ok: res.status >= 200 && res.status < 300, transitionId, status: res.status };
   }
 
+  // Reactiva la HU con novedad mediante la transición `jira.transitions.reactivate` (si está
+  // configurada) y deja la trazabilidad del defecto en un comentario ADF del mismo issue.
+  async reactivateRequirement(id, info = {}) {
+    const out = { ok: true, mode: MODE, id: String(id) };
+    const tr = (this.profile.jira && this.profile.jira.transitions) || {};
+    if (tr.reactivate) {
+      const re = await this.client.transition(id, tr.reactivate);
+      out.transitionId = tr.reactivate;
+      out.stateOk = re.status >= 200 && re.status < 300;
+      if (!out.stateOk) out.stateStatus = re.status;
+    } else {
+      out.stateSkipped = "sin jira.transitions.reactivate en el preset";
+    }
+
+    const c = await this.client.addComment(id, adf(this._traceText(info)));
+    out.commentOk = c.status >= 200 && c.status < 300;
+    out.commentId = (c.json && c.json.id) ?? null;
+    if (!out.commentOk) out.commentStatus = c.status;
+
+    out.ok = out.stateOk !== false && out.commentOk;
+    return out;
+  }
+
+  _traceText(info = {}) {
+    const bug = info.bugId ? info.bugId : "(no se pudo crear el defecto)";
+    const items = Array.isArray(info.items) ? info.items : [];
+    const lines = items.map((r) => {
+      const tool = r.metrics && r.metrics.tool ? ` [${r.metrics.tool}]` : "";
+      const tc = r.tc_id ? ` ${r.tc_id}` : "";
+      return `FAIL ${r.layer}${tool}${tc}: ${r.narrative || "falla"}`;
+    });
+    return `Novedad QA — defecto de trazabilidad: ${bug}\nHallazgos que originaron la novedad:\n` + lines.join("\n");
+  }
+
   _summaryText(results) {
     const count = (s) => results.filter((r) => r.status === s).length;
     const lines = results.map((r) => `${r.status.toUpperCase()} ${r.layer}${r.tc_id ? " " + r.tc_id : ""}: ${r.narrative || ""}`);
