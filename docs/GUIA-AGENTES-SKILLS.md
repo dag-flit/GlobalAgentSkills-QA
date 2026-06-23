@@ -11,7 +11,9 @@ qa-orchestrator (runQaCycle)
   ├─ 2. preflight CONDICIONAL  (solo si el tracker requiere red)
   ├─ 3. qa-detect              (qué capas encender)
   ├─ 4. runners por capa       (static/unit/e2e/db/security/api) → EvidenceObject[]
-  └─ 5. adapter.publishEvidence → evidence-sink (local md/html | comentario remoto)
+  ├─ 5. adapter.publishEvidence → evidence-sink (local md/html | comentario remoto)
+  └─ 6. novedades (si hay fallas) → por HU: createDefect + reactivateRequirement
+        (Bug enlazado a la HU + reactivar la HU + comentario de trazabilidad)
 ```
 
 Regla de oro: **las skills (runners) nunca hablan con un tracker**. Emiten un objeto de
@@ -55,8 +57,17 @@ con ADO/github/jira corre preflight y un FAIL detiene el ciclo antes de los runn
 ```js
 import { runQaCycle } from "./runtime/orchestrator.mjs";
 const summary = await runQaCycle({ repoRoot, env: process.env, workItemId: "123" });
-// { ok, stopped, tracker, preflight, detection, results: EvidenceObject[], report }
+// { ok, stopped, tracker, preflight, detection, results: EvidenceObject[], report,
+//   novelties,   // null=no aplica | []=sin fallas | [{work_item_id,bugId,reactivation}]
+//   warnings }   // avisos no fatales (p.ej. tracker remoto sin -w)
 ```
+
+Tras publicar la evidencia, si hay **fallas** el orquestador maneja la **novedad** (paso 6):
+agrupa las fallas por la HU a la que pertenecen (la `work_item_id` que declare cada resultado,
+o la HU del ciclo `-w`) y por cada HU crea un Bug enlazado a ella (`createDefect`) y la reactiva
+con trazabilidad (`reactivateRequirement`). Gated por `capabilities().states` (en `local` es
+no-op). **Guarda sin `-w`:** un tracker remoto sin HU real degrada a solo reporte local + un
+aviso en `warnings`, en vez de comentar sobre una HU inexistente (404 online).
 
 ## Skills — detección
 
@@ -121,13 +132,15 @@ offline-testable.
 | Adapter | `tracker:` | Evidencia | custom_fields | Notas |
 |---------|-----------|-----------|:-------------:|-------|
 | `local` | `local` (default) | md+html en `qa-evidence/` | no | sin red, sin PAT, preflight siempre OK |
-| `azure-devops` | `azure-devops` | Discussion del padre + adjuntos TC→Task + local | sí (`Custom.*`) | `tc-match` resuelve `tc_id`→Task |
-| `github` | `github` | comentario en el issue + local | no (labels) | adjuntos se listan en el comentario |
-| `jira` | `jira` | comentario ADF + local | sí (`customfield_*`) | transiciones para cerrar |
+| `azure-devops` | `azure-devops` | Discussion del padre + adjuntos TC→Task + local | sí (`Custom.*`) | `tc-match` resuelve `tc_id`→Task; reactiva la HU a `Active` |
+| `github` | `github` | comentario en el issue + local | no (labels) | adjuntos se listan en el comentario; reactiva = reabrir issue |
+| `jira` | `jira` | comentario ADF + local | sí (`customfield_*`) | transiciones para cerrar y para `reactivate` |
 
-Los 7 métodos del contrato: `preflight`, `getWorkItem`, `resolveRequirements`,
-`publishEvidence`, `createDefect`, `updateCycle`, `closeArtifact`, más `capabilities()`.
-`capabilities()` permite que las skills **degraden** lo que un tracker no soporta sin romperse.
+Los 8 métodos del contrato: `preflight`, `getWorkItem`, `resolveRequirements`,
+`publishEvidence`, `createDefect`, `updateCycle`, `closeArtifact`, `reactivateRequirement`, más
+`capabilities()`. `reactivateRequirement(id, {bugId, items})` reactiva la HU con novedad (estado
+del perfil; nunca la cierra) y deja la trazabilidad del Bug en su comentario. `capabilities()`
+permite que las skills **degraden** lo que un tracker no soporta sin romperse.
 
 ## Perfiles
 
@@ -150,7 +163,7 @@ Resolución: `default ← presets/<tracker> ← overlays/<org> ← .qa/qa-projec
 | `runtime/evidence/local-sink.mjs` | renderiza el reporte local md+html |
 | `runtime/cli.mjs` | entrypoint del kit (códigos de salida 0/1/2/3) |
 | `runtime/delivery/build.mjs` | empaqueta `core/` a plain/claude-code/cursor |
-| `runtime/smoke-test.mjs` | prueba todo el plumbing sin red (23/23) |
+| `runtime/smoke-test.mjs` | prueba todo el plumbing sin red (25/25) |
 | `adapters/_shared/parse-ac.mjs` | normaliza AC desde texto/markdown (github+jira) |
 
 ## Cómo se invocan

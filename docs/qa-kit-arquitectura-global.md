@@ -118,6 +118,7 @@ interface TrackerAdapter:
   create_defect(defect) -> id
   update_cycle(id, fields)           # local: no-op / escribe a reporte
   close_artifact(id, result)
+  reactivate_requirement(id, info)   # reactiva la HU con novedad + comentario de trazabilidad del Bug
   capabilities() -> {attachments, custom_fields, comments, states}
 ```
 

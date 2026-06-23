@@ -90,11 +90,15 @@ constructor(ctx = {}) {
 }
 ```
 
-Implementa los 7 métodos + `capabilities()`. Reglas:
+Implementa los 8 métodos + `capabilities()`. Reglas:
 - `preflight()`: primero valida presencia de variables `env`; luego una llamada REST real.
 - Estados, campos, tags, transiciones → **del perfil** (`profile.<nombre>.*`), nunca cableados.
 - `publishEvidence()`: escribe el reporte local (`writeLocalReport`) **y** publica el resumen
   remoto. Si algo no se puede (p.ej. subir binarios), regístralo, no lo finjas.
+- `reactivateRequirement(id, {bugId, items})`: reactiva la HU con novedad al estado de novedad
+  del perfil (**nunca** la cierra) y deja un comentario de trazabilidad enlazando el Bug. El
+  orquestador lo invoca por cada HU con fallas (gated por `capabilities().states`). Si el
+  tracker no soporta estados/comentarios → no-op trazable (ver `local`).
 - `capabilities()`: marca con honestidad qué soporta; las skills degradan en consecuencia.
 
 **Paso 3 — preset** `profiles/presets/<nombre>.yaml` (`tracker: <nombre>`, `evidence.sink: dual`,
@@ -103,7 +107,7 @@ y la config específica bajo una clave `<nombre>:`).
 **Paso 4 — registrar** en `core/tracker-adapter/index.mjs` (`REGISTRY`).
 
 **Paso 5 — smoke test** con un transporte `http` falso que devuelva respuestas canónicas y
-permita inspeccionar las requests (método/url/body). Verifica los 7 métodos.
+permita inspeccionar las requests (método/url/body). Verifica los 8 métodos.
 
 **Paso 6 — docs**: `adapters/trackers/<nombre>/README.md` y la tabla de `CONTRACT.md`.
 

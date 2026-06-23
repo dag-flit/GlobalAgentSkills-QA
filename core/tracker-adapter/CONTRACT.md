@@ -13,7 +13,16 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 | `createDefect(defect)` | Registra un defecto | Archivo md en `qa-evidence/defects/` |
 | `updateCycle(id, fields)` | Campos de ciclo (TestStartDate, ReTest…) | no-op |
 | `closeArtifact(id, result)` | Cierra Task-TC / Bug (nunca el padre) | no-op |
+| `reactivateRequirement(id, info)` | Reactiva la HU con novedad + comentario de trazabilidad del Bug | no-op (sin estados/comentarios) |
 | `capabilities()` | Qué soporta el tracker | ver abajo |
+
+### `reactivateRequirement(id, info)` — manejo de novedad sobre el requisito
+
+A diferencia de `closeArtifact` (que cierra Task/Bug y **nunca** toca el padre), este método **sí** opera sobre el requisito padre (HU), pero solo lo **reactiva** al estado de novedad del perfil — nunca lo cierra (eso es exclusivo del PO). Además deja un comentario de **trazabilidad** en la misma HU enlazando el Bug creado y los hallazgos.
+
+- `info` = `{ bugId, items }` — `bugId`: id del defecto recién creado (o `null` si falló); `items`: `EvidenceObject[]` con las fallas de esa HU.
+- Estado destino: `azure.work_item.on_defect_reactivate_state` (ADO, p.ej. `Active`), reabrir issue (`github`), `jira.transitions.reactivate` (jira). Si el tracker no lo define → solo comenta (degrada con aviso).
+- El orquestador lo invoca **automáticamente** tras `publishEvidence`, una vez por cada HU con fallas (gated por `capabilities().states`; en `local` es no-op). El Bug se crea **enlazado a la HU que contiene la novedad** (la evidencia puede declarar su `work_item_id`; si no, se usa la HU del ciclo).
 
 ## `capabilities()` — degradación elegante
 
@@ -65,7 +74,7 @@ Trackers implementados: `local`, `azure-devops`, `github`, `jira`. Para añadir 
 
 1. Crear `adapters/trackers/<nombre>/<nombre>-adapter.mjs` extendiendo `TrackerAdapter`,
    con su cliente REST de transporte **inyectable** (`<nombre>-rest.mjs`) → offline-testable.
-2. Implementar los 7 métodos + `capabilities()`.
+2. Implementar los 8 métodos + `capabilities()`.
 3. Registrarlo en `core/tracker-adapter/index.mjs` (`REGISTRY`).
 4. Crear `profiles/presets/<nombre>.yaml` con sus defaults.
 

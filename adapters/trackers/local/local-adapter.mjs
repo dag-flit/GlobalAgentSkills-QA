@@ -85,6 +85,18 @@ export class LocalAdapter extends TrackerAdapter {
   async closeArtifact(id, result) {
     return { ok: true, noop: true, reason: "tracker local: nada que cerrar" };
   }
+
+  async reactivateRequirement(id, info = {}) {
+    // local no tiene estados ni comentarios remotos (capabilities.states/comments === false):
+    // la trazabilidad del defecto ya queda en qa-evidence/defects/ vía createDefect.
+    return {
+      ok: true,
+      noop: true,
+      reason: "tracker local: sin estados ni comentarios remotos",
+      id: String(id),
+      bugId: info.bugId || null,
+    };
+  }
 }
 
 function extractAC(text) {

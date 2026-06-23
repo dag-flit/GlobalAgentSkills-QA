@@ -9,7 +9,7 @@ y sin configurar nada**. El tracker es un plug-in opcional: `local` (default), `
 > overlay mínimo. Ningún runner habla con un tracker: todos emiten evidencia normalizada a un
 > *sink*, y el *sink* decide el destino.
 
-Estado: **roadmap F0–F5 completo**. Smoke test **22/22**. Node 18+ (cross-platform, `.mjs`).
+Estado: **roadmap F0–F5 completo**. Smoke test **25/25**. Node 18+ (cross-platform, `.mjs`).
 
 ## Inicio rápido (sin instalar nada)
 
@@ -18,7 +18,7 @@ Estado: **roadmap F0–F5 completo**. Smoke test **22/22**. Node 18+ (cross-plat
 node runtime/cli.mjs /ruta/al/repo
 
 # verificar el plumbing del kit
-node runtime/smoke-test.mjs        # → 22/22 OK
+node runtime/smoke-test.mjs        # → 25/25 OK
 ```
 
 El CLI deja el reporte en `<repo>/qa-evidence/<fecha>/WI-<id>/report.{md,html}` y sale con
@@ -54,6 +54,22 @@ Resolución de perfil (deep-merge):
 ```
 default.yaml  ←  presets/<tracker>.yaml  ←  overlays/<org>.yaml  ←  qa-project.profile.yaml (repo)
 ```
+
+## Novedades (Bug + reactivación + trazabilidad)
+
+Con un tracker remoto y `-w <HU>`, **cada corrida deja constancia de lo ejecutado** (resumen +
+detalle de TC en la HU). Además, si hay **fallas**, el ciclo maneja la novedad
+**automáticamente**, agrupando las fallas por la HU a la que pertenecen:
+
+1. **Crea un Bug enlazado a esa HU** (título `[QA] Novedad en HU <id>` + capas/casos fallidos).
+2. **Reactiva la HU** al estado de novedad del perfil (ADO `Active`; reabre el issue en GitHub;
+   transición `reactivate` en Jira) — nunca la cierra.
+3. **Deja la trazabilidad** del Bug en un comentario de la **misma HU** (enlace + hallazgos).
+
+Aplica solo a trackers con estados (ADO/GitHub/Jira); `local` no dispara nada. Sin `-w`, un
+tracker remoto degrada a **solo reporte local + aviso** (no intenta comentar sobre una HU
+inexistente). El estado de reactivación se configura en el preset
+(`azure.work_item.on_defect_reactivate_state`, `jira.transitions.reactivate`).
 
 ## Empaquetado multi-target
 

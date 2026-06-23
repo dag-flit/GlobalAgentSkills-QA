@@ -33,7 +33,12 @@ arranca directo; cualquiera con red exige preflight.
 4. **Ejecutar runners** de las capas habilitadas (hoy: `static`; resto se porta en F1/F3).
    Una capa habilitada sin runner, o una omitida por detección, va al reporte como `skip`
    con su razón (degrada con aviso, nunca aborta — principio 5).
-5. **Publicar** los `EvidenceObject` al `evidence-sink` vía `adapter.publishEvidence`.
+5. **Publicar** los `EvidenceObject` al `evidence-sink` vía `adapter.publishEvidence`
+   (comentario en la HU con lo ejecutado, en cada corrida).
+6. **Manejar novedades**: agrupar las fallas por HU; por cada HU con fallas →
+   `adapter.createDefect` (Bug enlazado a esa HU) + `adapter.reactivateRequirement` (reactiva la
+   HU al estado de novedad del perfil + comentario de trazabilidad). Gated por
+   `capabilities().states` (local no dispara). Degrada con aviso (`summary.novelties[]`).
 
 ## Salida (resumen del ciclo)
 
@@ -45,7 +50,9 @@ arranca directo; cualquiera con red exige preflight.
   preflight: null,          // null = no se requirió (arrancó directo)
   detection: { ... },       // salida de qa-detect
   results: [ /* EvidenceObject[] */ ],
-  report: { dir, mdPath, htmlPath }
+  report: { dir, mdPath, htmlPath },
+  novelties: null            // null = no aplica (sin estados); [] = sin fallas;
+                             // [{ work_item_id, bugId, reactivation }] = HUs con novedad
 }
 ```
 

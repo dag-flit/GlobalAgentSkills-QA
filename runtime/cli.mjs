@@ -52,6 +52,8 @@ export async function main(argv = process.argv.slice(2)) {
     return 2;
   }
 
+  for (const w of summary.warnings || []) console.warn(`⚠ ${w}`);
+
   const results = summary.results || [];
   const c = (s) => results.filter((r) => r.status === s).length;
   console.log(`QA (${summary.tracker}) — ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}`);

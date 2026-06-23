@@ -5,7 +5,7 @@ Implementa el contrato `tracker-adapter` sobre la REST v3 de Jira Cloud. Se sele
 
 ## Archivos
 
-- `jira-adapter.mjs` — los 7 métodos + `capabilities`.
+- `jira-adapter.mjs` — los 8 métodos + `capabilities`.
 - `jira-rest.mjs` — cliente REST (rutas/auth Basic email:token) + helper ADF.
 
 ## Variables (`env`)
@@ -23,6 +23,7 @@ y transiciones desde el preset `profiles/presets/jira.yaml` (ajustar ids por ins
 | `createDefect(defect)` | crea issue tipo `Bug` en el proyecto del preset |
 | `updateCycle(id, fields)` | PUT; mapea claves lógicas → `customfield_*` del preset |
 | `closeArtifact(id, result)` | POST transición (`pass`/`fail`) del preset |
+| `reactivateRequirement(id, info)` | POST transición `jira.transitions.reactivate` (si está configurada) + comentario ADF de trazabilidad |
 
 `capabilities()`: `attachments/custom_fields/comments/states:true`. Los comentarios y la
 description usan **ADF** (Atlassian Document Format) generado desde texto plano.

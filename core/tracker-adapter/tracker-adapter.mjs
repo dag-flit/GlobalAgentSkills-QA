@@ -84,6 +84,19 @@ export class TrackerAdapter {
   async closeArtifact(id, result) {
     throw new Error("closeArtifact() no implementado");
   }
+
+  /**
+   * Reactiva el requisito (HU) que tiene una novedad y deja la TRAZABILIDAD del
+   * defecto en un comentario de la misma HU. A diferencia de closeArtifact (que cierra
+   * Task/Bug y nunca toca el padre), este método SÍ opera sobre el requisito padre,
+   * pero solo lo REACTIVA al estado de novedad del perfil — nunca lo cierra.
+   * @param {string} id  id del requisito (HU) con la novedad
+   * @param {{bugId?: string|null, items?: EvidenceObject[], reason?: string}} info
+   * @returns {Promise<{ok: boolean, id: string, state?: string, commentOk?: boolean}>}
+   */
+  async reactivateRequirement(id, info) {
+    throw new Error("reactivateRequirement() no implementado");
+  }
 }
 
 export default TrackerAdapter;

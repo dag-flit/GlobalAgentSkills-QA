@@ -43,6 +43,8 @@ export function createClient({ env = {}, http = defaultHttp } = {}) {
     project,
     // URL REST de un work item (para relaciones padre/hijo).
     workItemUrl: (id) => `${org}/_apis/wit/workItems/${id}`,
+    // URL de navegador del work item (para enlaces clicables en comentarios/discussion).
+    workItemWebUrl: (id) => `${org}/${encodeURIComponent(project)}/_workitems/edit/${id}`,
 
     // GET del proyecto — usado por el preflight para validar PAT + acceso.
     getProject() {
