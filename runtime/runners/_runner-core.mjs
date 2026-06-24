@@ -151,7 +151,10 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
 
   const [name, ...args] = argv;
   const bin = resolveBin(repoRoot, name, cwd);
+  const command = argv.join(" "); // comando lógico exacto (p.ej. "tsc --noEmit") para la evidencia
+  const t0 = Date.now();
   const out = exec(bin, args, { cwd, env });
+  const ms = Date.now() - t0;
 
   // No se pudo lanzar el binario (no instalado / fuera de PATH): omitir con aviso.
   if (out.spawnError || out.code === 127) {
@@ -159,7 +162,7 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
       ...base,
       status: "skip",
       narrative: `${tool}${where} no ejecutable (no instalado / fuera de PATH) — objetivo omitido`,
-      metrics: { tool, cwd: target.cwd, exitCode: out.code },
+      metrics: { tool, cwd: target.cwd, exitCode: out.code, command },
     };
   }
 
@@ -171,7 +174,7 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
       ...base,
       status: "skip",
       narrative: `${tool}${where} no concluyó (exit ${out.code}, error de herramienta) — objetivo omitido${detail ? ` — ${detail}` : ""}`,
-      metrics: { tool, cwd: target.cwd, exitCode: out.code },
+      metrics: { tool, cwd: target.cwd, exitCode: out.code, command, ms },
     };
   }
 
@@ -195,7 +198,7 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
       ? `${tool}${where}: ok${casesDetail ? ` — ${casesDetail}` : ""}`
       : `${tool}${where}: exit ${out.code}${casesDetail ? ` — ${casesDetail}` : detail ? ` — ${detail}` : ""}`;
 
-  const ev = { ...base, status, narrative, metrics: { tool, cwd: target.cwd, exitCode: out.code } };
+  const ev = { ...base, status, narrative, metrics: { tool, cwd: target.cwd, exitCode: out.code, command, ms } };
   if (hasCases) ev.cases = cases;
   return ev;
 }

@@ -65,6 +65,16 @@ export class TrackerAdapter {
     throw new Error("resolveRequirements() no implementado");
   }
 
+  /**
+   * Lista los hijos jerárquicos de un work item (p.ej. las HUs de un Feature).
+   * Trackers sin jerarquía nativa devuelven []. No requiere red en `local`.
+   * @param {string} id  id del work item padre (Feature/Epic)
+   * @returns {Promise<Array<{id: string, title?: string, state?: string, type?: string}>>}
+   */
+  async listChildren(id) {
+    return [];
+  }
+
   /** Entrega la evidencia normalizada al destino del tracker (o al sink local). */
   async publishEvidence(target, payload) {
     throw new Error("publishEvidence() no implementado");

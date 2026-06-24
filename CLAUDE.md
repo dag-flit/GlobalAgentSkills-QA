@@ -116,9 +116,14 @@ Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensió
 
 Cuando una corrida deja **fallas**, el orquestador (`runQaCycle`, tras `publishEvidence`) maneja
 la **novedad automáticamente**, agrupando las fallas por la **HU** a la que pertenecen:
-- **`groupFailuresByRequirement`**: cada `EvidenceObject` con `status:"fail"` se asigna a su HU
-  efectiva (`result.work_item_id` si lo declara; si no, la HU del ciclo `-w`). Sin HU real
-  (`local`) no hay novedad. Una HU por grupo.
+- **`groupFailuresByRequirement`**: agrupa las fallas por la HU efectiva **a nivel de CASO**
+  (una capa puede tener pruebas de varias HUs). **Convención de trazabilidad por-HU:** cada
+  prueba declara su HU dueña con la etiqueta `[HU-###]` en su nombre/título (p.ej.
+  `describe("[HU-103] Checkout", …)`); `extractHuTag` la lee del `case.name` y el Bug se registra
+  en ESA HU, **no en el Feature paraguas**. Resolución por caso, en orden: etiqueta `[HU-###]` del
+  caso → `result.work_item_id` declarado → HU del ciclo `-w` (p.ej. el Feature). Lo **no
+  etiquetado** y las capas transversales sin casos (lint/seguridad) caen a la HU del ciclo. Sin HU
+  real (`local`) no hay novedad. Smoke test caso 27.
 - Por cada HU con fallas: **`createDefect`** (Bug **enlazado a esa HU** vía `parent_id`; título
   `[QA] Novedad en HU <id>` + capas/casos fallidos en la descripción) → **`reactivateRequirement`**.
 - **Contrato nuevo `reactivateRequirement(id, {bugId, items})`** (en los 4 adapters + base +
@@ -141,6 +146,25 @@ la **novedad automáticamente**, agrupando las fallas por la **HU** a la que per
   `requirementId` (null si remoto sin HU real) y degrada a SOLO reporte local + `summary.warnings[]`
   (el CLI los imprime con `⚠`). Para `local` no aplica (`local` es nombre de carpeta válido). Las
   novedades igual se crean para resultados que declaren su propia `work_item_id`. Smoke test caso 25.
+
+## Extensiones para la interfaz web (UI) — HECHO
+
+Sobre el kit se está construyendo una UX web (`webapp/`, Next.js, fuera del core; ver memoria del
+proyecto). Para soportarla se extendió el kit **respetando invariantes**:
+
+- **`listChildren(id)` en el contrato `tracker-adapter`**: lista los hijos jerárquicos de un work
+  item (Feature → HUs). `azure-devops` lo resuelve por relaciones REST (`getWorkItemRelations` +
+  `System.LinkTypes.Hierarchy-Forward`, luego `getWorkItem` por hijo); `github`/`jira`/`local`
+  devuelven `[]` (sin jerarquía nativa por ahora); la base devuelve `[]`. CONTRACT.md actualizado.
+- **Runner `explore` (capa opcional de exploración de URL viva)** en `runtime/runners/explore.mjs`:
+  ÚNICA capa que NO se detecta del repo — corre SOLO si `runQaCycle` recibe `appUrl` (gate; sin URL
+  no aparece, local-first intacto). Launcher de navegador **inyectable** (`launchBrowser`) para no
+  acoplar Playwright al kit (si no se inyecta, intenta `import('playwright')`; si no está → skip
+  accionable). Emite `EvidenceObject` (un caso por URL: HTTP status + errores de consola + screenshot).
+  Es async: el orquestador lo corre como paso aparte tras los runners síncronos (no está en `RUNNERS`).
+  `runQaCycle` acepta `appUrl`/`launchBrowser` y, con `appUrl`, inyecta
+  `BASE_URL`/`PLAYWRIGHT_BASE_URL`/`CYPRESS_BASE_URL` al env de los runners (baseURL del E2E del repo).
+- Smoke test caso 26 (launcher falso, offline). **Smoke: 26/26.**
 
 ## Invariantes (no romper)
 

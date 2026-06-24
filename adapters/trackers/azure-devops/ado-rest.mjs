@@ -63,6 +63,15 @@ export function createClient({ env = {}, http = defaultHttp } = {}) {
       });
     },
 
+    // GET con relaciones (para resolver jerarquía padre→hijo: Feature → HUs).
+    getWorkItemRelations(id) {
+      return http({
+        method: "GET",
+        url: `${projBase}/wit/workitems/${id}?$expand=relations&api-version=${API}`,
+        headers: headers(),
+      });
+    },
+
     addComment(id, text) {
       return http({
         method: "POST",

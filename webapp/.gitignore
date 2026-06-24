@@ -1,0 +1,12 @@
+# dependencias y build
+node_modules/
+.next/
+out/
+
+# datos locales (config con secretos, runs, repos clonados, evidencia)
+data/
+
+# misc
+*.log
+.DS_Store
+next-env.d.ts

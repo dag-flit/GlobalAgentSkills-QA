@@ -22,6 +22,7 @@ import { runE2eTests } from "./runners/e2e.mjs";
 import { runApiTests } from "./runners/api.mjs";
 import { runDbTests } from "./runners/db.mjs";
 import { runSecurityTests } from "./runners/security.mjs";
+import { runExplore } from "./runners/explore.mjs";
 
 // Registro de runners portados (todas las capas del kit).
 const RUNNERS = {
@@ -53,6 +54,9 @@ export async function runQaCycle({
   developer,
   exec,
   http,
+  appUrl,            // URL viva opcional: baseURL para el e2e del repo (BASE_URL/PLAYWRIGHT_BASE_URL)
+  explore = false,   // si true (y hay appUrl), corre además la capa `explore` (crawler de la URL)
+  launchBrowser,     // launcher de navegador inyectable para `explore` (offline-testable)
 } = {}) {
   const resolvedProfile = profile || resolveProfile({ repoRoot }).profile;
   const adapter = getAdapter({ profile: resolvedProfile, env, repoRoot, http });
@@ -81,6 +85,12 @@ export async function runQaCycle({
   const detection = detectRepo({ repoRoot });
   const { enabled } = resolveEnabledLayers(resolvedProfile, detection);
 
+  // Si hay URL viva, se inyecta como baseURL para los E2E del repo (best-effort: la config
+  // de playwright/cypress del proyecto puede leer estas variables). El kit ya reenvía env al hijo.
+  const runEnv = appUrl
+    ? { ...env, BASE_URL: appUrl, PLAYWRIGHT_BASE_URL: appUrl, CYPRESS_BASE_URL: appUrl }
+    : env;
+
   // ── Ejecución de runners por capa ───────────────────────────────────────────
   const results = [];
   for (const layer of enabled) {
@@ -95,12 +105,20 @@ export async function runQaCycle({
       continue;
     }
     // Cada runner devuelve N EvidenceObjects (uno por objetivo/paquete en monorepo).
-    results.push(...runner({ repoRoot, profile: resolvedProfile, env, detection, exec, workItemId }));
+    results.push(...runner({ repoRoot, profile: resolvedProfile, env: runEnv, detection, exec, workItemId }));
   }
 
   // Capas omitidas por detección (herramienta ausente): al reporte, con su razón.
   for (const { layer, reason } of detection.skipped) {
     results.push({ layer, status: "skip", narrative: reason, metrics: { tool: null } });
+  }
+
+  // ── Exploración de URL (capa `explore`, async, gated por `explore` + appUrl) ──
+  // No se detecta del repo: corre SOLO si se pide explícitamente explorar una URL viva.
+  // (appUrl por sí solo solo inyecta baseURL al e2e del repo; no dispara el crawler.)
+  if (explore && appUrl) {
+    const explored = await runExplore({ repoRoot, env: runEnv, appUrl, launchBrowser });
+    results.push(...explored);
   }
 
   // ── Guarda online: tracker remoto sin HU real ───────────────────────────────
@@ -145,16 +163,48 @@ export async function runQaCycle({
   };
 }
 
-// Agrupa las fallas por la HU efectiva (la evidencia puede declarar su propio work_item_id;
-// si no, cae a la HU del ciclo `-w`) y descarta lo que no tiene una HU real a la cual asociar.
+// Extrae el id de HU de una etiqueta de convención: "[HU-103]" / "HU-103" / "HU 103".
+// Las pruebas declaran su HU dueña en el título/nombre; lo no etiquetado cae a la HU del ciclo.
+function extractHuTag(text) {
+  if (!text) return null;
+  const m = String(text).match(/\bHU[-\s]?(\d+)\b/i);
+  return m ? m[1] : null;
+}
+
+// Agrupa las fallas por la HU EFECTIVA, a nivel de CASO (una capa puede tener pruebas de varias
+// HUs). Por convención, cada prueba etiqueta su HU dueña en el nombre ("[HU-103] ..."): así la
+// novedad se registra en ESA HU, no en el Feature paraguas. Resolución por caso, en orden:
+//   etiqueta [HU-###] del caso → work_item_id declarado por el resultado → HU del ciclo (-w).
+// Casos sin etiqueta (y capas transversales sin casos: lint/seguridad) caen a la HU del ciclo
+// (p.ej. el Feature). Sin una HU real (local / remoto sin -w) la falla se descarta.
 function groupFailuresByRequirement(results, cycleWi) {
+  const cycle = cycleWi ? String(cycleWi) : null;
   const groups = new Map();
+  const push = (huId, fragment) => {
+    if (!huId || huId === "local") return; // sin HU real → no hay dónde crear el Bug
+    if (!groups.has(huId)) groups.set(huId, []);
+    groups.get(huId).push(fragment);
+  };
   for (const r of results) {
     if (r.status !== "fail") continue;
-    const id = String(r.work_item_id || cycleWi || "");
-    if (!id || id === "local") continue; // sin HU real → no hay dónde crear el Bug
-    if (!groups.has(id)) groups.set(id, []);
-    groups.get(id).push(r);
+    const resultHu = r.work_item_id ? String(r.work_item_id) : null;
+    const failingCases = Array.isArray(r.cases) ? r.cases.filter((c) => c.status === "fail") : [];
+    if (failingCases.length) {
+      // agrupa los casos fallidos por su etiqueta de HU; un mismo resultado puede repartirse
+      // entre varias HUs (un fragmento por HU, conservando solo sus casos).
+      const byHu = new Map();
+      for (const c of failingCases) {
+        const hu = extractHuTag(c.name) || resultHu || cycle;
+        if (!byHu.has(hu)) byHu.set(hu, []);
+        byHu.get(hu).push(c);
+      }
+      for (const [hu, cases] of byHu) {
+        push(hu, { layer: r.layer, tc_id: r.tc_id, narrative: r.narrative, metrics: r.metrics, cases });
+      }
+    } else {
+      const hu = resultHu || extractHuTag(r.tc_id) || extractHuTag(r.narrative) || cycle;
+      push(hu, { layer: r.layer, tc_id: r.tc_id, narrative: r.narrative, metrics: r.metrics, cases: [] });
+    }
   }
   return [...groups.entries()].map(([id, items]) => ({ id, items }));
 }

@@ -9,6 +9,7 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 | `preflight()` | Valida que el tracker puede operar | Siempre `{ok:true}`, sin red |
 | `getWorkItem(id)` | Devuelve el requisito/HU | Lee `.qa/work-items/{id}.md` o devuelve un stub |
 | `resolveRequirements(ref)` | Extrae los AC | De Gherkin/checklist/viñetas del archivo local |
+| `listChildren(id)` | Lista los hijos jerárquicos de un work item (Feature → HUs) | `[]` (sin jerarquía remota) |
 | `publishEvidence(target, payload)` | Entrega la evidencia normalizada | Reporte `md`+`html` en `qa-evidence/` |
 | `createDefect(defect)` | Registra un defecto | Archivo md en `qa-evidence/defects/` |
 | `updateCycle(id, fields)` | Campos de ciclo (TestStartDate, ReTest…) | no-op |

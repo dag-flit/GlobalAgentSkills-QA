@@ -59,6 +59,11 @@ export class JiraAdapter extends TrackerAdapter {
     return (wi && wi.acceptance_criteria) || [];
   }
 
+  // Jira (epic→story por "Epic Link"/parent) no se resuelve aún en este adapter: [] por ahora.
+  async listChildren(id) {
+    return [];
+  }
+
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const issue = (target && target.work_item_id) || (payload && payload.work_item_id) || null;

@@ -60,6 +60,11 @@ export class GithubAdapter extends TrackerAdapter {
     return (wi && wi.acceptance_criteria) || [];
   }
 
+  // GitHub Issues no modela jerarquía Feature→HU en este adapter (usa labels): [] por ahora.
+  async listChildren(id) {
+    return [];
+  }
+
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const issue = (target && target.work_item_id) || (payload && payload.work_item_id) || null;

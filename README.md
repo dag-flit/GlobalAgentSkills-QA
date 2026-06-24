@@ -9,7 +9,8 @@ y sin configurar nada**. El tracker es un plug-in opcional: `local` (default), `
 > overlay mínimo. Ningún runner habla con un tracker: todos emiten evidencia normalizada a un
 > *sink*, y el *sink* decide el destino.
 
-Estado: **roadmap F0–F5 completo**. Smoke test **25/25**. Node 18+ (cross-platform, `.mjs`).
+Estado: **roadmap F0–F5 completo** + interfaz web (`webapp/`, ver abajo). Smoke test **27/27**.
+Node 18+ (cross-platform, `.mjs`).
 
 ## Inicio rápido (sin instalar nada)
 
@@ -37,6 +38,7 @@ código `0` (sin fallos) · `1` (con fallos) · `2` (preflight de tracker) · `3
 | colección Postman / openapi·swagger | `api` | newman (postman) · `redocly lint` (validación de contrato OpenAPI, offline) |
 | pgtap / prisma / migrations | `db` | checks de BD (conexión desde `env`) |
 | *(siempre)* | `security` | semgrep `auto` / bandit — **zero-config**; skip si el escáner no está instalado |
+| *URL viva (opcional, NO se detecta del repo)* | `explore` | abre la URL en un navegador (Playwright): HTTP + errores de consola + captura. Corre **solo** si se proporciona una URL (`appUrl`); sin URL no aparece |
 
 ## Trackers (opcional)
 
@@ -66,10 +68,28 @@ detalle de TC en la HU). Además, si hay **fallas**, el ciclo maneja la novedad
    transición `reactivate` en Jira) — nunca la cierra.
 3. **Deja la trazabilidad** del Bug en un comentario de la **misma HU** (enlace + hallazgos).
 
+**Trazabilidad por-HU (convención `[HU-###]`):** las novedades se agrupan **por caso**. Si una
+prueba declara su HU dueña etiquetándola en el título (p.ej. `describe("[HU-103] Checkout", …)`),
+su falla registra el Bug en **esa HU**, no en el Feature paraguas. Lo no etiquetado y las capas
+transversales (lint/seguridad) caen a la HU del ciclo `-w`. La prueba sigue cubriendo el flujo
+completo; la etiqueta solo declara el *dueño*, no el *alcance*.
+
 Aplica solo a trackers con estados (ADO/GitHub/Jira); `local` no dispara nada. Sin `-w`, un
 tracker remoto degrada a **solo reporte local + aviso** (no intenta comentar sobre una HU
 inexistente). El estado de reactivación se configura en el preset
 (`azure.work_item.on_defect_reactivate_state`, `jira.transitions.reactivate`).
+
+## Interfaz web (Quality Ops Framework)
+
+`webapp/` es una UI (Next.js) para usar el kit **a clics**, pensada para gente no técnica:
+conexión a BD (con túnel SSH), elegir tracker y Feature→HUs, detectar capas, ejecutar con **log
+en vivo** y ver la evidencia (reporte + capturas). No reimplementa nada: llama a `runQaCycle`.
+
+```bash
+cd webapp && npm install && npm run dev      # http://localhost:4312
+```
+
+Detalles, modos y dónde quedan las evidencias: **[webapp/README.md](webapp/README.md)**.
 
 ## Empaquetado multi-target
 

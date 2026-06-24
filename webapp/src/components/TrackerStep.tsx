@@ -1,0 +1,237 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { AppConfig, TrackerConfig, TrackerName } from "@/lib/types";
+import { Field, Spinner } from "@/components/ui";
+
+const TRACKERS: { id: TrackerName; label: string; desc: string; icon: string }[] = [
+  { id: "local", label: "Local", desc: "Solo reporte en el repo. Sin conexión.", icon: "💾" },
+  { id: "azure-devops", label: "Azure DevOps", desc: "Comenta en la HU + adjuntos.", icon: "🔷" },
+  { id: "github", label: "GitHub", desc: "Comenta en el Issue.", icon: "🐙" },
+  { id: "jira", label: "Jira", desc: "Comenta en el issue (ADF).", icon: "🟦" },
+];
+
+type TestState = { status: "idle" | "testing" | "ok" | "err"; detail?: string };
+
+export function TrackerStep({
+  onBack,
+  onContinue,
+}: {
+  onBack?: () => void;
+  onContinue?: (t: TrackerName) => void;
+}) {
+  const [cfg, setCfg] = useState<AppConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [test, setTest] = useState<TestState>({ status: "idle" });
+
+  useEffect(() => {
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((c: AppConfig) => setCfg(c))
+      .catch(() => setCfg(null));
+  }, []);
+
+  if (!cfg) {
+    return (
+      <div className="flex items-center gap-2 text-muted">
+        <Spinner /> Cargando configuración…
+      </div>
+    );
+  }
+
+  const t = cfg.tracker;
+
+  function patchTracker(patch: Partial<TrackerConfig>) {
+    setCfg((c) => ({ ...c!, tracker: { ...c!.tracker, ...patch } }));
+    setTest({ status: "idle" });
+    setSavedMsg(null);
+  }
+  function patchAzure(p: Partial<TrackerConfig["azure"]>) {
+    patchTracker({ azure: { ...t.azure, ...p } });
+  }
+  function patchGithub(p: Partial<TrackerConfig["github"]>) {
+    patchTracker({ github: { ...t.github, ...p } });
+  }
+  function patchJira(p: Partial<TrackerConfig["jira"]>) {
+    patchTracker({ jira: { ...t.jira, ...p } });
+  }
+
+  async function save() {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const r = await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfg),
+      });
+      const updated: AppConfig = await r.json();
+      setCfg(updated);
+      setSavedMsg("Guardado ✓");
+    } catch {
+      setSavedMsg("No se pudo guardar");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function continueStep() {
+    // Persistir antes de avanzar: los pasos siguientes (Feature→HUs, ejecución) usan la
+    // configuración guardada del tracker.
+    await save();
+    onContinue?.(t.selected);
+  }
+
+  async function runTest() {
+    setTest({ status: "testing" });
+    try {
+      const r = await fetch("/api/tracker/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tracker: t }),
+      });
+      const res = await r.json();
+      setTest({ status: res.ok ? "ok" : "err", detail: res.detail || res.mode });
+    } catch (e: any) {
+      setTest({ status: "err", detail: e?.message ?? "Error de red" });
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="card space-y-4">
+        <div>
+          <h2 className="font-semibold">¿Dónde se reportan los resultados?</h2>
+          <p className="text-sm text-muted mt-1">
+            Elige el destino. <b>Local</b> solo deja el reporte en el repo (sin conexión). Los demás
+            comentan en la historia/issue y requieren credenciales.
+          </p>
+        </div>
+
+        {/* selector */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {TRACKERS.map((opt) => {
+            const active = t.selected === opt.id;
+            return (
+              <button
+                key={opt.id}
+                onClick={() => patchTracker({ selected: opt.id })}
+                className={`text-left rounded-lg border p-3 transition-colors ${
+                  active ? "border-accent bg-accent/10" : "border-border bg-panel2/30 hover:bg-panel2"
+                }`}
+              >
+                <div className="text-lg">{opt.icon}</div>
+                <div className={`text-sm font-medium ${active ? "text-accent" : "text-gray-200"}`}>
+                  {opt.label}
+                </div>
+                <div className="text-[11px] text-muted leading-tight mt-0.5">{opt.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* credenciales condicionales */}
+        {t.selected === "local" && (
+          <div className="text-sm rounded-lg px-3 py-2 border border-border bg-panel2/40 text-muted">
+            Local no necesita configuración. El reporte (md + html) queda en{" "}
+            <code>qa-evidence/</code> dentro del proyecto.
+          </div>
+        )}
+
+        {t.selected === "azure-devops" && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Organization URL" hint="https://dev.azure.com/&lt;org&gt;">
+              <input className="input" value={t.azure.orgUrl} onChange={(e) => patchAzure({ orgUrl: e.target.value })} />
+            </Field>
+            <Field label="Proyecto">
+              <input className="input" value={t.azure.project} onChange={(e) => patchAzure({ project: e.target.value })} />
+            </Field>
+            <Field label="Personal Access Token (PAT)" hint="Se guarda local y se enmascara">
+              <input className="input" type="password" value={t.azure.pat} onChange={(e) => patchAzure({ pat: e.target.value })} />
+            </Field>
+            <Field label="Tu email (supervisión)">
+              <input className="input" value={t.azure.userEmail} onChange={(e) => patchAzure({ userEmail: e.target.value })} />
+            </Field>
+          </div>
+        )}
+
+        {t.selected === "github" && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Repositorio" hint="formato owner/repo">
+              <input className="input font-mono" placeholder="org/proyecto" value={t.github.repository} onChange={(e) => patchGithub({ repository: e.target.value })} />
+            </Field>
+            <Field label="Token" hint="Personal access token; se enmascara">
+              <input className="input" type="password" value={t.github.token} onChange={(e) => patchGithub({ token: e.target.value })} />
+            </Field>
+          </div>
+        )}
+
+        {t.selected === "jira" && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Base URL" hint="https://&lt;org&gt;.atlassian.net">
+              <input className="input" value={t.jira.baseUrl} onChange={(e) => patchJira({ baseUrl: e.target.value })} />
+            </Field>
+            <Field label="Project Key" hint="ej. QA, PROJ">
+              <input className="input" value={t.jira.projectKey} onChange={(e) => patchJira({ projectKey: e.target.value })} />
+            </Field>
+            <Field label="Email">
+              <input className="input" value={t.jira.email} onChange={(e) => patchJira({ email: e.target.value })} />
+            </Field>
+            <Field label="API Token" hint="Se guarda local y se enmascara">
+              <input className="input" type="password" value={t.jira.token} onChange={(e) => patchJira({ token: e.target.value })} />
+            </Field>
+          </div>
+        )}
+
+        {/* resultado de prueba */}
+        {test.status !== "idle" && (
+          <div
+            className={`text-sm rounded-lg px-3 py-2 border ${
+              test.status === "ok"
+                ? "border-green-700 bg-green-900/30 text-green-300"
+                : test.status === "err"
+                ? "border-red-700 bg-red-900/30 text-red-300"
+                : "border-border bg-panel2 text-muted"
+            }`}
+          >
+            {test.status === "testing" ? (
+              <span className="flex items-center gap-2">
+                <Spinner /> Probando conexión…
+              </span>
+            ) : (
+              <>
+                {test.status === "ok" ? "✓ " : "✕ "}
+                {test.detail}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* acciones */}
+        {t.selected !== "local" && (
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
+            <button className="btn-ghost" onClick={runTest} disabled={test.status === "testing"}>
+              🔌 Probar conexión
+            </button>
+            <button className="btn-ghost" onClick={save} disabled={saving}>
+              {saving ? "Guardando…" : "Guardar credenciales"}
+            </button>
+            {savedMsg && <span className="text-xs text-muted">{savedMsg}</span>}
+          </div>
+        )}
+      </div>
+
+      {onContinue && (
+        <div className="flex items-center gap-2">
+          <button className="btn-ghost" onClick={onBack}>
+            ← Atrás
+          </button>
+          <button className="btn-primary" onClick={continueStep} disabled={saving}>
+            {saving ? "Guardando…" : "Continuar →"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

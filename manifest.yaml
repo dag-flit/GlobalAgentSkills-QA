@@ -77,6 +77,7 @@ runtime:
     - runtime/runners/db.mjs
     - runtime/runners/security.mjs
     - runtime/runners/api.mjs
+    - runtime/runners/explore.mjs         # capa opcional: explora una URL viva (gated por appUrl)
   orchestrator: runtime/orchestrator.mjs
   cli: runtime/cli.mjs                   # F4: entrypoint del kit (runQaCycle)
   delivery_build: runtime/delivery/build.mjs  # F4: empaqueta core/ a cada target

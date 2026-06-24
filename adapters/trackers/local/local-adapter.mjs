@@ -52,6 +52,11 @@ export class LocalAdapter extends TrackerAdapter {
     return wi?.acceptance_criteria || [];
   }
 
+  // local no tiene jerarquía remota (capabilities.network === false): []. No requiere red.
+  async listChildren(id) {
+    return [];
+  }
+
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload?.results) ? payload.results : [];
     const out = writeLocalReport({

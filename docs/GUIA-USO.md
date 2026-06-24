@@ -63,6 +63,7 @@ node runtime/cli.mjs /ruta/al/repo -w 10194 -f 10118 -d "Dev Ñoño Pérez"
 | `*.postman_collection.json` / `openapi`·`swagger` | `api` | `newman run <colección>` · `redocly lint <spec>` (validación de contrato OpenAPI, offline) |
 | `pgtap` / `prisma` / `migrations/` | `db` | `pg_prove` · `prisma migrate status` (conexión desde `env`) |
 | *(siempre — zero-config)* | `security` | `semgrep --config auto` · `bandit -r .` |
+| *URL viva (opcional)* | `explore` | abre la URL en un navegador (Playwright) y captura HTTP + errores de consola + screenshot. **NO se detecta del repo**: corre solo si `runQaCycle` recibe `appUrl`. Sin URL no aparece (local-first intacto). |
 
 > Las herramientas deben estar instaladas en el repo/PATH para ejecutarse. Si no, la capa
 > se omite con aviso (`skip`), no rompe el ciclo. Detalles por capa:
@@ -114,6 +115,21 @@ El detalle se obtiene del **reporter JSON nativo** de cada herramienta (sin inst
 JSON nativo (`tsc`, `mypy`, `pytest`, `dotnet test`, `cypress`, `newman`, `redocly`, `pgtap`/
 `prisma`) mantienen el resumen de texto, sin detalle por TC.
 
+### Qué se ejecutó y capturas
+
+Por cada capa, el reporte muestra **«Qué se ejecutó»**: el **comando exacto** (p.ej.
+`tsc --noEmit`, `semgrep --error --quiet --json --config auto`), la **duración** y el **código de
+salida** (desde `metrics.command`/`metrics.ms`/`metrics.exitCode`). Las **capturas** (`files[]` de
+un resultado, p.ej. del runner `explore`) se **copian** a `<carpeta-evidencia>/capturas/` y se
+**embeben** en el `report.html` → la carpeta de evidencia queda **autocontenida y adjuntable**.
+
+### Las evidencias NO se versionan (se mantienen locales)
+
+`qa-evidence/` está en el `.gitignore` raíz del kit (a cualquier nivel), así que **las corridas
+nunca se suben al repo**. En tus proyectos, agrega `qa-evidence/` al `.gitignore` del repo. La
+evidencia del modo **explorar** (sin repo) vive en `webapp/data/evidence/<id>/` (también ignorado
+vía `webapp/.gitignore`).
+
 ## 4. Publicar en un tracker (opcional)
 
 Crea `.qa/qa-project.profile.yaml` en el repo destino:
@@ -154,6 +170,13 @@ declare cada resultado) y, por cada HU con fallas:
 3. **Deja la trazabilidad** del Bug en un comentario de la **misma HU**: enlace al Bug + lista
    de hallazgos que originaron la novedad.
 
+**Trazabilidad por-HU (`[HU-###]`):** la agrupación es **por caso**. Si una prueba declara su HU
+dueña etiquetándola en el título (`describe("[HU-103] …")` / `test("[HU-103] …")`), su falla
+registra el Bug en **esa HU**, no en el Feature paraguas. Lo no etiquetado y las capas
+transversales (lint/seguridad) caen a la HU del ciclo `-w`. La prueba sigue probando el flujo
+completo; la etiqueta solo declara el *dueño*. La interfaz web muestra además la **cobertura**:
+qué HUs seleccionadas tienen pruebas etiquetadas y cuáles no.
+
 Aplica solo a trackers con estados (ADO/GitHub/Jira); `local` no dispara nada (no hay HU remota
 que reactivar; la traza del defecto queda en `qa-evidence/defects/`). El resultado se expone en
 `summary.novelties[]`. Si algún paso falla (red/permisos/workflow) **degrada con aviso**, no
@@ -177,9 +200,21 @@ node dist/plain/bin/qa.mjs /ruta/al/repo       # el paquete corre standalone
 ## 6. Verificar el kit
 
 ```bash
-node runtime/smoke-test.mjs        # → 25/25 OK
+node runtime/smoke-test.mjs        # → 27/27 OK
 ```
 
-Cubre, sin red, todo el plumbing: resolución de perfiles, detección, los 6 runners, el
-orquestador (local y dual), el manejo de novedades (Bug + reactivación + trazabilidad) y la
-guarda sin `-w`, los 4 adapters de tracker, el CLI y el empaquetador.
+Cubre, sin red, todo el plumbing: resolución de perfiles, detección, los 6 runners + el runner
+opcional `explore` (con launcher de navegador falso), el orquestador (local y dual), el manejo de
+novedades con **trazabilidad por-HU** (`[HU-###]`), la guarda sin `-w`, los 4 adapters de tracker
+(incluido `listChildren`: Feature→HUs), el CLI y el empaquetador.
+
+## 7. Interfaz web (Quality Ops Framework)
+
+Para usar el kit **a clics** (gente no técnica), hay una UI en `webapp/` que llama a `runQaCycle`:
+
+```bash
+cd webapp && npm install && npm run dev        # http://localhost:4312
+```
+
+Cubre BD (con túnel SSH), tracker + Feature→HUs, detección, ejecución en vivo y evidencia.
+Ver **[../webapp/README.md](../webapp/README.md)**.

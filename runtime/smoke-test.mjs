@@ -15,6 +15,7 @@ import { runE2eTests } from "./runners/e2e.mjs";
 import { runDbTests } from "./runners/db.mjs";
 import { runSecurityTests } from "./runners/security.mjs";
 import { runApiTests } from "./runners/api.mjs";
+import { runExplore } from "./runners/explore.mjs";
 import { defaultExec } from "./runners/_runner-core.mjs";
 import { writeLocalReport } from "./evidence/local-sink.mjs";
 import { runQaCycle } from "./orchestrator.mjs";
@@ -840,6 +841,93 @@ assert.ok(guardCycle.report && guardCycle.report.local && fs.existsSync(guardCyc
 fs.rmSync(repoGuard, { recursive: true, force: true });
 ok("guarda online: tracker remoto sin -w no comenta sobre HU inexistente; degrada a reporte local + aviso");
 
-console.log(`\n== ${passed}/25 OK ==`);
+// 26. Runner `explore` (capa de exploración de URL viva): gated por appUrl, launcher de
+// navegador INYECTABLE (offline), emite evidencia normalizada; el ciclo lo incluye con appUrl.
+// 26a. launcher falso: una URL ok (200) y una "mala" (500) → un EvidenceObject con 2 casos.
+const fakeLaunch = () => ({
+  async newPage() {
+    return {
+      on() {},
+      async goto(url) {
+        return { status: () => (/bad/.test(url) ? 500 : 200) };
+      },
+      async screenshot() {
+        /* no-op: en el fake no se escribe archivo */
+      },
+      async close() {},
+    };
+  },
+  async close() {},
+});
+const repoExp = fs.mkdtempSync(path.join(os.tmpdir(), "qa-exp-"));
+const expEv = await runExplore({
+  repoRoot: repoExp,
+  appUrl: "https://app.test/",
+  paths: ["https://app.test/bad"],
+  launchBrowser: fakeLaunch,
+});
+assert.strictEqual(expEv.length, 1);
+assert.strictEqual(expEv[0].layer, "explore");
+assert.strictEqual(expEv[0].status, "fail"); // una URL "mala" (500) → la capa falla
+assert.strictEqual(expEv[0].cases.length, 2);
+assert.strictEqual(expEv[0].cases[0].status, "pass"); // 200
+assert.strictEqual(expEv[0].cases[1].status, "fail"); // 500
+assert.ok(/HTTP 500/.test(expEv[0].cases[1].message));
+// 26b. gating: sin appUrl → no participa (capa ausente)
+assert.deepStrictEqual(await runExplore({ appUrl: "" }), []);
+// 26c. sin launcher y sin Playwright instalado en el kit → skip accionable (no rompe)
+const expSkip = await runExplore({ repoRoot: repoExp, appUrl: "https://x/" });
+assert.strictEqual(expSkip[0].status, "skip");
+assert.ok(/Playwright/.test(expSkip[0].narrative));
+// 26d. ciclo completo (local) con appUrl + launcher falso → la capa explore entra al reporte
+const expCycle = await runQaCycle({
+  repoRoot: repoExp,
+  profile: pDefault, // local, sin red
+  appUrl: "https://app.test/",
+  explore: true, // pide explícitamente el crawler (appUrl por sí solo solo da baseURL)
+  launchBrowser: fakeLaunch,
+  exec: () => ({ code: 0, stdout: "", stderr: "" }),
+});
+assert.ok(expCycle.results.some((r) => r.layer === "explore" && r.status === "pass"));
+fs.rmSync(repoExp, { recursive: true, force: true });
+ok("runner explore: gated por URL, launcher inyectable (offline), skip sin Playwright; el ciclo incluye la capa");
+
+// 27. Trazabilidad por-HU: una corrida cuyo Feature paraguas es 100, pero cuyas pruebas
+// declaran su HU dueña con la etiqueta [HU-###], registra el Bug en ESA HU (103/104), NO en 100.
+// Lo no etiquetado caería al Feature (aquí todas las fallas van etiquetadas).
+const repoHu = fs.mkdtempSync(path.join(os.tmpdir(), "qa-hu-"));
+fs.writeFileSync(path.join(repoHu, "package.json"), JSON.stringify({ name: "hu", devDependencies: { vitest: "1" } }));
+fs.writeFileSync(path.join(repoHu, "vitest.config.ts"), "export default {}");
+const pHu = deepMerge(pFlit, { testing: { layers_enabled: ["unit"] } });
+const huVitestJson = JSON.stringify({
+  testResults: [{
+    assertionResults: [
+      { ancestorTitles: ["[HU-103] Checkout"], title: "flujo completo falla", status: "failed", duration: 10, failureMessages: ["AssertionError: boom 103"] },
+      { ancestorTitles: ["[HU-104] Pago"], title: "tarjeta rechazada falla", status: "failed", duration: 12, failureMessages: ["AssertionError: boom 104"] },
+      { ancestorTitles: ["[HU-103] Checkout"], title: "caso ok", status: "passed", duration: 5, failureMessages: [] },
+    ],
+  }],
+});
+const fakeHu = makeFakeAdo([
+  [(r) => r.method === "GET" && r.url.includes("/_apis/projects/Proj"), () => ({ status: 200, json: { id: "p1" } })],
+  [(r) => r.method === "POST" && r.url.includes("/wit/workitems/$Bug"), () => ({ status: 200, json: { id: 900 } })],
+  [(r) => r.method === "PATCH" && /\/wit\/workitems\/\d+/.test(r.url), () => ({ status: 200, json: { id: 1 } })],
+  [(r) => r.method === "POST" && /\/workItems\/\d+\/comments/.test(r.url), () => ({ status: 201, json: { id: 1 } })],
+]);
+const huCycle = await runQaCycle({
+  repoRoot: repoHu, env: creds, profile: pHu, workItemId: "100", http: fakeHu.http,   // Feature paraguas = 100
+  exec: () => ({ code: 1, stdout: huVitestJson, stderr: "" }),
+});
+const huIds = (huCycle.novelties || []).map((n) => String(n.work_item_id)).sort();
+assert.deepStrictEqual(huIds, ["103", "104"]);                       // Bugs en las HUs etiquetadas…
+assert.ok(!huIds.includes("100"));                                   // …NO en el Feature paraguas
+assert.ok(huCycle.novelties.every((n) => n.bugId === 900 || n.bugId === "900")); // se creó Bug por HU
+// el Bug de la HU 103 enlaza a la 103 como padre (no a 100)
+const bug103 = fakeHu.calls.find((c) => c.method === "POST" && /\$Bug/.test(c.url) && /103/.test(c.body));
+assert.ok(bug103, "el Bug debe enlazar a la HU 103 como padre");
+fs.rmSync(repoHu, { recursive: true, force: true });
+ok("trazabilidad por-HU: la etiqueta [HU-###] registra el Bug en esa HU, no en el Feature paraguas");
+
+console.log(`\n== ${passed}/27 OK ==`);
 console.log("Reporte de ejemplo:", res.dir);
 fs.rmSync(tmp, { recursive: true, force: true });

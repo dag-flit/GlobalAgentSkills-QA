@@ -76,6 +76,31 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     return (wi && wi.acceptance_criteria) || [];
   }
 
+  // Lista los hijos jerárquicos de un work item (p.ej. las HUs de un Feature).
+  async listChildren(id) {
+    const res = await this.client.getWorkItemRelations(id);
+    if (res.status === 404) return [];
+    if (res.status !== 200) throw new Error(`azure-devops.listChildren(${id}): ADO ${res.status}`);
+    const relations = (res.json && res.json.relations) || [];
+    const childIds = relations
+      .filter((r) => r && r.rel === "System.LinkTypes.Hierarchy-Forward")
+      .map((r) => String(r.url || "").split("/").pop())
+      .filter(Boolean);
+    const children = [];
+    for (const cid of childIds) {
+      const wi = await this.getWorkItem(cid);
+      if (wi) {
+        children.push({
+          id: wi.id,
+          title: wi.title,
+          state: wi.state,
+          type: (wi.raw && wi.raw["System.WorkItemType"]) || "",
+        });
+      }
+    }
+    return children;
+  }
+
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const parentId = (target && target.work_item_id) || (payload && payload.work_item_id) || null;

@@ -49,6 +49,42 @@ function casesHtml(results) {
   return `<h2>Detalle de pruebas (TC ejecutados)</h2>${blocks}`;
 }
 
+// Línea "qué se ejecutó": comando exacto + duración + código de salida, desde las métricas.
+function execLine(r) {
+  const parts = [];
+  if (r.metrics?.command) parts.push(`comando: ${r.metrics.command}`);
+  if (typeof r.metrics?.ms === "number") parts.push(`${(r.metrics.ms / 1000).toFixed(1)} s`);
+  if (typeof r.metrics?.exitCode === "number") parts.push(`exit ${r.metrics.exitCode}`);
+  return parts.join(" · ");
+}
+
+// Copia las capturas (png/jpg) de los resultados a <dir>/capturas/ y devuelve sus refs relativas.
+// Así la carpeta de evidencia queda AUTOCONTENIDA (reporte + imágenes juntos, portable y
+// adjuntable). Best-effort: si un archivo no existe o no se puede copiar, se omite sin romper.
+function collectShots(results, dir) {
+  const out = [];
+  const capDir = path.join(dir, "capturas");
+  let made = false;
+  for (const r of results) {
+    for (const f of Array.isArray(r.files) ? r.files : []) {
+      if (!/\.(png|jpe?g)$/i.test(f)) continue;
+      try {
+        if (!fs.existsSync(f)) continue;
+        if (!made) {
+          fs.mkdirSync(capDir, { recursive: true });
+          made = true;
+        }
+        const baseName = `${slug(r.layer)}-${path.basename(f)}`;
+        fs.copyFileSync(f, path.join(capDir, baseName));
+        out.push({ layer: r.layer, rel: `capturas/${baseName}`, name: path.basename(f) });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  return out;
+}
+
 // Convierte un valor libre (nombre de dev, id) en un segmento de carpeta seguro y portable:
 // quita tildes (ñ→n, á→a), colapsa lo no [A-Za-z0-9._-] en `-`, recorta. Cross-platform.
 function slug(s) {
@@ -83,6 +119,9 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   if (segParts.length === 0) segParts.push(`WI-${workItemId}`);
   const dir = path.join(repoRoot, outDir, stamp, segParts.join("__"));
   fs.mkdirSync(dir, { recursive: true });
+
+  // Capturas: se copian a <dir>/capturas/ para que la evidencia sea autocontenida.
+  const shots = collectShots(results, dir);
 
   const total = results.length;
   const pass = results.filter((r) => r.status === "pass").length;
@@ -132,6 +171,29 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
     }
   }
 
+  // ---- Qué se ejecutó por capa (comando exacto + duración) ----
+  const execd = results.filter((r) => r.metrics?.command);
+  if (execd.length) {
+    md.push("## Qué se ejecutó por capa");
+    md.push("");
+    for (const r of execd) {
+      md.push(`- **${esc(r.layer)}** (${esc(r.metrics.tool ?? "")}): \`${esc(r.metrics.command)}\` · ${(r.metrics.ms / 1000).toFixed(1)} s · exit ${r.metrics.exitCode}`);
+    }
+    md.push("");
+  }
+
+  // ---- Capturas (referencias a las imágenes copiadas a capturas/) ----
+  if (shots.length) {
+    md.push("## Capturas");
+    md.push("");
+    for (const s of shots) {
+      md.push(`**${esc(s.layer)}** — ${esc(s.name)}`);
+      md.push("");
+      md.push(`![${esc(s.layer)}](${s.rel})`);
+      md.push("");
+    }
+  }
+
   const mdPath = path.join(dir, "report.md");
   fs.writeFileSync(mdPath, md.join("\n"), "utf8");
 
@@ -139,11 +201,25 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   const rows = results
     .map((r) => {
       const icon = r.status === "pass" ? "✅" : r.status === "fail" ? "❌" : "⏭";
+      const ex = execLine(r);
+      const note = `${esc(r.narrative ?? "")}${
+        ex ? `<br><small style="color:#666">Qué se ejecutó: <code>${esc(ex)}</code></small>` : ""
+      }`;
       return `<tr><td>${esc(r.layer)}</td><td>${esc(r.tc_id ?? "—")}</td><td>${icon} ${esc(
         r.status
-      )}</td><td>${esc(r.narrative ?? "")}</td></tr>`;
+      )}</td><td>${note}</td></tr>`;
     })
     .join("\n");
+  const shotsHtml = shots.length
+    ? `<h2>Capturas</h2>${shots
+        .map(
+          (s) =>
+            `<figure style="margin:.6rem 0"><img src="${s.rel}" alt="${esc(s.layer)}" style="max-width:100%;border:1px solid #ccc;border-radius:6px"><figcaption style="color:#666;font-size:.85em">${esc(
+              s.layer
+            )} — ${esc(s.name)}</figcaption></figure>`
+        )
+        .join("")}`
+    : "";
   const html = `<!doctype html><meta charset="utf-8">
 <title>Reporte QA local</title>
 <body style="font-family:system-ui,Arial,sans-serif;max-width:900px;margin:2rem auto;color:#222">
@@ -158,6 +234,7 @@ ${featureId || developer ? `<p>${[featureId ? `<b>Feature (FT):</b> ${esc(featur
 <tbody>${rows.replace(/<td>/g, '<td style="border:1px solid #ccc;padding:6px 8px">')}</tbody>
 </table>
 ${casesHtml(results)}
+${shotsHtml}
 </body>`;
   const htmlPath = path.join(dir, "report.html");
   fs.writeFileSync(htmlPath, html, "utf8");
