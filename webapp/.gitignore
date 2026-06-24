@@ -2,6 +2,7 @@
 node_modules/
 .next/
 out/
+*.tsbuildinfo
 
 # datos locales (config con secretos, runs, repos clonados, evidencia)
 data/
