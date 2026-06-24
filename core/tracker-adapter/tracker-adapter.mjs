@@ -107,6 +107,43 @@ export class TrackerAdapter {
   async reactivateRequirement(id, info) {
     throw new Error("reactivateRequirement() no implementado");
   }
+
+  /**
+   * Publica la evidencia de ejecución PARA UN REQUISITO (HU) concreto, ADEMÁS del resumen
+   * que publishEvidence deja en el Feature paraguas. Hace dos cosas, idempotentes:
+   *   1) asegura el TC del requisito (un work item hijo creado desde sus criterios de
+   *      aceptación; el tipo lo decide el perfil — p.ej. `Task` si el proyecto no tiene
+   *      el tipo "Test Case"), enlazado a la HU como padre;
+   *   2) comenta en la HU el resultado de la corrida (resultado global + criterios + nota).
+   * NO sustituye a publishEvidence: lo COMPLEMENTA por-HU. La ejecución generalizada y su
+   * evidencia local quedan intactas. Trackers sin jerarquía nativa degradan a no-op (este
+   * default) o a solo comentario en su override.
+   * @param {string} requirementId  id de la HU
+   * @param {{criteria?: string[], results?: EvidenceObject[], reportLink?: string|null,
+   *          huTitle?: string}} info
+   * @returns {Promise<{ok: boolean, requirementId: string, tcId?: string|null,
+   *          tcCreated?: boolean, commentOk?: boolean, skipped?: string}>}
+   */
+  async publishRequirementEvidence(requirementId, info) {
+    return { ok: true, requirementId: String(requirementId), tcId: null, skipped: "tracker sin jerarquía de TC" };
+  }
+
+  /**
+   * Crea/actualiza el PLAN DE PRUEBAS del Feature (el papá mayor): un work item hijo del
+   * Feature (p.ej. una Task "PLAN PRUEBAS FEATURE <nombre>") que AGREGA el entendimiento del
+   * objetivo + el plan completo (sus HUs, los criterios y sus TC, y el alcance global de las
+   * capas) + el resultado consolidado. NO deriva criterios ni TC del Feature: esos son de las
+   * HUs. Idempotente (una sola Task de plan por Feature; se actualiza, no se duplica).
+   * Trackers sin jerarquía nativa degradan a no-op (este default) o a su estructura propia.
+   * @param {string} featureId
+   * @param {{featureTitle?: string, objective?: string, hus?: Array<{id, title?, tcs?}>,
+   *          results?: EvidenceObject[], reportLink?: string|null}} info
+   * @returns {Promise<{ok: boolean, featureId: string, planId?: string|null,
+   *          created?: boolean, skipped?: string}>}
+   */
+  async publishTestPlan(featureId, info) {
+    return { ok: true, featureId: String(featureId), planId: null, skipped: "tracker sin jerarquía de plan" };
+  }
 }
 
 export default TrackerAdapter;

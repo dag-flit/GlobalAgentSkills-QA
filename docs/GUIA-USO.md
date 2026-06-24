@@ -217,4 +217,17 @@ cd webapp && npm install && npm run dev        # http://localhost:4312
 ```
 
 Cubre BD (con túnel SSH), tracker + Feature→HUs, detección, ejecución en vivo y evidencia.
+
+**Flujo por HU y por criterio:** al elegir un Feature y sus HUs, la UI prepara **una prueba por
+criterio de aceptación** y la muestra en lenguaje claro en el paso de **Revisión**. Puedes
+**"Publicar plan en el tracker"** (crea la Task "PLAN PRUEBAS FEATURE…" + los TC por criterio en
+estado *planificado*, ANTES de ejecutar) y luego ejecutar (se actualizan con el resultado y se
+comenta por HU). Hay paridad online (tracker) y offline (el reporte local incluye el plan).
+
+**Generación con IA (opcional):** en **Ajustes → Generación con IA** configuras un proveedor
+(**Google Gemini** con capa gratis, o **Anthropic Claude**) + API key (enmascarada o por variable de
+entorno). Con IA, los tests se escriben de verdad desde el criterio; sin IA, se usan esqueletos
+("pendiente"). Son **borradores que SÍ se ejecutan** — revísalos antes de aprobar. Se escriben en
+`qa-generated/HU-<id>/` (no se versionan).
+
 Ver **[../webapp/README.md](../webapp/README.md)**.

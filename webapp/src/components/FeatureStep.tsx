@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { TrackerName } from "@/lib/types";
 import { Field, Spinner } from "@/components/ui";
+import { useAction } from "@/components/ActionFeedback";
 
 export interface WorkItemLite {
   id: string;
@@ -20,6 +21,7 @@ export function FeatureStep({
   onBack: () => void;
   onContinue: (featureId: string, hus: WorkItemLite[]) => void;
 }) {
+  const action = useAction();
   const [featureId, setFeatureId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,27 +36,42 @@ export function FeatureStep({
     setError(null);
     setFeature(null);
     setChildren([]);
-    try {
-      const r = await fetch("/api/tracker/children", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ featureId }),
-      });
-      const res = await r.json();
-      if (!res.ok) {
-        setError(res.error || "No se pudo consultar el Feature.");
-        return;
-      }
-      setFeature(res.feature);
-      setChildren(res.children || []);
-      const sel: Record<string, boolean> = {};
-      for (const c of res.children || []) sel[c.id] = true;
-      setPicked(sel);
-    } catch (e: any) {
-      setError(e?.message ?? "Error de red");
-    } finally {
-      setLoading(false);
-    }
+    await action
+      .run(
+        {
+          loading: `Consultando el Feature #${featureId} y sus HUs en ${tracker}…`,
+          success: (m) => String(m),
+        },
+        async () => {
+          let res: any;
+          try {
+            const r = await fetch("/api/tracker/children", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ featureId }),
+            });
+            res = await r.json();
+          } catch (e: any) {
+            const message = e?.message ?? "Error de red";
+            setError(message);
+            throw new Error(message);
+          }
+          if (!res.ok) {
+            const message = res.error || "No se pudo consultar el Feature.";
+            setError(message);
+            throw new Error(message);
+          }
+          setFeature(res.feature);
+          setChildren(res.children || []);
+          const sel: Record<string, boolean> = {};
+          for (const c of res.children || []) sel[c.id] = true;
+          setPicked(sel);
+          const n = (res.children || []).length;
+          return `Feature #${featureId} encontrado · ${n} HU(s) hija(s)`;
+        }
+      )
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }
 
   const selected = children.filter((c) => picked[c.id]);

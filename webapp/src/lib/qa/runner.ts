@@ -7,6 +7,7 @@ import { trackerEnv } from "./tracker";
 import { buildConnectionString } from "@/lib/db/dbClient";
 import { openSshTunnel, type Tunnel } from "@/lib/db/sshTunnel";
 import { emitEvent, endRun } from "@/lib/events";
+import { makeGenerator } from "./ai-generator";
 import { saveRun } from "@/lib/runStore";
 import { isStopRequested, clearStop } from "@/lib/procRegistry";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
@@ -18,6 +19,25 @@ export interface RunInput {
   appUrl?: string;
   featureId?: string;
   huIds?: string[];
+  generate?: boolean;          // generar tests desde los criterios (Fase A: esqueletos)
+  approvedTcKeys?: string[];   // claves "<huId>:<TC-AC#>" aprobadas en la revisión
+}
+
+/**
+ * Mensaje de error legible que NO pierde la causa real. `fetch` (undici) lanza un escueto
+ * "fetch failed" y esconde el motivo en `e.cause` (p.ej. ECONNRESET, ENOTFOUND, ETIMEDOUT).
+ * Lo desempaquetamos para que el reporte/consola muestren el código real y sea diagnosticable.
+ */
+function describeError(e: any): string {
+  const msg = String(e?.message ?? e);
+  const cause = e?.cause;
+  if (cause) {
+    const code = cause.code ?? cause.errno;
+    const cmsg = cause.message ?? String(cause);
+    const detail = [code, cmsg && cmsg !== msg ? cmsg : null].filter(Boolean).join(" · ");
+    if (detail) return `${msg} (${detail})`;
+  }
+  return msg;
 }
 
 function runId(): string {
@@ -85,6 +105,40 @@ async function buildEnv(
     }
   }
   return { env, tunnel };
+}
+
+/**
+ * SOLO PLANIFICACIÓN: crea el Plan del Feature + los TC en el tracker (sin ejecutar pruebas).
+ * Es la acción "Publicar plan" del paso de Revisión, antes de la ejecución. Devuelve el resumen
+ * del plan (testPlan + plan). No abre túnel SSH (no se ejecuta la capa db).
+ */
+export async function publishPlanOnly(input: RunInput): Promise<any> {
+  const cfg = loadConfig();
+  const tracker = cfg.tracker.selected;
+  const { runQaCycle } = await importKit("runtime/orchestrator.mjs");
+  const profile = await buildProfile(tracker, input.layers || []);
+  const built = await buildEnv(cfg, []); // sin túnel: la planificación no ejecuta db
+  try {
+    const summary = await runQaCycle({
+      repoRoot: input.repoRoot || KIT_ROOT,
+      env: built.env,
+      profile,
+      workItemId: input.featureId || "local",
+      featureId: input.featureId,
+      huIds: input.huIds,
+      generate: !!input.generate,
+      generateTests: makeGenerator(), // IA con fallback a esqueleto
+      approvedTcKeys: input.approvedTcKeys,
+      planOnly: true,
+    });
+    return { ok: true, summary };
+  } finally {
+    try {
+      built.tunnel?.close?.();
+    } catch {
+      /* noop */
+    }
+  }
 }
 
 /** Crea el run y lo arranca en segundo plano (fire-and-forget). Devuelve el registro inicial. */
@@ -173,6 +227,10 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
       profile,
       workItemId,
       featureId: input.featureId,
+      huIds: record.mode === "code" ? input.huIds : undefined,
+      generate: record.mode === "code" ? !!input.generate : false,
+      generateTests: makeGenerator(), // IA con fallback a esqueleto (inyectado en la webapp)
+      approvedTcKeys: record.mode === "code" ? input.approvedTcKeys : undefined,
       appUrl: input.appUrl,
       explore: record.mode === "explore",
       launchBrowser,
@@ -191,7 +249,7 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
     if (local?.htmlPath) emitEvent(id, "info", `Reporte: ${local.htmlPath}`);
   } catch (e: any) {
     record.status = "error";
-    record.error = String(e?.message ?? e);
+    record.error = describeError(e);
     record.finishedAt = new Date().toISOString();
     saveRun(record);
     emitEvent(id, "error", `Error: ${record.error}`);

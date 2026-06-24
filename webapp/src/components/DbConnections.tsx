@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AppConfig, DbConnection, DbEngine, SshAuthMethod, SshConfig } from "@/lib/types";
 import { Field, Spinner } from "@/components/ui";
+import { useAction } from "@/components/ActionFeedback";
 
 function defaultSsh(): SshConfig {
   return {
@@ -87,6 +88,7 @@ function newConnection(): DbConnection {
 }
 
 export function DbConnections() {
+  const action = useAction();
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -145,16 +147,19 @@ export function DbConnections() {
     setCfg((c) => ({ ...c!, databases: [...c!.databases, conn] }));
     setSelectedId(conn.id);
     setSavedMsg(null);
+    action.notify("Conexión añadida — recuerda Guardar para conservarla");
   }
 
   function deleteSelected() {
     if (!selected) return;
+    const name = selected.name || "(sin nombre)";
     const rest = cfg!.databases.filter((d) => d.id !== selected.id);
     // si borramos la default, promover la primera restante
     if (selected.isDefault && rest.length) rest[0].isDefault = true;
     setCfg((c) => ({ ...c!, databases: rest }));
     setSelectedId(rest[0]?.id ?? null);
     setSavedMsg(null);
+    action.notify(`Conexión «${name}» eliminada — recuerda Guardar`);
   }
 
   function makeDefault() {
@@ -164,50 +169,59 @@ export function DbConnections() {
       databases: c!.databases.map((d) => ({ ...d, isDefault: d.id === selected.id })),
     }));
     setSavedMsg(null);
+    action.notify(`«${selected.name || "(sin nombre)"}» marcada como default — recuerda Guardar`);
   }
 
   async function save() {
     setSaving(true);
     setSavedMsg(null);
-    try {
-      const r = await fetch("/api/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
-      });
-      const updated: AppConfig = await r.json();
-      setCfg(updated);
-      setSavedMsg("Guardado ✓");
-    } catch {
-      setSavedMsg("No se pudo guardar");
-    } finally {
-      setSaving(false);
-    }
+    await action
+      .run({ loading: "Guardando conexiones…", success: "Conexiones guardadas correctamente" }, async () => {
+        const r = await fetch("/api/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cfg),
+        });
+        if (!r.ok) throw new Error("No se pudo guardar la configuración");
+        const updated: AppConfig = await r.json();
+        setCfg(updated);
+        setSavedMsg("Guardado ✓");
+      })
+      .catch(() => setSavedMsg("No se pudo guardar"))
+      .finally(() => setSaving(false));
   }
 
   async function runTest() {
     if (!selected) return;
     setTest({ status: "testing" });
-    try {
-      const r = await fetch("/api/db/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ db: selected }),
-      });
-      const res = await r.json();
-      if (res.ok) {
-        setTest({
-          status: "ok",
-          message: `${res.message} · ${res.serverVersion ?? ""}`.trim(),
-          target: res.target,
-        });
-      } else {
-        const message = res.message || res.error || "Falló la conexión";
-        setTest({ status: "err", message, hint: hintFor(message, res.target), target: res.target });
-      }
-    } catch (e: any) {
-      setTest({ status: "err", message: e?.message ?? "Error de red" });
-    }
+    await action
+      .run(
+        { loading: "Probando conexión a la base de datos…", success: (m) => String(m) },
+        async () => {
+          let res: any;
+          try {
+            const r = await fetch("/api/db/test", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ db: selected }),
+            });
+            res = await r.json();
+          } catch (e: any) {
+            const message = e?.message ?? "Error de red";
+            setTest({ status: "err", message });
+            throw new Error(message);
+          }
+          if (res.ok) {
+            const message = `${res.message} · ${res.serverVersion ?? ""}`.trim();
+            setTest({ status: "ok", message, target: res.target });
+            return `Conexión exitosa${res.serverVersion ? ` · ${res.serverVersion}` : ""}`;
+          }
+          const message = res.message || res.error || "Falló la conexión";
+          setTest({ status: "err", message, hint: hintFor(message, res.target), target: res.target });
+          throw new Error(hintFor(message, res.target) || message);
+        }
+      )
+      .catch(() => {});
   }
 
   return (

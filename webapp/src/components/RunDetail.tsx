@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { RunEvent, RunRecord, LogLevel } from "@/lib/types";
 import { StatusBadge, Spinner, fmtTime } from "@/components/ui";
+import { useAction } from "@/components/ActionFeedback";
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
   info: "text-blue-300",
@@ -48,6 +49,7 @@ function statusSentence(r: any): string {
 }
 
 export function RunDetail({ id }: { id: string }) {
+  const action = useAction();
   const [record, setRecord] = useState<RunRecord | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [live, setLive] = useState(true);
@@ -94,7 +96,12 @@ export function RunDetail({ id }: { id: string }) {
   }, [events, autoscroll]);
 
   async function stop() {
-    await fetch(`/api/runs/${id}/stop`, { method: "POST" }).catch(() => {});
+    await action
+      .run({ loading: "Deteniendo la corrida…", success: "Corrida detenida" }, async () => {
+        const r = await fetch(`/api/runs/${id}/stop`, { method: "POST" });
+        if (!r.ok) throw new Error("No se pudo detener la corrida");
+      })
+      .catch(() => {});
   }
 
   const summary = record?.summary;
@@ -105,6 +112,8 @@ export function RunDetail({ id }: { id: string }) {
     skip: results.filter((r) => r.status === "skip").length,
   };
   const report = summary?.report?.local || summary?.report;
+  const huEvidence: any[] = summary?.huEvidence || [];
+  const testPlan: any = summary?.testPlan || null;
   const artifact = (p: string) => `/api/artifacts?path=${encodeURIComponent(p)}`;
   const shots: string[] = results.flatMap((r) => (Array.isArray(r.files) ? r.files : [])).filter((f) => /\.(png|jpe?g)$/i.test(f));
 
@@ -225,6 +234,7 @@ export function RunDetail({ id }: { id: string }) {
               const cases = Array.isArray(r.cases) ? r.cases : [];
               const p = cases.filter((c: any) => c.status === "pass").length;
               const f = cases.filter((c: any) => c.status === "fail").length;
+              const s = cases.length - p - f; // resto = saltados/pendientes (no ocultar)
               return (
                 <div key={i} className="rounded-lg border border-border bg-panel2/30 p-3 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -253,8 +263,11 @@ export function RunDetail({ id }: { id: string }) {
                     {typeof r.metrics?.ms === "number" && <span>duración: {(r.metrics.ms / 1000).toFixed(1)} s</span>}
                     {cases.length > 0 && (
                       <span>
-                        casos: <span className="text-green-300">✓{p}</span>{" "}
-                        <span className="text-red-300">✗{f}</span>
+                        casos: {cases.length} ·{" "}
+                        <span className="text-green-300">✓{p}</span>{" "}
+                        <span className="text-red-300">✗{f}</span>{" "}
+                        <span className="text-muted">⏭{s}</span>
+                        {s > 0 ? <span className="text-muted"> (saltados/pendientes)</span> : null}
                       </span>
                     )}
                   </div>
@@ -337,6 +350,55 @@ export function RunDetail({ id }: { id: string }) {
         </div>
       )}
 
+      {testPlan && (testPlan.planId || testPlan.error) && (
+        <div className="card space-y-1">
+          <h2 className="font-semibold text-sm">Plan de Pruebas del Feature</h2>
+          {testPlan.planId ? (
+            <p className="text-sm text-green-300">
+              ✓ Task del plan <span className="font-mono">#{testPlan.planId}</span>{" "}
+              <span className="text-muted text-xs">
+                {testPlan.created ? "creada" : "actualizada"} bajo el Feature (objetivo + HUs/TC + alcance global).
+              </span>
+            </p>
+          ) : (
+            <p className="text-sm text-warn">⚠ No se pudo registrar el plan: {testPlan.error}</p>
+          )}
+        </div>
+      )}
+
+      {huEvidence.length > 0 && (
+        <div className="card space-y-2">
+          <h2 className="font-semibold text-sm">Evidencia por HU</h2>
+          <p className="text-xs text-muted">
+            Además del resumen en el Feature, cada HU seleccionada recibió su comentario de
+            ejecución y su <b>TC</b> (Task creado/actualizado desde sus criterios de aceptación).
+          </p>
+          <ul className="space-y-1 text-sm">
+            {huEvidence.map((h) => {
+              const okAll = h.ok !== false && h.commentOk !== false && !h.error;
+              return (
+                <li key={h.work_item_id} className="flex flex-wrap items-center gap-2">
+                  <span className={okAll ? "text-green-300" : "text-warn"}>{okAll ? "✓" : "⚠"}</span>
+                  <span className="font-mono">HU #{h.work_item_id}</span>
+                  <span className="text-muted text-xs">
+                    {Array.isArray(h.tcs) && h.tcs.length ? (
+                      <>{h.tcs.filter((t: any) => t.tcId).length}/{h.tcs.length} TC por criterio</>
+                    ) : h.tcId ? (
+                      <>TC #{h.tcId} {h.tcCreated ? "creado" : "reusado"}</>
+                    ) : (
+                      <>sin TC{h.tcError ? ` (${h.tcError})` : ""}</>
+                    )}
+                    {h.commentOk === false ? " · comentario falló" : h.commentId ? " · comentario publicado" : ""}
+                    {h.error ? ` · ${h.error}` : ""}
+                    {h.skipped ? ` · ${h.skipped}` : ""}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
       {showCoverage && (
         <div className="card space-y-2">
           <h2 className="font-semibold text-sm">Cobertura de HUs seleccionadas</h2>
@@ -363,8 +425,10 @@ export function RunDetail({ id }: { id: string }) {
               </ul>
               {gaps.length > 0 && (
                 <p className="text-xs text-warn">
-                  ⚠ {gaps.length} HU(s) seleccionada(s) sin cobertura. Etiqueta sus pruebas con{" "}
-                  <code>[HU-###]</code> o revisa si faltan pruebas para esa historia.
+                  ⚠ {gaps.length} HU(s) sin <b>pruebas asociadas a un criterio</b>. Cada HU igual
+                  recibió su comentario de ejecución y su TC (ver «Evidencia por HU»); esto solo
+                  indica que aún ninguna prueba está etiquetada <code>[HU-###]</code> para validar
+                  sus criterios individualmente.
                 </p>
               )}
               {extra.length > 0 && (

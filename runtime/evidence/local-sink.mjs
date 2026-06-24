@@ -13,6 +13,11 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+// Texto de un criterio que puede venir como string (línea) u objeto {title, detail}.
+function critText(c) {
+  return typeof c === "string" ? c : (c && c.title) || "";
+}
+
 // Etiqueta de ubicación del objetivo (monorepo) para el encabezado de detalle de TC.
 function caseWhere(r) {
   return r.metrics?.cwd ? ` @ ${esc(r.metrics.cwd)}` : "";
@@ -96,6 +101,54 @@ function slug(s) {
     .slice(0, 60);
 }
 
+// Plan de pruebas del Feature (paridad OFFLINE con la Task "PLAN PRUEBAS FEATURE…" del tracker):
+// objetivo + HUs y sus TC (por criterio) + resultado consolidado. `plan` = { featureId,
+// featureTitle, hus: [{id, title, criteria?, tcs?:[{key,title,status}]}] }.
+function planMd(plan, results) {
+  if (!plan || !Array.isArray(plan.hus) || !plan.hus.length) return [];
+  const c = (s) => results.filter((r) => r.status === s).length;
+  const out = [
+    `## Plan de pruebas del Feature${plan.featureId ? ` #${plan.featureId}` : ""}${plan.featureTitle ? ` — ${plan.featureTitle}` : ""}`,
+    "",
+    `**Alcance:** las HUs y criterios de abajo + la corrida general de capas.`,
+    `**Resultado consolidado:** ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}`,
+    "",
+  ];
+  for (const hu of plan.hus) {
+    out.push(`### HU #${esc(hu.id)}${hu.title ? ` — ${esc(hu.title)}` : ""}`);
+    const tcs = Array.isArray(hu.tcs) ? hu.tcs : [];
+    if (tcs.length) {
+      // sin clave duplicada: el título ya incluye "TC-AC<n> -"
+      for (const tc of tcs) out.push(`- ${esc(tc.title ?? tc.key ?? "")} _(${esc(tc.status ?? "pendiente")})_`);
+    } else if (Array.isArray(hu.criteria) && hu.criteria.length) {
+      for (const cr of hu.criteria) out.push(`- ${esc(critText(cr))}`);
+    } else {
+      out.push(`- _(sin criterios declarados)_`);
+    }
+    out.push("");
+  }
+  return out;
+}
+function planHtml(plan, results) {
+  if (!plan || !Array.isArray(plan.hus) || !plan.hus.length) return "";
+  const c = (s) => results.filter((r) => r.status === s).length;
+  const huBlocks = plan.hus
+    .map((hu) => {
+      const tcs = Array.isArray(hu.tcs) ? hu.tcs : [];
+      const items = tcs.length
+        ? tcs.map((tc) => `<li>${esc(tc.title ?? tc.key ?? "")} <small style="color:#888">(${esc(tc.status ?? "pendiente")})</small></li>`).join("")
+        : (Array.isArray(hu.criteria) ? hu.criteria : []).map((cr) => `<li>${esc(critText(cr))}</li>`).join("") || "<li><i>(sin criterios declarados)</i></li>";
+      return `<p><b>HU #${esc(hu.id)}</b>${hu.title ? ` — ${esc(hu.title)}` : ""}</p><ul>${items}</ul>`;
+    })
+    .join("");
+  return (
+    `<h2>Plan de pruebas del Feature${plan.featureId ? ` #${esc(plan.featureId)}` : ""}${plan.featureTitle ? ` — ${esc(plan.featureTitle)}` : ""}</h2>` +
+    `<p><b>Alcance:</b> las HUs y criterios de abajo + la corrida general de capas.<br>` +
+    `<b>Resultado consolidado:</b> ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}</p>` +
+    huBlocks
+  );
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.repoRoot
@@ -103,10 +156,11 @@ function slug(s) {
  * @param {string} [opts.workItemId]
  * @param {string} [opts.featureId]   número/id del Feature (FT) padre — para trazar la HU a su FT
  * @param {string} [opts.developer]   desarrollador responsable — para separar corridas por dev
+ * @param {object} [opts.plan]        plan de pruebas del Feature (HUs + TC) para paridad offline
  * @param {EvidenceObject[]} opts.results
  * @returns {{dir:string, mdPath:string, htmlPath:string}}
  */
-export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local", featureId, developer, results = [] }) {
+export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local", featureId, developer, plan, results = [] }) {
   const outDir = (profile.evidence && profile.evidence.output_dir) || "qa-evidence";
   const stamp = todayStamp(profile.locale && profile.locale.timezone);
   // Subcarpeta del test: se nombra netamente con el Feature (FT-<feature>) y el dev (slug),
@@ -143,6 +197,8 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   md.push("");
   md.push(`**Resumen:** ${total} total · ✅ ${pass} pass · ❌ ${fail} fail · ⏭ ${skip} skip`);
   md.push("");
+  // Plan de pruebas del Feature (paridad con la Task del tracker) — antes de la tabla de capas.
+  for (const line of planMd(plan, results)) md.push(line);
   md.push("| Capa | TC | Resultado | Notas |");
   md.push("|------|----|-----------|-------|");
   for (const r of results) {
@@ -227,6 +283,7 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
 <p><b>Fecha:</b> ${stamp} · <b>Proyecto:</b> ${esc(profile.project?.name ?? "auto")} · <b>Tracker:</b> local</p>
 ${featureId || developer ? `<p>${[featureId ? `<b>Feature (FT):</b> ${esc(featureId)}` : null, developer ? `<b>Desarrollador:</b> ${esc(developer)}` : null].filter(Boolean).join(" · ")}</p>` : ""}
 <p><b>Resumen:</b> ${total} total · ✅ ${pass} pass · ❌ ${fail} fail · ⏭ ${skip} skip</p>
+${planHtml(plan, results)}
 <table style="border-collapse:collapse;width:100%">
 <thead><tr>${["Capa", "TC", "Resultado", "Notas"]
     .map((h) => `<th style="border:1px solid #ccc;padding:6px 8px;background:#f0f0f0;text-align:left">${h}</th>`)

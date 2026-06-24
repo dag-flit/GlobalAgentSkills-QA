@@ -13,9 +13,12 @@
 //   import { runQaCycle } from "./orchestrator.mjs";
 //   const summary = await runQaCycle({ repoRoot, env: process.env });
 
+import fs from "node:fs";
+import path from "node:path";
 import { resolveProfile } from "./profile/resolve-profile.mjs";
 import { getAdapter } from "../core/tracker-adapter/index.mjs";
 import { detectRepo, resolveEnabledLayers } from "./detect/qa-detect.mjs";
+import { generateTestsForRequirement } from "./generate/skeleton-generator.mjs";
 import { runStaticAnalysis } from "./runners/static-analysis.mjs";
 import { runUnitTests } from "./runners/unit.mjs";
 import { runE2eTests } from "./runners/e2e.mjs";
@@ -51,9 +54,14 @@ export async function runQaCycle({
   profile,
   workItemId = "local",
   featureId,
+  huIds,             // HUs hijas seleccionadas: cada una recibe sus TC (Task por criterio) + comentario
   developer,
   exec,
   http,
+  generate = false,  // si true (+ huIds): genera tests desde los criterios de cada HU antes de correr
+  generateTests = generateTestsForRequirement, // generador INYECTABLE (default: esqueletos offline)
+  approvedTcKeys,    // Set/Array de claves "TC-AC<n>" aprobadas en la revisión (default: todas)
+  planOnly = false,  // si true: solo PLANIFICA (crea Plan + TC en el tracker) y termina, sin ejecutar
   appUrl,            // URL viva opcional: baseURL para el e2e del repo (BASE_URL/PLAYWRIGHT_BASE_URL)
   explore = false,   // si true (y hay appUrl), corre además la capa `explore` (crawler de la URL)
   launchBrowser,     // launcher de navegador inyectable para `explore` (offline-testable)
@@ -90,6 +98,120 @@ export async function runQaCycle({
   const runEnv = appUrl
     ? { ...env, BASE_URL: appUrl, PLAYWRIGHT_BASE_URL: appUrl, CYPRESS_BASE_URL: appUrl }
     : env;
+
+  // ── Generación de pruebas desde criterios (Fase A: esqueletos) ───────────────
+  // ANTES de los runners: por cada HU se leen sus CRITERIOS (de la HU, no del Feature) y se
+  // generan archivos de prueba (uno por criterio, etiquetados [HU-###]). Se escriben en el cwd
+  // de la capa unit para que el runner los ejecute. Gated por `generate` + `huIds`. Devuelve un
+  // manifest por HU que luego alimenta los TC (Task) y el Plan del Feature.
+  const generatedByHu = {}; // huId -> { huTitle, criteria, tcs[] }
+  if (generate && Array.isArray(huIds) && huIds.length) {
+    const unitInfo = detection.layers && detection.layers.unit;
+    const unitTool = (unitInfo && (unitInfo.tool || (unitInfo.targets && unitInfo.targets[0] && unitInfo.targets[0].tool))) || null;
+    const unitCwd = (unitInfo && (unitInfo.cwd || (unitInfo.targets && unitInfo.targets[0] && unitInfo.targets[0].cwd))) || "";
+    const genBase = path.join(repoRoot, unitCwd);
+    const approved = approvedTcKeys ? new Set(Array.from(approvedTcKeys)) : null;
+    const tcTitlePrefix = (resolvedProfile.azure && resolvedProfile.azure.work_item && resolvedProfile.azure.work_item.test_case_title_prefix) || "TC-";
+    for (const huId of huIds) {
+      const id = String(huId);
+      if (!id || id === "local") continue;
+      let wi = null;
+      try { wi = await adapter.getWorkItem(id); } catch { /* sin HU/red: se omite */ }
+      const criteria = (wi && wi.acceptance_criteria) || [];
+      // generateTests puede ser síncrono (esqueletos) o async (generador con IA inyectado).
+      const tcs = await generateTests({ requirement: { id, title: wi && wi.title }, criteria, options: { unitTool, tcTitlePrefix } });
+      for (const tc of tcs) {
+        // La aprobación es por (HU, criterio): la clave TC-AC<n> se repite entre HUs.
+        if (approved && !approved.has(`${id}:${tc.key}`)) { tc.skipped = "no aprobado en revisión"; continue; }
+        if (!tc.supported || !tc.code) continue;
+        try {
+          const abs = path.join(genBase, tc.relPath);
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, tc.code, "utf8");
+          tc.written = tc.relPath;
+        } catch (e) { tc.writeError = e.message; }
+      }
+      generatedByHu[id] = { huTitle: wi && wi.title, criteria, tcs };
+    }
+  }
+
+  // ── Planificación (ANTES de ejecutar): requisitos + Plan del Feature + TC ─────
+  // Lógica QA: el plan de pruebas se arma en la PLANIFICACIÓN — entendidos el Feature, sus HUs
+  // y los criterios — no al final. Aquí se crea la estructura (Plan del Feature + TC por criterio,
+  // en estado "pendiente"); tras ejecutar se ACTUALIZA con los resultados. El plan también se
+  // pasa al sink para el reporte local (paridad offline).
+  let requirements = null;
+  let featureTitle = null;
+  if (Array.isArray(huIds) && huIds.length) {
+    requirements = [];
+    for (const huId of huIds) {
+      const id = String(huId);
+      if (!id || id === "local") continue;
+      const cached = generatedByHu[id];
+      let huTitle = cached && cached.huTitle;
+      let criteria = cached && cached.criteria;
+      const tcs = (cached && cached.tcs) || [];
+      if (!cached) {
+        let wi = null;
+        try { wi = await adapter.getWorkItem(id); } catch { /* sin HU/red */ }
+        huTitle = wi && wi.title;
+        criteria = (wi && wi.acceptance_criteria) || [];
+      }
+      requirements.push({ id, title: huTitle, criteria: criteria || [], tcs });
+    }
+    if (featureId && String(featureId) !== "local") {
+      try { const fwi = await adapter.getWorkItem(featureId); featureTitle = fwi && fwi.title; } catch { /* sin Feature/red */ }
+    }
+  }
+  const plan = requirements
+    ? {
+        featureId: featureId && String(featureId) !== "local" ? String(featureId) : null,
+        featureTitle,
+        hus: requirements.map((r) => ({
+          id: r.id,
+          title: r.title,
+          criteria: r.criteria,
+          tcs: r.tcs.map((t) => ({ key: t.key, title: t.title, status: t.status })),
+        })),
+      }
+    : null;
+
+  // Crea la estructura en el tracker (online): TC por criterio (pendientes) + Plan del Feature
+  // (sin resultados aún). Gated por `states`: trackers sin jerarquía degradan a no-op.
+  let testPlan = null;
+  if (caps.states && requirements && requirements.length && typeof adapter.publishRequirementEvidence === "function") {
+    for (const req of requirements) {
+      try {
+        await adapter.publishRequirementEvidence(req.id, { criteria: req.criteria, tcs: req.tcs, huTitle: req.title, phase: "plan" });
+      } catch { /* degrada: la planificación de un TC no aborta el ciclo */ }
+    }
+    if (plan && plan.featureId && typeof adapter.publishTestPlan === "function") {
+      try {
+        testPlan = await adapter.publishTestPlan(plan.featureId, { featureTitle, hus: plan.hus, results: [], phase: "plan" });
+      } catch (e) {
+        testPlan = { ok: false, featureId: plan.featureId, error: e.message };
+      }
+    }
+  }
+
+  // Modo SOLO PLANIFICACIÓN: ya se crearon el Plan + los TC en el tracker; se termina aquí
+  // sin ejecutar runners. La ejecución es una acción aparte (el usuario la lanza después).
+  if (planOnly) {
+    return {
+      ok: true,
+      stopped: "planOnly",
+      tracker: adapter.name,
+      preflight,
+      detection,
+      results: [],
+      report: null,
+      plan,
+      testPlan,
+      huEvidence: null,
+      novelties: null,
+      warnings: [],
+    };
+  }
 
   // ── Ejecución de runners por capa ───────────────────────────────────────────
   const results = [];
@@ -138,11 +260,35 @@ export async function runQaCycle({
 
   // ── Entrega al sink (vía adapter) ───────────────────────────────────────────
   // Publica SIEMPRE el resumen de lo ejecutado (en ADO/github/jira → comentario en la HU;
-  // en local → reporte md/html). Así cada corrida deja constancia de las pruebas corridas.
+  // en local → reporte md/html, CON el plan de pruebas para paridad offline).
   const report = await adapter.publishEvidence(
     { work_item_id: requirementId, feature_id: featureId, developer },
-    { results }
+    { results, plan }
   );
+
+  // ── Actualización (DESPUÉS de ejecutar): resultado por HU + Plan con resultados ──
+  // El Plan y los TC ya se crearon en la planificación; aquí se comenta el RESULTADO por HU
+  // y se ACTUALIZA el Plan del Feature con el resultado consolidado. Reusa `requirements`.
+  const reportLink = (report && report.local && report.local.htmlPath) || null;
+  let huEvidence = null;
+  if (caps.states && requirements && requirements.length && typeof adapter.publishRequirementEvidence === "function") {
+    huEvidence = [];
+    for (const req of requirements) {
+      try {
+        const r = await adapter.publishRequirementEvidence(req.id, { criteria: req.criteria, tcs: req.tcs, results, reportLink, huTitle: req.title, phase: "result" });
+        huEvidence.push({ work_item_id: req.id, ...r });
+      } catch (e) {
+        huEvidence.push({ work_item_id: req.id, ok: false, error: e.message });
+      }
+    }
+    if (plan && plan.featureId && typeof adapter.publishTestPlan === "function") {
+      try {
+        testPlan = await adapter.publishTestPlan(plan.featureId, { featureTitle, hus: plan.hus, results, reportLink });
+      } catch (e) {
+        testPlan = { ok: false, featureId: plan.featureId, error: e.message };
+      }
+    }
+  }
 
   // ── Manejo de NOVEDADES (fallas) ────────────────────────────────────────────
   // Por cada HU con al menos una falla: crear un Bug enlazado a ESA HU + reactivar la HU
@@ -158,6 +304,8 @@ export async function runQaCycle({
     detection,
     results,
     report,
+    huEvidence,                // null = no aplica; [{work_item_id, tcs:[{key,tcId,...}], commentOk}] por HU
+    testPlan,                  // null = no aplica; {planId, created/updated} de la Task "PLAN PRUEBAS FEATURE…"
     novelties,                 // null = no aplica; [] = sin fallas; [{...}] = HUs con novedad
     warnings,                  // avisos no fatales del ciclo (p.ej. remoto sin -w)
   };

@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Field, Spinner } from "@/components/ui";
+import { useAction } from "@/components/ActionFeedback";
 import { TrackerStep } from "@/components/TrackerStep";
 import { FeatureStep, type WorkItemLite } from "@/components/FeatureStep";
+import { ReviewStep } from "@/components/ReviewStep";
 import type { TrackerName } from "@/lib/types";
 
 /* ---------- detección ---------- */
@@ -67,7 +69,9 @@ function buildSteps(mode: Mode, tracker: TrackerName, e2eOn: boolean): { key: st
     { key: "source", label: "Código" },
     { key: "detect", label: "Detección" },
     { key: "tracker", label: "Tracker" },
-    ...(tracker !== "local" ? [{ key: "feature", label: "Feature/HUs" }] : []),
+    ...(tracker !== "local"
+      ? [{ key: "feature", label: "Feature/HUs" }, { key: "review", label: "Revisión" }]
+      : []),
     ...(e2eOn ? [{ key: "url", label: "URL (E2E)" }] : []),
     { key: "run", label: "Ejecutar" },
   ];
@@ -107,6 +111,7 @@ function Stepper({ steps, idx }: { steps: { key: string; label: string }[]; idx:
 
 export function RunWizard() {
   const router = useRouter();
+  const action = useAction();
   const [mode, setMode] = useState<Mode | null>(null);
   const [idx, setIdx] = useState(0);
   const [launching, setLaunching] = useState(false);
@@ -117,6 +122,9 @@ export function RunWizard() {
   // feature/HUs
   const [featureId, setFeatureId] = useState("");
   const [hus, setHus] = useState<WorkItemLite[]>([]);
+  // revisión: pruebas aprobadas para generar (claves "<huId>:<TC-AC#>")
+  const [approvedTcKeys, setApprovedTcKeys] = useState<string[]>([]);
+  const [generate, setGenerate] = useState(false);
   // origen del código
   const [sourceKind, setSourceKind] = useState<"git" | "local">("local");
   const [gitUrl, setGitUrl] = useState("");
@@ -153,27 +161,43 @@ export function RunWizard() {
     setDetecting(true);
     setDetectError(null);
     try {
-      const body =
-        sourceKind === "git" ? { kind: "git", gitUrl, branch } : { kind: "local", localPath };
-      const r = await fetch("/api/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const res = await r.json();
-      if (!res.ok) {
-        setDetectError(res.error || "No se pudo detectar el proyecto.");
-        return false;
-      }
-      const det: Detection = res.detection;
-      setRepoRoot(res.repoRoot);
-      setDetection(det);
-      const on: Record<string, boolean> = {};
-      for (const l of LAYER_ORDER) on[l] = det.enabled.includes(l);
-      setLayerOn(on);
+      await action.run(
+        {
+          loading: sourceKind === "git" ? "Clonando y detectando el proyecto…" : "Detectando capas del proyecto…",
+          success: (m) => String(m),
+        },
+        async () => {
+          const body =
+            sourceKind === "git" ? { kind: "git", gitUrl, branch } : { kind: "local", localPath };
+          let res: any;
+          try {
+            const r = await fetch("/api/detect", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            res = await r.json();
+          } catch (e: any) {
+            const message = e?.message ?? "Error de red";
+            setDetectError(message);
+            throw new Error(message);
+          }
+          if (!res.ok) {
+            const message = res.error || "No se pudo detectar el proyecto.";
+            setDetectError(message);
+            throw new Error(message);
+          }
+          const det: Detection = res.detection;
+          setRepoRoot(res.repoRoot);
+          setDetection(det);
+          const on: Record<string, boolean> = {};
+          for (const l of LAYER_ORDER) on[l] = det.enabled.includes(l);
+          setLayerOn(on);
+          return `Detección lista · ${det.enabled.length} capa(s) disponible(s)`;
+        }
+      );
       return true;
-    } catch (e: any) {
-      setDetectError(e?.message ?? "Error de red");
+    } catch {
       return false;
     } finally {
       setDetecting(false);
@@ -187,27 +211,38 @@ export function RunWizard() {
     setLaunching(true);
     setLaunchError(null);
     try {
-      const body = {
-        mode,
-        repoRoot: mode === "code" ? repoRoot || undefined : undefined,
-        layers: mode === "code" ? LAYER_ORDER.filter((l) => layerOn[l]) : [],
-        appUrl: appUrl.trim() ? appUrl.trim() : undefined,
-        featureId: mode === "code" && featureId.trim() ? featureId.trim() : undefined,
-        huIds: mode === "code" && hus.length ? hus.map((h) => h.id) : undefined,
-      };
-      const r = await fetch("/api/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const res = await r.json();
-      if (!r.ok || !res.id) {
-        setLaunchError(res.error || "No se pudo iniciar la corrida.");
-        return;
-      }
-      router.push(`/runs/${res.id}`);
-    } catch (e: any) {
-      setLaunchError(e?.message ?? "Error de red");
+      await action.run(
+        { loading: "Iniciando el ciclo QA…", success: "Ciclo QA iniciado — abriendo la corrida" },
+        async () => {
+          const body = {
+            mode,
+            repoRoot: mode === "code" ? repoRoot || undefined : undefined,
+            layers: mode === "code" ? LAYER_ORDER.filter((l) => layerOn[l]) : [],
+            appUrl: appUrl.trim() ? appUrl.trim() : undefined,
+            featureId: mode === "code" && featureId.trim() ? featureId.trim() : undefined,
+            huIds: mode === "code" && hus.length ? hus.map((h) => h.id) : undefined,
+            generate: mode === "code" && generate ? true : undefined,
+            approvedTcKeys: mode === "code" && generate && approvedTcKeys.length ? approvedTcKeys : undefined,
+          };
+          let res: any;
+          try {
+            const r = await fetch("/api/runs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            res = await r.json();
+            if (!r.ok || !res.id) throw new Error(res.error || "No se pudo iniciar la corrida.");
+          } catch (e: any) {
+            const message = e?.message ?? "Error de red";
+            setLaunchError(message);
+            throw new Error(message);
+          }
+          return res.id as string;
+        }
+      ).then((id) => router.push(`/runs/${id}`));
+    } catch {
+      /* el error ya se mostró en la modal y en launchError */
     } finally {
       setLaunching(false);
     }
@@ -284,6 +319,26 @@ export function RunWizard() {
           onContinue={(f, selected) => {
             setFeatureId(f);
             setHus(selected);
+            next();
+          }}
+        />
+      )}
+
+      {/* revisión de pruebas generadas (lenguaje claro) */}
+      {key === "review" && (
+        <ReviewStep
+          huIds={hus.map((h) => h.id)}
+          featureId={featureId}
+          repoRoot={repoRoot}
+          unitTool={
+            detection?.layers?.unit?.tool ||
+            detection?.layers?.unit?.targets?.[0]?.tool ||
+            null
+          }
+          onBack={back}
+          onContinue={(keys, gen) => {
+            setApprovedTcKeys(keys);
+            setGenerate(gen);
             next();
           }}
         />

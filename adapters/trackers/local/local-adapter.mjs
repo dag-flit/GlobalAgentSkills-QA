@@ -65,6 +65,7 @@ export class LocalAdapter extends TrackerAdapter {
       workItemId: target?.work_item_id || payload?.work_item_id || "local",
       featureId: target?.feature_id ?? payload?.feature_id,
       developer: target?.developer ?? payload?.developer,
+      plan: payload?.plan,
       results,
     });
     return { ok: true, sink: "local", ...out };

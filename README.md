@@ -82,8 +82,11 @@ inexistente). El estado de reactivación se configura en el preset
 ## Interfaz web (Quality Ops Framework)
 
 `webapp/` es una UI (Next.js) para usar el kit **a clics**, pensada para gente no técnica:
-conexión a BD (con túnel SSH), elegir tracker y Feature→HUs, detectar capas, ejecutar con **log
-en vivo** y ver la evidencia (reporte + capturas). No reimplementa nada: llama a `runQaCycle`.
+conexión a BD (con túnel SSH), elegir tracker y Feature→HUs, detectar capas, **revisar y generar
+pruebas por criterio** (con IA opcional), **publicar el Plan del Feature + TC por criterio** en el
+tracker, ejecutar con **log en vivo** y ver la evidencia por HU (reporte + capturas). No reimplementa
+nada: llama a `runQaCycle`. La generación con IA (Google Gemini gratis / Anthropic) es opcional —
+sin ella se usan esqueletos deterministas.
 
 ```bash
 cd webapp && npm install && npm run dev      # http://localhost:4312

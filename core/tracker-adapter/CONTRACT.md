@@ -15,6 +15,8 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 | `updateCycle(id, fields)` | Campos de ciclo (TestStartDate, ReTest…) | no-op |
 | `closeArtifact(id, result)` | Cierra Task-TC / Bug (nunca el padre) | no-op |
 | `reactivateRequirement(id, info)` | Reactiva la HU con novedad + comentario de trazabilidad del Bug | no-op (sin estados/comentarios) |
+| `publishRequirementEvidence(requirementId, info)` | Por HU: asegura **un TC (Task) por criterio** (idempotente por clave `TC-AC<n>`) + comenta el resultado en la HU | no-op (`{ok, skipped}`) |
+| `publishTestPlan(featureId, info)` | Crea/actualiza el **Plan de Pruebas del Feature** (Task "PLAN PRUEBAS FEATURE…" con objetivo + HUs/TC + alcance + resultado) | no-op (`{ok, skipped}`) |
 | `capabilities()` | Qué soporta el tracker | ver abajo |
 
 ### `reactivateRequirement(id, info)` — manejo de novedad sobre el requisito
@@ -24,6 +26,23 @@ A diferencia de `closeArtifact` (que cierra Task/Bug y **nunca** toca el padre),
 - `info` = `{ bugId, items }` — `bugId`: id del defecto recién creado (o `null` si falló); `items`: `EvidenceObject[]` con las fallas de esa HU.
 - Estado destino: `azure.work_item.on_defect_reactivate_state` (ADO, p.ej. `Active`), reabrir issue (`github`), `jira.transitions.reactivate` (jira). Si el tracker no lo define → solo comenta (degrada con aviso).
 - El orquestador lo invoca **automáticamente** tras `publishEvidence`, una vez por cada HU con fallas (gated por `capabilities().states`; en `local` es no-op). El Bug se crea **enlazado a la HU que contiene la novedad** (la evidencia puede declarar su `work_item_id`; si no, se usa la HU del ciclo).
+
+### `publishRequirementEvidence(requirementId, info)` — evidencia y TC por HU
+
+Complementa a `publishEvidence` (que deja el **resumen en el Feature paraguas**): por cada **HU hija seleccionada** deja constancia de la ejecución en la propia HU. **No** sustituye ni altera la ejecución generalizada ni la evidencia local.
+
+- `info` = `{ criteria, results, reportLink, huTitle }` — `criteria`: AC de la HU (de `getWorkItem`); `results`: `EvidenceObject[]` globales del ciclo; `reportLink`: ruta del reporte local; `huTitle`: título de la HU.
+- Hace dos cosas **idempotentes**: (1) **asegura el TC** de la HU = un work item hijo creado desde sus criterios y enlazado a la HU como padre. El **tipo** lo decide el perfil (`azure.work_item.test_case_work_item_type`, p.ej. `Task` cuando el proyecto no tiene el tipo «Test Case»); el título sale de `test_case_title_prefix` + `HU-<id>` (idempotencia por título: si ya existe, se reusa). (2) **comenta** en la HU el resultado **global** del ciclo + los criterios + (si hay pruebas etiquetadas `[HU-###]` para esa HU) sus casos, o la nota de cómo habilitar la validación por criterio.
+- **Modelo actual:** **un TC (Task) por criterio** de la HU. El título lo trae el manifest del generador (`TC-AC<n> - <objetivo>`), idempotente por la clave estable `TC-AC<n>`. Si no llega manifest (`info.tcs` vacío) se cae al modo compat (un TC por HU).
+- **Fases (lógica QA):** `info.phase: "plan"` se usa en la **planificación** (crea los TC pendientes + comenta el plan, solo si se crearon TC nuevos — evita ruido al re-correr); `info.phase: "result"` (default) se usa **tras ejecutar** (reusa los TC idempotentes + comenta el resultado). El orquestador lo invoca en `"plan"` **antes** de los runners y en `"result"` **después**.
+
+### `publishTestPlan(featureId, info)` — Plan de Pruebas del Feature (techo)
+
+El **Feature** es el papá mayor: solo aporta el **entendimiento del objetivo** y el **plan**. NO tiene criterios ni TC propios (esos son de las HUs). Este método crea/actualiza una Task hija del Feature, "PLAN PRUEBAS FEATURE <nombre>", que **agrega** el plan completo:
+
+- `info` = `{ featureTitle, objective?, hus: [{id, title, tcs:[{key,title,status}]}], results, reportLink }`.
+- Contenido: objetivo + las HUs y sus TC + **alcance global** (las capas de la corrida general) + **resultado consolidado**. **Idempotente** por el prefijo del título (`azure.work_item.test_plan_title_prefix`): si ya existe, **actualiza** su descripción; no duplica.
+- **Cuándo se invoca (lógica QA):** se **crea en la planificación** — antes de ejecutar, con `results: []` → estado "planificado (pendiente de ejecución)" — y se **actualiza** tras ejecutar con el resultado consolidado. Idempotente (crea o actualiza; no duplica). Tipo de work item: `azure.work_item.test_case_work_item_type` (p.ej. `Task`).
 
 ## `capabilities()` — degradación elegante
 

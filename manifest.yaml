@@ -52,6 +52,7 @@ adapters:
       - adapters/trackers/jira/README.md
   shared:
     - adapters/_shared/parse-ac.mjs                               # AC desde texto/markdown
+    - adapters/_shared/http-retry.mjs                             # transporte HTTP default con reintento ante fallos de red transitorios
 
 profiles:
   - profiles/default.yaml
@@ -78,6 +79,8 @@ runtime:
     - runtime/runners/security.mjs
     - runtime/runners/api.mjs
     - runtime/runners/explore.mjs         # capa opcional: explora una URL viva (gated por appUrl)
+  generate:
+    - runtime/generate/skeleton-generator.mjs  # generador determinista de tests desde criterios (Fase A)
   orchestrator: runtime/orchestrator.mjs
   cli: runtime/cli.mjs                   # F4: entrypoint del kit (runQaCycle)
   delivery_build: runtime/delivery/build.mjs  # F4: empaqueta core/ a cada target

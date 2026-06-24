@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { CONFIG_FILE, ensureDataDirs } from "./paths";
-import type { AppConfig, DbConnection } from "./types";
+import type { AppConfig, AiConfig, DbConnection } from "./types";
 import { SECRET_MASK } from "./types";
 
 // ---------- Defaults ----------
@@ -46,10 +46,15 @@ export function defaultTrackerConfig(): AppConfig["tracker"] {
   };
 }
 
+export function defaultAiConfig(): AiConfig {
+  return { provider: "none", apiKey: "", model: "" };
+}
+
 export function defaultConfig(): AppConfig {
   return {
     databases: [defaultDbConnection()],
     tracker: defaultTrackerConfig(),
+    ai: defaultAiConfig(),
   };
 }
 
@@ -142,6 +147,8 @@ export function redactConfig(cfg: AppConfig): AppConfig {
     github: { ...t.github, token: mask(t.github.token) },
     jira: { ...t.jira, token: mask(t.jira.token) },
   };
+  const ai = c.ai ?? defaultAiConfig();
+  c.ai = { ...ai, apiKey: mask(ai.apiKey) };
   return c;
 }
 
@@ -175,6 +182,10 @@ export function applySecretPreserving(current: AppConfig, incoming: AppConfig): 
     github: { ...inT.github, token: keep(inT.github.token, curT.github.token) },
     jira: { ...inT.jira, token: keep(inT.jira.token, curT.jira.token) },
   };
+
+  const inAi = incoming.ai ?? defaultAiConfig();
+  const curAi = current.ai ?? defaultAiConfig();
+  merged.ai = { ...inAi, apiKey: keep(inAi.apiKey, curAi.apiKey) };
 
   return merged;
 }

@@ -114,17 +114,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed ? "w-[68px]" : "w-64"
         }`}
       >
-        {/* marca */}
-        <div className={`h-14 flex items-center gap-2 px-4 ${collapsed ? "justify-center px-0" : ""}`}>
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-accent/20 text-accent font-bold shrink-0">
-            Q
-          </span>
+        {/* marca + botón de colapsar (arriba, siempre visible) */}
+        <div className={`h-14 flex items-center px-3 ${collapsed ? "justify-center" : "gap-2"}`}>
           {!collapsed && (
-            <span className="font-bold tracking-tight text-white leading-tight">
-              Quality<span className="text-accent">Ops</span>
-              <span className="block text-[10px] font-normal text-muted -mt-0.5">Framework</span>
-            </span>
+            <>
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-accent/20 text-accent font-bold shrink-0">
+                Q
+              </span>
+              <span className="flex-1 min-w-0 font-bold tracking-tight text-white leading-tight">
+                Quality<span className="text-accent">Ops</span>
+                <span className="block text-[10px] font-normal text-muted -mt-0.5">Framework</span>
+              </span>
+            </>
           )}
+          <button
+            onClick={toggle}
+            aria-label={collapsed ? "Expandir menú" : "Colapsar menú"}
+            title={collapsed ? "Expandir menú" : "Colapsar menú"}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-panel2 hover:text-white transition-colors"
+          >
+            <IconChevron className={`w-4 h-4 transition-transform ${collapsed ? "rotate-180" : ""}`} />
+          </button>
         </div>
 
         {/* navegación */}
@@ -142,16 +152,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           ))}
         </nav>
-
-        {/* colapsar */}
-        <button
-          onClick={toggle}
-          title={collapsed ? "Expandir menú" : "Colapsar menú"}
-          className="m-2 flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs text-muted hover:bg-panel2 hover:text-white transition-colors"
-        >
-          <IconChevron className={`w-4 h-4 transition-transform ${collapsed ? "rotate-180" : ""}`} />
-          {!collapsed && <span>Colapsar</span>}
-        </button>
       </aside>
 
       {/* contenido */}

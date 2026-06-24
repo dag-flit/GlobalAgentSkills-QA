@@ -24,6 +24,7 @@ azure:
     test_case_work_item_type: "Task"
     test_case_title_pattern: "TC-{seq:02d}_{scope} - {scenario}"
     test_case_title_prefix: "TC-"
+    test_plan_title_prefix: "PLAN PRUEBAS FEATURE "   # Task del plan colgada del Feature
     ready_for_qa_state: "Resolved"
     retest_qa_states: ["Active"]
     design_state: "Active"

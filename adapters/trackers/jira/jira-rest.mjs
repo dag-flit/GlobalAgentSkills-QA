@@ -3,20 +3,13 @@
 // project key salen de env. Auth Basic email:token. Cross-platform (Node 18+).
 
 import { Buffer } from "node:buffer";
+import { defaultHttp } from "../../_shared/http-retry.mjs";
 
 const V = "3";
 
-export async function defaultHttp(req) {
-  const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    /* respuesta no-JSON (p.ej. 204 sin cuerpo) */
-  }
-  return { status: res.status, json, text };
-}
+// Transporte por defecto: fetch real con reintento ante fallos de red transitorios.
+// Ver adapters/_shared/http-retry.mjs.
+export { defaultHttp };
 
 // Documento ADF mínimo a partir de texto plano (Jira v3 exige ADF en body/description).
 export function adf(text) {

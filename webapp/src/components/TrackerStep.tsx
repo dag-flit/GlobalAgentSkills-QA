@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AppConfig, TrackerConfig, TrackerName } from "@/lib/types";
 import { Field, Spinner } from "@/components/ui";
+import { useAction } from "@/components/ActionFeedback";
 
 const TRACKERS: { id: TrackerName; label: string; desc: string; icon: string }[] = [
   { id: "local", label: "Local", desc: "Solo reporte en el repo. Sin conexión.", icon: "💾" },
@@ -20,6 +21,7 @@ export function TrackerStep({
   onBack?: () => void;
   onContinue?: (t: TrackerName) => void;
 }) {
+  const action = useAction();
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -57,20 +59,28 @@ export function TrackerStep({
     patchTracker({ jira: { ...t.jira, ...p } });
   }
 
-  async function save() {
+  async function save(): Promise<boolean> {
     setSaving(true);
     setSavedMsg(null);
     try {
-      const r = await fetch("/api/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
-      });
-      const updated: AppConfig = await r.json();
-      setCfg(updated);
-      setSavedMsg("Guardado ✓");
+      await action.run(
+        { loading: "Guardando credenciales del tracker…", success: "Credenciales guardadas correctamente" },
+        async () => {
+          const r = await fetch("/api/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cfg),
+          });
+          if (!r.ok) throw new Error("No se pudo guardar la configuración");
+          const updated: AppConfig = await r.json();
+          setCfg(updated);
+          setSavedMsg("Guardado ✓");
+        }
+      );
+      return true;
     } catch {
       setSavedMsg("No se pudo guardar");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -78,24 +88,35 @@ export function TrackerStep({
 
   async function continueStep() {
     // Persistir antes de avanzar: los pasos siguientes (Feature→HUs, ejecución) usan la
-    // configuración guardada del tracker.
-    await save();
-    onContinue?.(t.selected);
+    // configuración guardada del tracker. Solo avanza si guardó bien.
+    if (await save()) onContinue?.(t.selected);
   }
 
   async function runTest() {
     setTest({ status: "testing" });
-    try {
-      const r = await fetch("/api/tracker/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tracker: t }),
-      });
-      const res = await r.json();
-      setTest({ status: res.ok ? "ok" : "err", detail: res.detail || res.mode });
-    } catch (e: any) {
-      setTest({ status: "err", detail: e?.message ?? "Error de red" });
-    }
+    await action
+      .run(
+        { loading: "Probando conexión al tracker…", success: (m) => String(m) },
+        async () => {
+          let res: any;
+          try {
+            const r = await fetch("/api/tracker/test", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tracker: t }),
+            });
+            res = await r.json();
+          } catch (e: any) {
+            const message = e?.message ?? "Error de red";
+            setTest({ status: "err", detail: message });
+            throw new Error(message);
+          }
+          setTest({ status: res.ok ? "ok" : "err", detail: res.detail || res.mode });
+          if (!res.ok) throw new Error(res.detail || res.mode || "No se pudo conectar al tracker");
+          return `Conexión exitosa${res.detail ? ` · ${res.detail}` : ""}`;
+        }
+      )
+      .catch(() => {});
   }
 
   return (

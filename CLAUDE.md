@@ -12,7 +12,7 @@ PAT, sin Cursor y sin configurar nada**. El tracker es un plug-in opcional: hay 
 (`local`, `azure-devops`, `github`, `jira`) y se cambia con una línea de perfil.
 
 Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensión en `docs/`.
-**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 25/25.
+**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 33/33 (incluye evidencia por HU, plan, generación y retry).
 
 ## Estado actual
 
@@ -166,6 +166,55 @@ proyecto). Para soportarla se extendió el kit **respetando invariantes**:
   `BASE_URL`/`PLAYWRIGHT_BASE_URL`/`CYPRESS_BASE_URL` al env de los runners (baseURL del E2E del repo).
 - Smoke test caso 26 (launcher falso, offline). **Smoke: 26/26.**
 
+## Evidencia por HU + Plan de Pruebas + generación de tests — HECHO
+
+Extensión mayor sobre el contrato/orquestador para que el ciclo, además de la corrida generalizada,
+estructure y valide **por Historia de Usuario** y **por criterio**, con paridad online (tracker) y
+offline (reporte local). **Smoke: 33/33.** Lógica QA: **planificar → ejecutar → actualizar**.
+
+- **Contrato `tracker-adapter` (CONTRACT.md + 4 adapters):**
+  - `publishRequirementEvidence(huId, info)`: por HU asegura **un TC por criterio** (work item hijo;
+    tipo del perfil `azure.work_item.test_case_work_item_type`, p.ej. `Task` cuando el proyecto no
+    tiene "Test Case"), idempotente por la clave estable `TC-AC<n>`; comenta el resultado en la HU.
+    Acepta `info.phase` (`"plan"` = planificación, crea TC + comenta el plan; `"result"` = tras
+    ejecutar, reusa TC + comenta resultado). Base/github/jira/local degradan a no-op o comentario.
+  - `publishTestPlan(featureId, info)`: crea/actualiza una Task **"PLAN PRUEBAS FEATURE …"** colgada
+    del Feature (objetivo + HUs/TC + alcance + resultado consolidado), idempotente. El Feature solo
+    aporta el techo (plan); criterios/TC son de las HUs.
+- **AC por encabezado:** `parseAc` (azure) agrupa por `<h1-6>` → **1 TC por AC** (no por línea
+  Gherkin), devolviendo `{title, detail}` (detail = Gherkin); el título del TC quita el prefijo
+  "AC# —" para no duplicar (`TC-AC1 - <objetivo corto>`). Renderers tolerantes a string|objeto.
+- **Generación de tests (Fase A, determinista):** `runtime/generate/skeleton-generator.mjs` produce,
+  por criterio, un esqueleto `it.todo` etiquetado `[HU-###]` (estado "pendiente", honesto). El
+  orquestador acepta `generate`/`generateTests`(inyectable, default esqueletos)/`approvedTcKeys`/
+  `planOnly`; genera ANTES de los runners (escribe en el cwd de unit, en `qa-generated/HU-<id>/`),
+  planifica (Plan+TC) y, con `planOnly`, termina sin ejecutar. `runQaCycle` ahora hace
+  `await generateTests(...)` (soporta generadores async). Reporte local (`local-sink`) incluye la
+  sección "Plan de pruebas" + comentario general del Feature con bloque "Plan por HU".
+- **Robustez de red:** `adapters/_shared/http-retry.mjs` = `defaultHttp` compartido con reintento
+  ante fallos transitorios (ECONNRESET/UND_ERR_SOCKET/"fetch failed"…); reexportado por los 3
+  transportes (ado/github/jira-rest). NO reintenta status HTTP.
+- Smoke: casos 28 (retry), 29 (TC por criterio + Plan), 30 (idempotencia), 31 (paridad offline del
+  plan), 32 (plan/result), 33 (AC por encabezado + planOnly).
+
+## Webapp + Fase B (generación con IA) — HECHO (infra; sin probar con key real)
+
+La UX web (`webapp/`, Next.js, FUERA del core) maneja todo a clics: BD+SSH, 4 trackers, 2 modos
+(QA del código / Explorar URL), Feature→HUs, **pantalla de Revisión**, ejecución en vivo (SSE),
+evidencia/plan. Lo nuevo de esta tanda:
+
+- **Generador con IA, agnóstico del proveedor** (`webapp/src/lib/qa/ai-generator.ts`): vía HTTP
+  directo (sin SDKs/deps nuevas). Soporta **Google Gemini** (AI Studio, capa gratis) y **Anthropic
+  Claude**; resuelve proveedor/key/modelo de `config.ai` con fallback a env (`GOOGLE_AI_API_KEY`/
+  `GEMINI_API_KEY`/`ANTHROPIC_API_KEY`). Por criterio pide a la IA el **código real + resumen** y, si
+  no hay key / stack no soportado / falla → **cae al esqueleto** (nunca rompe). El **core sigue
+  offline**: la IA vive solo en la webapp (invariante #1). Config: `AiConfig` en types/config con
+  enmascarado; UI en `Ajustes → Generación con IA` (proveedor + key + modelo + "Probar IA"). Se
+  inyecta en `runQaCycle`/preview/planOnly. **PENDIENTE: probar con una key real.**
+- Otras piezas UX: modal de feedback **centrada** (`ActionFeedback`), botón colapsar sidebar arriba,
+  paso de Revisión (`ReviewStep`) con "Publicar plan en el tracker" (modo `planOnly`), tarjetas de
+  evidencia con skips visibles, badges IA/esqueleto. Endpoints: `/api/{generate/preview,plan,ai/test}`.
+
 ## Invariantes (no romper)
 
 1. **`core/` es portable.** Cero literales de dominio: nada de `FLIT`, `abrahamc`, `flitsas`,
@@ -198,7 +247,7 @@ runtime/evidence/       sink local (md+html)
 runtime/orchestrator.mjs  runQaCycle (preflight condicional → detect → runners → sink)
 runtime/cli.mjs         entrypoint del kit
 runtime/delivery/build.mjs  empaqueta core/ a plain/claude-code/cursor
-runtime/smoke-test.mjs  prueba el plumbing extremo a extremo (25/25)
+runtime/smoke-test.mjs  prueba el plumbing extremo a extremo (33/33)
 docs/                   arquitectura + guías (GUIA-USO, GUIA-AGENTES-SKILLS, GUIA-EXTENSION)
 delivery/               docs por target (la salida real se genera en dist/)
 packs/dev-side/         dev-tester (opcional, no se instala)
@@ -213,7 +262,7 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 25/25 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 33/33 OK)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
 node runtime/cli.mjs [repoRoot] -w <HU> -f <FT> -d "<dev>"   # con trazabilidad por dev
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/

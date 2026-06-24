@@ -2,19 +2,13 @@
 // Transporte HTTP inyectable (fetch por defecto) → offline-testable. owner/repo y token
 // salen de env. Cross-platform (Node 18+).
 
+import { defaultHttp } from "../../_shared/http-retry.mjs";
+
 const API = "https://api.github.com";
 
-export async function defaultHttp(req) {
-  const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    /* respuesta no-JSON */
-  }
-  return { status: res.status, json, text };
-}
+// Transporte por defecto: fetch real con reintento ante fallos de red transitorios.
+// Ver adapters/_shared/http-retry.mjs.
+export { defaultHttp };
 
 export function createClient({ env = {}, http = defaultHttp } = {}) {
   const [owner, repo] = String(env.GITHUB_REPOSITORY || env.GITHUB_REPO || "/").split("/");

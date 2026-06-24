@@ -4,6 +4,7 @@
 // y PAT salen de `env`. Cross-platform (Node 18+).
 
 import { Buffer } from "node:buffer";
+import { defaultHttp } from "../../_shared/http-retry.mjs";
 
 const API = "7.0";
 const COMMENTS_API = "7.0-preview.3";
@@ -13,18 +14,9 @@ export function authHeader(pat) {
   return "Basic " + Buffer.from(`:${pat || ""}`).toString("base64");
 }
 
-// Transporte por defecto: fetch real. Devuelve { status, json, text }.
-export async function defaultHttp(req) {
-  const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    /* respuesta no-JSON (p.ej. página de login si el PAT es inválido) */
-  }
-  return { status: res.status, json, text };
-}
+// Transporte por defecto: fetch real con reintento ante fallos de red transitorios
+// (socket keep-alive obsoleto, ECONNRESET, etc.). Ver adapters/_shared/http-retry.mjs.
+export { defaultHttp };
 
 /**
  * Crea un cliente REST de ADO.
