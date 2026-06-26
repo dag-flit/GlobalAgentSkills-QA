@@ -1,42 +1,18 @@
-import fs from "node:fs";
-import { RUNS_FILE, ensureDataDirs } from "./paths";
+import { upsertRun, getRun as repoGetRun, listRuns as repoListRuns } from "./db/runsRepo";
 import type { RunRecord } from "./types";
 
-// Cache en globalThis para sobrevivir al HMR de Next en dev.
-const g = globalThis as any;
-function cache(): Map<string, RunRecord> {
-  if (!g.__qofRuns) {
-    g.__qofRuns = new Map<string, RunRecord>();
-    try {
-      ensureDataDirs();
-      if (fs.existsSync(RUNS_FILE)) {
-        const arr: RunRecord[] = JSON.parse(fs.readFileSync(RUNS_FILE, "utf-8"));
-        for (const r of arr) g.__qofRuns.set(r.id, r);
-      }
-    } catch {
-      /* arranca vacío */
-    }
-  }
-  return g.__qofRuns;
+// Persistencia de runs sobre el control-plane (Postgres). Antes era un Map en
+// globalThis + data/runs.json (cachés divergentes entre procesos → lost-update); ahora
+// hay UNA fuente de verdad y los upserts son atómicos. Mismas firmas, ahora async.
+
+export async function saveRun(record: RunRecord): Promise<void> {
+  await upsertRun(record);
 }
 
-function persist(): void {
-  ensureDataDirs();
-  const arr = [...cache().values()];
-  const tmp = RUNS_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(arr, null, 2), "utf-8");
-  fs.renameSync(tmp, RUNS_FILE);
+export async function getRun(id: string): Promise<RunRecord | undefined> {
+  return repoGetRun(id);
 }
 
-export function saveRun(record: RunRecord): void {
-  cache().set(record.id, record);
-  persist();
-}
-
-export function getRun(id: string): RunRecord | undefined {
-  return cache().get(id);
-}
-
-export function listRuns(): RunRecord[] {
-  return [...cache().values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+export async function listRuns(): Promise<RunRecord[]> {
+  return repoListRuns();
 }

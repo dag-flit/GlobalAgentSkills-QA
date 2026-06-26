@@ -165,6 +165,17 @@ export function buildConnectionString(db: DbConnection): string {
   if (db.engine === "mysql") {
     return `mysql://${auth}@${db.host}:${db.port}/${db.database}`;
   }
-  // mssql
-  return `Server=${db.host},${db.port};Database=${db.database};User Id=${db.user};Password=${db.password};Encrypt=${db.ssl};TrustServerCertificate=true`;
+  // mssql: cadena de pares clave=valor. Se ESCAPAN los valores con metacaracteres (`; { } =`)
+  // envolviéndolos en llaves y duplicando `}` interno — sin esto un password con `;` rompe la
+  // cadena o inyecta parámetros. `TrustServerCertificate` se DERIVA de `sslAllowSelfSigned`
+  // (antes estaba fijo en `true`, lo que habilitaba MITM en la conexión a la BD).
+  const q = (v: string) => (/[;{}=]/.test(v) ? `{${v.replace(/}/g, "}}")}` : v);
+  return (
+    `Server=${db.host},${db.port};` +
+    `Database=${q(db.database)};` +
+    `User Id=${q(db.user)};` +
+    `Password=${q(db.password)};` +
+    `Encrypt=${db.ssl ? "true" : "false"};` +
+    `TrustServerCertificate=${db.sslAllowSelfSigned ? "true" : "false"}`
+  );
 }

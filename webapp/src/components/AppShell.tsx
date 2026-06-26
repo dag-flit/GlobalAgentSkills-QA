@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { SessionBadge } from "./SessionBadge";
 
 /* ---------- íconos (estilo lucide, stroke currentColor) ---------- */
 
@@ -88,6 +89,7 @@ function NavItem({ item, collapsed }: { item: Item; collapsed: boolean }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
 
   // recordar preferencia de colapso entre visitas
@@ -95,6 +97,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem("qof-sidebar-collapsed");
     if (saved != null) setCollapsed(saved === "1");
   }, []);
+
+  // Pantallas de auth: sin sidebar (el portón ya garantiza que solo se vean sin sesión).
+  if (pathname === "/login" || pathname === "/register") return <>{children}</>;
+
   function toggle() {
     setCollapsed((v) => {
       const next = !v;
@@ -152,6 +158,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           ))}
         </nav>
+
+        {/* sesión: usuario + tenant + logout */}
+        <div className="border-t border-border p-2">
+          <SessionBadge collapsed={collapsed} />
+        </div>
       </aside>
 
       {/* contenido */}

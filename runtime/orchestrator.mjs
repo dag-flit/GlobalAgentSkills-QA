@@ -1,5 +1,5 @@
 // orchestrator.mjs — backbone del ciclo QA local-first.
-// Encadena: preflight (CONDICIONAL) → qa-detect → runners de capas → sink.
+// Encadena: preflight (CONDICIONAL) → qa-detect → plan-phase → runners de capas → sink.
 //
 // Preflight condicional (invariante local-first): solo se ejecuta si el tracker
 // REQUIERE RED (capabilities().network === true). Con `tracker: local` no hay red,
@@ -9,22 +9,27 @@
 // Gating por capability, no por el literal "local": cualquier tracker sin red
 // arranca directo; cualquiera con red exige preflight.
 //
+// La generación de tests + la planificación (TC por criterio + Plan del Feature) viven en
+// ./orchestrator/plan-phase.mjs; el manejo de novedades (Bug + reactivación) en
+// ./orchestrator/novelty.mjs. Este archivo es solo el backbone (F1).
+//
 // Uso:
 //   import { runQaCycle } from "./orchestrator.mjs";
 //   const summary = await runQaCycle({ repoRoot, env: process.env });
 
-import fs from "node:fs";
-import path from "node:path";
 import { resolveProfile } from "./profile/resolve-profile.mjs";
 import { getAdapter } from "../core/tracker-adapter/index.mjs";
 import { detectRepo, resolveEnabledLayers } from "./detect/qa-detect.mjs";
 import { generateTestsForRequirement } from "./generate/skeleton-generator.mjs";
+import { generateAndPlan } from "./orchestrator/plan-phase.mjs";
+import { handleNovelties } from "./orchestrator/novelty.mjs";
 import { runStaticAnalysis } from "./runners/static-analysis.mjs";
 import { runUnitTests } from "./runners/unit.mjs";
 import { runE2eTests } from "./runners/e2e.mjs";
 import { runApiTests } from "./runners/api.mjs";
 import { runDbTests } from "./runners/db.mjs";
 import { runSecurityTests } from "./runners/security.mjs";
+import { runBddTests } from "./runners/bdd.mjs";
 import { runExplore } from "./runners/explore.mjs";
 
 // Registro de runners portados (todas las capas del kit).
@@ -33,6 +38,7 @@ const RUNNERS = {
   unit: runUnitTests,
   e2e: runE2eTests,
   api: runApiTests,
+  bdd: runBddTests,
   db: runDbTests,
   security: runSecurityTests,
 };
@@ -61,6 +67,7 @@ export async function runQaCycle({
   generate = false,  // si true (+ huIds): genera tests desde los criterios de cada HU antes de correr
   generateTests = generateTestsForRequirement, // generador INYECTABLE (default: esqueletos offline)
   approvedTcKeys,    // Set/Array de claves "TC-AC<n>" aprobadas en la revisión (default: todas)
+  templateCases = [], // B3.5: casos adicionales desde plantillas [{template, params, huId}] → TC bajo la HU
   planOnly = false,  // si true: solo PLANIFICA (crea Plan + TC en el tracker) y termina, sin ejecutar
   appUrl,            // URL viva opcional: baseURL para el e2e del repo (BASE_URL/PLAYWRIGHT_BASE_URL)
   explore = false,   // si true (y hay appUrl), corre además la capa `explore` (crawler de la URL)
@@ -99,100 +106,15 @@ export async function runQaCycle({
     ? { ...env, BASE_URL: appUrl, PLAYWRIGHT_BASE_URL: appUrl, CYPRESS_BASE_URL: appUrl }
     : env;
 
-  // ── Generación de pruebas desde criterios (Fase A: esqueletos) ───────────────
-  // ANTES de los runners: por cada HU se leen sus CRITERIOS (de la HU, no del Feature) y se
-  // generan archivos de prueba (uno por criterio, etiquetados [HU-###]). Se escriben en el cwd
-  // de la capa unit para que el runner los ejecute. Gated por `generate` + `huIds`. Devuelve un
-  // manifest por HU que luego alimenta los TC (Task) y el Plan del Feature.
-  const generatedByHu = {}; // huId -> { huTitle, criteria, tcs[] }
-  if (generate && Array.isArray(huIds) && huIds.length) {
-    const unitInfo = detection.layers && detection.layers.unit;
-    const unitTool = (unitInfo && (unitInfo.tool || (unitInfo.targets && unitInfo.targets[0] && unitInfo.targets[0].tool))) || null;
-    const unitCwd = (unitInfo && (unitInfo.cwd || (unitInfo.targets && unitInfo.targets[0] && unitInfo.targets[0].cwd))) || "";
-    const genBase = path.join(repoRoot, unitCwd);
-    const approved = approvedTcKeys ? new Set(Array.from(approvedTcKeys)) : null;
-    const tcTitlePrefix = (resolvedProfile.azure && resolvedProfile.azure.work_item && resolvedProfile.azure.work_item.test_case_title_prefix) || "TC-";
-    for (const huId of huIds) {
-      const id = String(huId);
-      if (!id || id === "local") continue;
-      let wi = null;
-      try { wi = await adapter.getWorkItem(id); } catch { /* sin HU/red: se omite */ }
-      const criteria = (wi && wi.acceptance_criteria) || [];
-      // generateTests puede ser síncrono (esqueletos) o async (generador con IA inyectado).
-      const tcs = await generateTests({ requirement: { id, title: wi && wi.title }, criteria, options: { unitTool, tcTitlePrefix } });
-      for (const tc of tcs) {
-        // La aprobación es por (HU, criterio): la clave TC-AC<n> se repite entre HUs.
-        if (approved && !approved.has(`${id}:${tc.key}`)) { tc.skipped = "no aprobado en revisión"; continue; }
-        if (!tc.supported || !tc.code) continue;
-        try {
-          const abs = path.join(genBase, tc.relPath);
-          fs.mkdirSync(path.dirname(abs), { recursive: true });
-          fs.writeFileSync(abs, tc.code, "utf8");
-          tc.written = tc.relPath;
-        } catch (e) { tc.writeError = e.message; }
-      }
-      generatedByHu[id] = { huTitle: wi && wi.title, criteria, tcs };
-    }
-  }
-
-  // ── Planificación (ANTES de ejecutar): requisitos + Plan del Feature + TC ─────
-  // Lógica QA: el plan de pruebas se arma en la PLANIFICACIÓN — entendidos el Feature, sus HUs
-  // y los criterios — no al final. Aquí se crea la estructura (Plan del Feature + TC por criterio,
-  // en estado "pendiente"); tras ejecutar se ACTUALIZA con los resultados. El plan también se
-  // pasa al sink para el reporte local (paridad offline).
-  let requirements = null;
-  let featureTitle = null;
-  if (Array.isArray(huIds) && huIds.length) {
-    requirements = [];
-    for (const huId of huIds) {
-      const id = String(huId);
-      if (!id || id === "local") continue;
-      const cached = generatedByHu[id];
-      let huTitle = cached && cached.huTitle;
-      let criteria = cached && cached.criteria;
-      const tcs = (cached && cached.tcs) || [];
-      if (!cached) {
-        let wi = null;
-        try { wi = await adapter.getWorkItem(id); } catch { /* sin HU/red */ }
-        huTitle = wi && wi.title;
-        criteria = (wi && wi.acceptance_criteria) || [];
-      }
-      requirements.push({ id, title: huTitle, criteria: criteria || [], tcs });
-    }
-    if (featureId && String(featureId) !== "local") {
-      try { const fwi = await adapter.getWorkItem(featureId); featureTitle = fwi && fwi.title; } catch { /* sin Feature/red */ }
-    }
-  }
-  const plan = requirements
-    ? {
-        featureId: featureId && String(featureId) !== "local" ? String(featureId) : null,
-        featureTitle,
-        hus: requirements.map((r) => ({
-          id: r.id,
-          title: r.title,
-          criteria: r.criteria,
-          tcs: r.tcs.map((t) => ({ key: t.key, title: t.title, status: t.status })),
-        })),
-      }
-    : null;
-
-  // Crea la estructura en el tracker (online): TC por criterio (pendientes) + Plan del Feature
-  // (sin resultados aún). Gated por `states`: trackers sin jerarquía degradan a no-op.
-  let testPlan = null;
-  if (caps.states && requirements && requirements.length && typeof adapter.publishRequirementEvidence === "function") {
-    for (const req of requirements) {
-      try {
-        await adapter.publishRequirementEvidence(req.id, { criteria: req.criteria, tcs: req.tcs, huTitle: req.title, phase: "plan" });
-      } catch { /* degrada: la planificación de un TC no aborta el ciclo */ }
-    }
-    if (plan && plan.featureId && typeof adapter.publishTestPlan === "function") {
-      try {
-        testPlan = await adapter.publishTestPlan(plan.featureId, { featureTitle, hus: plan.hus, results: [], phase: "plan" });
-      } catch (e) {
-        testPlan = { ok: false, featureId: plan.featureId, error: e.message };
-      }
-    }
-  }
+  // ── Generación de tests + planificación (TC por criterio + Plan del Feature) ──
+  // Todo lo PREVIO a la ejecución vive en plan-phase: lee criterios por HU, genera archivos,
+  // arma `requirements`/`plan` y crea la estructura en el tracker (estado pendiente).
+  const { requirements, featureTitle, plan, testPlan: initialTestPlan } = await generateAndPlan({
+    adapter, caps, repoRoot, detection, profile: resolvedProfile,
+    huIds, featureId, generate, generateTests, approvedTcKeys, templateCases,
+  });
+  // testPlan inicial = el creado en la planificación; se ACTUALIZA tras ejecutar (más abajo).
+  let testPlan = initialTestPlan;
 
   // Modo SOLO PLANIFICACIÓN: ya se crearon el Plan + los TC en el tracker; se termina aquí
   // sin ejecutar runners. La ejecución es una acción aparte (el usuario la lanza después).
@@ -309,105 +231,6 @@ export async function runQaCycle({
     novelties,                 // null = no aplica; [] = sin fallas; [{...}] = HUs con novedad
     warnings,                  // avisos no fatales del ciclo (p.ej. remoto sin -w)
   };
-}
-
-// Extrae el id de HU de una etiqueta de convención: "[HU-103]" / "HU-103" / "HU 103".
-// Las pruebas declaran su HU dueña en el título/nombre; lo no etiquetado cae a la HU del ciclo.
-function extractHuTag(text) {
-  if (!text) return null;
-  const m = String(text).match(/\bHU[-\s]?(\d+)\b/i);
-  return m ? m[1] : null;
-}
-
-// Agrupa las fallas por la HU EFECTIVA, a nivel de CASO (una capa puede tener pruebas de varias
-// HUs). Por convención, cada prueba etiqueta su HU dueña en el nombre ("[HU-103] ..."): así la
-// novedad se registra en ESA HU, no en el Feature paraguas. Resolución por caso, en orden:
-//   etiqueta [HU-###] del caso → work_item_id declarado por el resultado → HU del ciclo (-w).
-// Casos sin etiqueta (y capas transversales sin casos: lint/seguridad) caen a la HU del ciclo
-// (p.ej. el Feature). Sin una HU real (local / remoto sin -w) la falla se descarta.
-function groupFailuresByRequirement(results, cycleWi) {
-  const cycle = cycleWi ? String(cycleWi) : null;
-  const groups = new Map();
-  const push = (huId, fragment) => {
-    if (!huId || huId === "local") return; // sin HU real → no hay dónde crear el Bug
-    if (!groups.has(huId)) groups.set(huId, []);
-    groups.get(huId).push(fragment);
-  };
-  for (const r of results) {
-    if (r.status !== "fail") continue;
-    const resultHu = r.work_item_id ? String(r.work_item_id) : null;
-    const failingCases = Array.isArray(r.cases) ? r.cases.filter((c) => c.status === "fail") : [];
-    if (failingCases.length) {
-      // agrupa los casos fallidos por su etiqueta de HU; un mismo resultado puede repartirse
-      // entre varias HUs (un fragmento por HU, conservando solo sus casos).
-      const byHu = new Map();
-      for (const c of failingCases) {
-        const hu = extractHuTag(c.name) || resultHu || cycle;
-        if (!byHu.has(hu)) byHu.set(hu, []);
-        byHu.get(hu).push(c);
-      }
-      for (const [hu, cases] of byHu) {
-        push(hu, { layer: r.layer, tc_id: r.tc_id, narrative: r.narrative, metrics: r.metrics, cases });
-      }
-    } else {
-      const hu = resultHu || extractHuTag(r.tc_id) || extractHuTag(r.narrative) || cycle;
-      push(hu, { layer: r.layer, tc_id: r.tc_id, narrative: r.narrative, metrics: r.metrics, cases: [] });
-    }
-  }
-  return [...groups.entries()].map(([id, items]) => ({ id, items }));
-}
-
-// Compone el Bug a partir de las capas/casos fallidos de una HU (texto neutro de tracker;
-// cada adapter lo renderiza a su formato).
-function buildDefectPayload(usId, items) {
-  const bullet = (r) => {
-    const tc = r.tc_id ? `${r.tc_id} ` : "";
-    const tool = r.metrics && r.metrics.tool ? ` [${r.metrics.tool}]` : "";
-    return `- ${r.layer}${tool} ${tc}— ${r.narrative || "falla"}`;
-  };
-  const failedCases = [];
-  for (const r of items) {
-    if (!Array.isArray(r.cases)) continue;
-    for (const c of r.cases) {
-      if (c.status !== "fail") continue;
-      const msg = c.message ? `: ${String(c.message).split(/\r?\n/)[0]}` : "";
-      failedCases.push(`- (${r.layer}) ${c.name}${msg}`);
-    }
-  }
-  const title = `[QA] Novedad en HU ${usId} — ${items.length} capa(s) con fallas`;
-  const description = [
-    `Novedades detectadas por el ciclo QA local-first en la HU ${usId}.`,
-    "",
-    "Capas/pruebas con falla:",
-    ...items.map(bullet),
-    ...(failedCases.length ? ["", "Casos fallidos:", ...failedCases] : []),
-  ].join("\n");
-  return { title, description };
-}
-
-// Por cada HU con novedad: createDefect (Bug enlazado a la HU) → reactivateRequirement
-// (reactiva la HU + comentario de trazabilidad). Degrada con aviso: un fallo de red en un
-// paso se registra en el resumen pero no aborta el ciclo ni el resto de HUs.
-async function handleNovelties({ adapter, results, workItemId }) {
-  const groups = groupFailuresByRequirement(results, workItemId);
-  const out = [];
-  for (const g of groups) {
-    const entry = { work_item_id: g.id, fails: g.items.length, bugId: null };
-    try {
-      entry.bugId = await adapter.createDefect({ ...buildDefectPayload(g.id, g.items), parent_id: g.id });
-    } catch (e) {
-      entry.bugError = e.message;
-    }
-    if (typeof adapter.reactivateRequirement === "function") {
-      try {
-        entry.reactivation = await adapter.reactivateRequirement(g.id, { bugId: entry.bugId, items: g.items });
-      } catch (e) {
-        entry.reactivationError = e.message;
-      }
-    }
-    out.push(entry);
-  }
-  return out;
 }
 
 export { RUNNERS };

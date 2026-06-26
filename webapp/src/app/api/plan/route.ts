@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server";
-import { publishPlanOnly, type RunInput } from "@/lib/qa/runner";
+import { publishPlanOnly } from "@/lib/qa/runner";
+import { parseJson } from "@/lib/validation/parse";
+import { planInputSchema } from "@/lib/validation/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Body: RunInput (con featureId + huIds). Publica el Plan + TC en el tracker, SIN ejecutar. */
 export async function POST(req: Request) {
-  let body: RunInput;
+  const parsed = await parseJson(req, planInputSchema, "ok");
+  if (!parsed.ok) return parsed.response;
   try {
-    body = (await req.json()) as RunInput;
-  } catch {
-    return NextResponse.json({ ok: false, error: "JSON inválido" }, { status: 400 });
-  }
-  if (!body?.featureId) {
-    return NextResponse.json({ ok: false, error: "Falta featureId para planificar." }, { status: 400 });
-  }
-  try {
-    const res = await publishPlanOnly(body);
+    const res = await publishPlanOnly(parsed.data);
     return NextResponse.json({ ok: true, ...res });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });

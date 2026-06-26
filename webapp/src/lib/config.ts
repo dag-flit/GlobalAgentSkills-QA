@@ -1,6 +1,5 @@
-import fs from "node:fs";
-import { CONFIG_FILE, ensureDataDirs } from "./paths";
-import type { AppConfig, AiConfig, DbConnection } from "./types";
+import { readConfig, writeConfig } from "./db/configRepo";
+import type { AppConfig, DbConnection } from "./types";
 import { SECRET_MASK } from "./types";
 
 // ---------- Defaults ----------
@@ -46,15 +45,10 @@ export function defaultTrackerConfig(): AppConfig["tracker"] {
   };
 }
 
-export function defaultAiConfig(): AiConfig {
-  return { provider: "none", apiKey: "", model: "" };
-}
-
 export function defaultConfig(): AppConfig {
   return {
     databases: [defaultDbConnection()],
     tracker: defaultTrackerConfig(),
-    ai: defaultAiConfig(),
   };
 }
 
@@ -87,38 +81,26 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
   return out;
 }
 
-export function loadConfig(): AppConfig {
+export async function loadConfig(): Promise<AppConfig> {
   if (cached) return cached;
-  ensureDataDirs();
-  if (!fs.existsSync(CONFIG_FILE)) {
-    cached = defaultConfig();
-    saveConfig(cached);
-    return cached;
-  }
-  try {
-    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-    const merged = deepMerge(defaultConfig(), raw);
-    // deepMerge reemplaza arrays completos: normaliza cada conexión para rellenar
-    // campos nuevos (p.ej. `ssh`) en configuraciones guardadas antes de existir.
-    merged.databases = (merged.databases ?? []).map(normalizeDb);
-    if (merged.databases.length === 0) merged.databases = [defaultDbConnection()];
-    cached = merged;
-    return cached!;
-  } catch {
-    cached = defaultConfig();
-    return cached;
-  }
+  const { databases, tracker } = await readConfig();
+  const def = defaultConfig();
+  // normaliza cada conexión (rellena `ssh` y campos nuevos en filas viejas).
+  const dbs = databases.length ? databases.map(normalizeDb) : def.databases;
+  const trk = tracker ? deepMerge(defaultTrackerConfig(), tracker) : def.tracker;
+  const cfg: AppConfig = { databases: dbs, tracker: trk };
+  // Primer arranque (control-plane vacío): siémbralo con los defaults.
+  if (!databases.length || !tracker) await writeConfig(cfg);
+  cached = cfg;
+  return cfg;
 }
 
-export function saveConfig(cfg: AppConfig): void {
-  ensureDataDirs();
-  const tmp = CONFIG_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), "utf-8");
-  fs.renameSync(tmp, CONFIG_FILE);
+export async function saveConfig(cfg: AppConfig): Promise<void> {
+  await writeConfig(cfg);
   cached = cfg;
 }
 
-export function reloadConfig(): AppConfig {
+export async function reloadConfig(): Promise<AppConfig> {
   cached = null;
   return loadConfig();
 }
@@ -147,8 +129,6 @@ export function redactConfig(cfg: AppConfig): AppConfig {
     github: { ...t.github, token: mask(t.github.token) },
     jira: { ...t.jira, token: mask(t.jira.token) },
   };
-  const ai = c.ai ?? defaultAiConfig();
-  c.ai = { ...ai, apiKey: mask(ai.apiKey) };
   return c;
 }
 
@@ -183,15 +163,11 @@ export function applySecretPreserving(current: AppConfig, incoming: AppConfig): 
     jira: { ...inT.jira, token: keep(inT.jira.token, curT.jira.token) },
   };
 
-  const inAi = incoming.ai ?? defaultAiConfig();
-  const curAi = current.ai ?? defaultAiConfig();
-  merged.ai = { ...inAi, apiKey: keep(inAi.apiKey, curAi.apiKey) };
-
   return merged;
 }
 
-export function getDbConnection(id?: string): DbConnection | undefined {
-  const cfg = loadConfig();
+export async function getDbConnection(id?: string): Promise<DbConnection | undefined> {
+  const cfg = await loadConfig();
   if (!id) return cfg.databases.find((d) => d.isDefault) ?? cfg.databases[0];
   return cfg.databases.find((d) => d.id === id);
 }

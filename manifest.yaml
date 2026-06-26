@@ -78,9 +78,22 @@ runtime:
     - runtime/runners/db.mjs
     - runtime/runners/security.mjs
     - runtime/runners/api.mjs
+    - runtime/runners/bdd.mjs              # Ruta B (B1): ejecuta .feature (Cucumber.js) — el AC ES el test
     - runtime/runners/explore.mjs         # capa opcional: explora una URL viva (gated por appUrl)
   generate:
     - runtime/generate/skeleton-generator.mjs  # generador determinista de tests desde criterios (Fase A)
+    - runtime/generate/feature-writer.mjs      # Ruta B (B1): AC → .feature (Gherkin ejecutable)
+    - runtime/generate/template-applier.mjs    # Ruta B (B3.5): catálogo de plantillas + aplicador
+  bdd_templates:                               # Ruta B (B3.5): plantillas parametrizadas (casos adicionales)
+    - templates/bdd/api-health.feature.tmpl
+    - templates/bdd/smoke-crud.feature.tmpl
+    - templates/bdd/form-validation.feature.tmpl
+  bdd_steps:                                   # Ruta B (B2): librería de step-definitions reutilizable
+    - bdd/steps/world.mjs                      #   World (estado/baseURL/hooks) — Playwright perezoso
+    - bdd/steps/web.steps.mjs                  #   UI (Playwright)
+    - bdd/steps/api.steps.mjs                  #   HTTP (fetch)
+    - bdd/steps/db.steps.mjs                   #   SQL (pg, conexión desde env)
+    - bdd/steps/README.md                      #   cómo extender en cada proyecto
   orchestrator: runtime/orchestrator.mjs
   cli: runtime/cli.mjs                   # F4: entrypoint del kit (runQaCycle)
   delivery_build: runtime/delivery/build.mjs  # F4: empaqueta core/ a cada target

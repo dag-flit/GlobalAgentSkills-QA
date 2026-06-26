@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadConfig, applySecretPreserving } from "@/lib/config";
 import { testTracker, trackerEnv } from "@/lib/qa/tracker";
-import type { TrackerConfig } from "@/lib/types";
+import { trackerTestSchema } from "@/lib/validation/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,18 +11,22 @@ export const dynamic = "force-dynamic";
  * Devuelve el resultado del preflight: { ok, mode, detail }.
  */
 export async function POST(req: Request) {
-  let body: { tracker: TrackerConfig };
+  let raw: unknown;
   try {
-    body = await req.json();
+    raw = await req.json();
   } catch {
     return NextResponse.json({ ok: false, mode: "?", detail: "JSON inválido" }, { status: 400 });
   }
-  if (!body?.tracker) {
-    return NextResponse.json({ ok: false, mode: "?", detail: "Falta 'tracker'." }, { status: 400 });
+  const parsed = trackerTestSchema.safeParse(raw);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "(raíz)"}: ${i.message}`)
+      .join("; ");
+    return NextResponse.json({ ok: false, mode: "?", detail: `Datos inválidos — ${detail}` }, { status: 400 });
   }
-  const current = loadConfig();
+  const current = await loadConfig();
   // resuelve tokens enmascarados contra lo guardado
-  const resolved = applySecretPreserving(current, { ...current, tracker: body.tracker }).tracker;
+  const resolved = applySecretPreserving(current, { ...current, tracker: parsed.data.tracker }).tracker;
   try {
     const result = await testTracker(resolved.selected, trackerEnv(resolved));
     return NextResponse.json(result);

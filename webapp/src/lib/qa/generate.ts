@@ -2,21 +2,19 @@ import { importKit } from "./kit";
 import { KIT_ROOT } from "@/lib/paths";
 import { loadConfig } from "@/lib/config";
 import { trackerEnv } from "./tracker";
-import { generateForRequirement, aiStatus } from "./ai-generator";
 
-/** Una prueba (TC) generada desde un criterio, para revisión en lenguaje claro. */
+/** Una prueba (TC) por criterio, para revisión en lenguaje claro. Ruta B: el AC = Gherkin ejecutable. */
 export interface TcPreview {
   key: string;          // clave estable "TC-AC<n>"
   acIndex: number;
   criterion: string;    // texto completo del criterio
   title: string;        // "TC-AC1 - <objetivo>"
-  summary: string;      // "Verifica que: <criterio>" (lenguaje de negocio)
-  code: string | null;  // código del test (para "ver código"); null si el stack no es soportado
+  summary: string;      // qué valida, en lenguaje de negocio
+  code: string | null;  // especificación Gherkin (.feature) para "ver"; null si no se pudo emitir
   supported: boolean;
   reason: string | null;
   framework: string | null;
-  source?: "ai" | "skeleton"; // de dónde salió el código (IA real vs esqueleto pendiente)
-  aiError?: string;           // si la IA falló y cayó a esqueleto
+  kind?: "gherkin";
 }
 
 export interface HuPreview {
@@ -28,28 +26,27 @@ export interface HuPreview {
 
 export interface PreviewResult {
   previews: HuPreview[];
-  ai: { enabled: boolean; provider: string; model: string };
 }
 
 /**
- * Genera (sin escribir ni ejecutar) la previsualización de los TC de cada HU, leyendo sus
- * criterios desde el tracker vía el adapter del kit. Tracker-agnóstico; `local` no expone criterios.
+ * Previsualización (sin escribir ni ejecutar) de los TC por HU. Ruta B (BDD): el AC se emite como
+ * `.feature` (Gherkin ejecutable) con el feature-writer del kit, leyendo los criterios desde el
+ * tracker vía el adapter. Tracker-agnóstico; `local` no expone criterios.
  */
-export async function previewGeneratedTests({
-  huIds,
-  unitTool,
-}: {
+export async function previewGeneratedTests(args: {
   huIds: string[];
-  unitTool?: string | null;
+  unitTool?: string | null; // aceptado por compatibilidad; BDD no lo usa
+  repoRoot?: string | null;
 }): Promise<PreviewResult> {
-  const cfg = loadConfig();
+  const { huIds } = args;
+  const cfg = await loadConfig();
   const tracker = cfg.tracker.selected;
-  const ai = aiStatus();
-  if (tracker === "local") return { previews: [], ai };
+  if (tracker === "local") return { previews: [] };
 
   const { getAdapter } = await importKit("core/tracker-adapter/index.mjs");
   const env = trackerEnv(cfg.tracker);
   const adapter = getAdapter({ profile: { tracker }, env, repoRoot: KIT_ROOT });
+  const { generateFeaturesForRequirement } = await importKit("runtime/generate/feature-writer.mjs");
 
   const out: HuPreview[] = [];
   for (const huId of huIds) {
@@ -60,15 +57,14 @@ export async function previewGeneratedTests({
       /* HU inaccesible: se reporta sin criterios */
     }
     const criteria: string[] = (wi && wi.acceptance_criteria) || [];
-    // El prefijo "TC-" coincide con el preset azure-devops (el perfil que arma la corrida);
-    // así las claves aprobadas calzan con las que genera el orquestador. Usa la IA si está
-    // configurada (con fallback a esqueleto), igual que la corrida real.
-    const tcs: TcPreview[] = await generateForRequirement({
+    // El prefijo "TC-" coincide con el preset azure-devops → las claves aprobadas calzan con las que
+    // genera el orquestador.
+    const tcs: TcPreview[] = generateFeaturesForRequirement({
       requirement: { id: String(huId), title: wi?.title },
       criteria,
-      options: { unitTool: unitTool || "vitest", tcTitlePrefix: "TC-" },
-    });
+      options: { tcTitlePrefix: "TC-" },
+    }).map((f: any) => ({ ...f, kind: "gherkin" as const }));
     out.push({ huId: String(huId), huTitle: wi?.title, criteria, tcs });
   }
-  return { previews: out, ai };
+  return { previews: out };
 }

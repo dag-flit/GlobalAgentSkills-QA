@@ -112,19 +112,6 @@ export interface TrackerConfig {
   jira: JiraCfg;
 }
 
-// ---------- Generación de pruebas con IA (Fase B) ----------
-
-export type AiProvider = "none" | "google" | "anthropic";
-
-export interface AiConfig {
-  /** Proveedor del LLM que escribe el código de los tests. "none" = solo esqueletos. */
-  provider: AiProvider;
-  /** API key del proveedor (secreto, enmascarado). Si vacío, se intenta leer de variable de entorno. */
-  apiKey: string;
-  /** Modelo a usar (default por proveedor si vacío). */
-  model: string;
-}
-
 // ---------- Configuración persistente (data/config.json) ----------
 
 export interface AppConfig {
@@ -132,8 +119,6 @@ export interface AppConfig {
   databases: DbConnection[];
   /** Configuración del tracker (dónde se reportan los resultados). */
   tracker: TrackerConfig;
-  /** Generación de pruebas con IA (opcional; si no está, se usan esqueletos). */
-  ai?: AiConfig;
 }
 
 export const SECRET_MASK = "••••••••";

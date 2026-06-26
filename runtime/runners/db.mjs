@@ -16,11 +16,43 @@ function dbUrl(env) {
 }
 const NO_CONN = `falta conexión en env (${CONN_ENV_VARS.join("/")}) — defínela para activar la capa db (la conexión nunca se cablea)`;
 
+// Extrae el host de una cadena de conexión: URL (postgres/mysql `scheme://user:pass@host:port/db`)
+// o pares clave=valor (mssql `Server=host,port;...`). Devuelve el host en minúsculas o null.
+function connHost(conn) {
+  if (!conn) return null;
+  const url = String(conn).match(/^[a-z][a-z0-9+.-]*:\/\/[^/@]*@?([^:/?,;]+)/i);
+  if (url) return url[1].toLowerCase();
+  const kv = String(conn).match(/(?:Server|Host|Data\s*Source)\s*=\s*([^;,]+)/i);
+  return kv ? kv[1].trim().toLowerCase() : null;
+}
+
+// Guardrail ANTI-PRODUCCIÓN (F2): pgtap ejecuta archivos .sql arbitrarios (posible DDL/DML).
+// Si el host de la conexión parece de producción y NO hay un override explícito, se OMITE con
+// aviso accionable. Hosts no-prod corren normal (no cambia el comportamiento previo). "Producción"
+// se decide por el perfil: db.production_hosts (lista exacta) o db.production_patterns (regex);
+// default conservador: hostnames que contienen "prod"/"produccion"/"production". El override es
+// QA_DB_ALLOW_WRITE en el entorno (o profile.db.allow_write=true).
+function dbWriteBlocked({ env = {}, profile, conn }) {
+  if (env.QA_DB_ALLOW_WRITE) return null;
+  const dbCfg = (profile && profile.db) || {};
+  if (dbCfg.allow_write) return null;
+  const host = connHost(conn);
+  if (!host) return null;
+  const hosts = (dbCfg.production_hosts || []).map((h) => String(h).toLowerCase());
+  const patterns = (dbCfg.production_patterns || ["prod", "produccion", "production"]).map((p) => new RegExp(p, "i"));
+  const isProd = hosts.includes(host) || patterns.some((re) => re.test(host));
+  if (!isProd) return null;
+  return `host '${host}' parece PRODUCCIÓN: la capa db ejecuta pgtap (posible DDL/DML) y se OMITE por seguridad. ` +
+    `Exporta QA_DB_ALLOW_WRITE=1 (o profile.db.allow_write) para permitirlo, o ajusta profile.db.production_*.`;
+}
+
 // Prioridad de qa-detect: pgtap > prisma > testcontainers > migrations.
 const TOOLS = {
-  pgtap: ({ env }) => {
+  pgtap: ({ env, profile }) => {
     const conn = dbUrl(env);
     if (!conn) return { skip: NO_CONN };
+    const blocked = dbWriteBlocked({ env, profile, conn });
+    if (blocked) return { skip: blocked };
     return ["pg_prove", "-d", conn, "--recurse", "."];
   },
   // prisma lee la conexión de su propio env (DATABASE_URL); _runner-core reenvía `env` al

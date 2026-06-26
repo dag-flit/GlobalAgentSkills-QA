@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { TrackerStep } from "@/components/TrackerStep";
-import { AiSettings } from "@/components/AiSettings";
 
 export default function SettingsPage() {
   return (
@@ -19,9 +18,6 @@ export default function SettingsPage() {
 
       {/* Editor de tracker (sin navegación de wizard: solo Probar + Guardar) */}
       <TrackerStep />
-
-      {/* Generación de pruebas con IA (Fase B) */}
-      <AiSettings />
 
       <div className="card">
         <h2 className="font-semibold text-sm">Base de datos</h2>

@@ -1,0 +1,8 @@
+# language: es
+@plantilla @validacion @{{tag}}
+Feature: Validación de formulario — {{form_name|formulario}}
+
+  Scenario: El campo "{{field}}" es obligatorio
+    Dado que estoy en "{{form_path}}"
+    Cuando hago clic en "{{submit_button|Enviar}}"
+    Entonces debería ver "{{error_text}}"

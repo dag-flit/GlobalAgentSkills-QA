@@ -9,16 +9,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
-    start(controller) {
+    async start(controller) {
       const send = (type: string, data: unknown) => {
         controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`));
       };
 
       // 1) reproducir lo ya ocurrido (al abrir/recargar el detalle)
-      for (const ev of readEvents(id)) send("log", ev);
+      for (const ev of await readEvents(id)) send("log", ev);
 
       // si el run ya terminó, cierra de una vez
-      const rec = getRun(id);
+      const rec = await getRun(id);
       if (rec && rec.status !== "running") {
         send("done", { status: rec.status });
         controller.close();
@@ -30,14 +30,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         id,
         (ev) => send("log", ev),
         () => {
-          const r = getRun(id);
-          send("done", { status: r?.status ?? "passed" });
-          try {
-            controller.close();
-          } catch {
-            /* noop */
-          }
-          unsub();
+          void (async () => {
+            const r = await getRun(id);
+            send("done", { status: r?.status ?? "passed" });
+            try {
+              controller.close();
+            } catch {
+              /* noop */
+            }
+            unsub();
+          })();
         }
       );
     },

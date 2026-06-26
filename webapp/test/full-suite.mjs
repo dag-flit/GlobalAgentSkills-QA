@@ -55,6 +55,18 @@ async function runAndWait(body, timeoutMs = 180000) {
 }
 
 console.log("== Suite Webapp Quality Ops Framework ==\n");
+
+console.log("-- Calidad de código --");
+// Guardrail de 400 líneas sobre webapp/src (local, no requiere el dev server). La deuda
+// conocida vive en la allowlist del checker; esto detecta archivos NUEVOS que la violen.
+await check("Presupuesto de líneas: webapp/src sin archivos nuevos > 400", async () => {
+  const { pathToFileURL } = await import("node:url");
+  const mod = await import(pathToFileURL(path.join(KIT, "scripts", "check-line-budget.mjs")).href);
+  const { violations } = mod.analyze("webapp");
+  assert(violations.length === 0, "violan 400: " + violations.map((v) => `${v.rel} (${v.lines})`).join(", "));
+  return `0 violaciones nuevas`;
+});
+
 console.log("-- API & ejecución --");
 
 // ---- BD ----

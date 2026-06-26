@@ -14,19 +14,27 @@ interface TcPreview {
   supported: boolean;
   reason: string | null;
   framework: string | null;
-  source?: "ai" | "skeleton";
-  aiError?: string;
-}
-interface AiInfo {
-  enabled: boolean;
-  provider?: string;
-  model?: string;
+  kind?: "gherkin";
 }
 interface HuPreview {
   huId: string;
   huTitle?: string;
   criteria: string[];
   tcs: TcPreview[];
+}
+interface TemplateParam {
+  name: string;
+  default?: string;
+  required: boolean;
+}
+interface TemplateDef {
+  id: string;
+  params: TemplateParam[];
+}
+interface TemplateCase {
+  template: string;
+  params: Record<string, string>;
+  huId: string;
 }
 
 /** Clave compuesta (HU, criterio): la clave TC-AC<n> se repite entre HUs. */
@@ -45,17 +53,30 @@ export function ReviewStep({
   repoRoot?: string | null;
   unitTool?: string | null;
   /** approvedKeys = ["<huId>:<TC-AC#>", …]; generate = approvedKeys.length > 0 */
-  onContinue: (approvedKeys: string[], generate: boolean) => void;
+  onContinue: (approvedKeys: string[], generate: boolean, templateCases: TemplateCase[]) => void;
   onBack: () => void;
 }) {
+  // Esta versión usa SOLO la Ruta B (BDD ejecutable). La generación con IA se removió de la UX.
   const action = useAction();
   const [planPublished, setPlanPublished] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<HuPreview[]>([]);
-  const [aiInfo, setAiInfo] = useState<AiInfo | null>(null);
   const [approved, setApproved] = useState<Record<string, boolean>>({});
   const [openCode, setOpenCode] = useState<Record<string, boolean>>({});
+  // Casos adicionales (plantillas) — TC extra bajo la HU elegida
+  const [catalog, setCatalog] = useState<TemplateDef[]>([]);
+  const [tcases, setTcases] = useState<TemplateCase[]>([]);
+  const [selTpl, setSelTpl] = useState("");
+  const [tplParams, setTplParams] = useState<Record<string, string>>({});
+  const [tplHu, setTplHu] = useState<string>(huIds[0] || "");
+
+  useEffect(() => {
+    fetch("/api/templates")
+      .then((r) => r.json())
+      .then((res) => { if (res.ok) setCatalog(res.templates || []); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -64,7 +85,7 @@ export function ReviewStep({
     fetch("/api/generate/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ huIds, unitTool }),
+      body: JSON.stringify({ huIds, unitTool, repoRoot: repoRoot || undefined }),
     })
       .then((r) => r.json())
       .then((res) => {
@@ -75,7 +96,6 @@ export function ReviewStep({
         }
         const pv: HuPreview[] = res.previews || [];
         setPreviews(pv);
-        setAiInfo(res.ai || { enabled: false });
         // por defecto se aprueban los TC soportados (los no soportados no se pueden ejecutar)
         const def: Record<string, boolean> = {};
         for (const hu of pv) for (const tc of hu.tcs) if (tc.supported) def[compositeKey(hu.huId, tc.key)] = true;
@@ -86,7 +106,7 @@ export function ReviewStep({
     return () => {
       alive = false;
     };
-  }, [huIds, unitTool]);
+  }, [huIds, unitTool, repoRoot]);
 
   const { totalSupported, totalApproved } = useMemo(() => {
     let sup = 0;
@@ -111,6 +131,15 @@ export function ReviewStep({
     setApproved(next);
   }
 
+  const curTplParams: TemplateParam[] = catalog.find((t) => t.id === selTpl)?.params || [];
+  const canAdd = !!selTpl && !!tplHu && curTplParams.filter((p) => p.required).every((p) => (tplParams[p.name] || "").trim());
+  function addCase() {
+    if (!canAdd) return;
+    setTcases((cs) => [...cs, { template: selTpl, params: { ...tplParams }, huId: tplHu }]);
+    setSelTpl("");
+    setTplParams({});
+  }
+
   // Publica el Plan + TC en el tracker SIN ejecutar (paso de planificación, antes de la corrida).
   async function publishPlan() {
     await action
@@ -127,6 +156,7 @@ export function ReviewStep({
               huIds,
               generate: approvedKeys.length > 0,
               approvedTcKeys: approvedKeys.length ? approvedKeys : undefined,
+              templateCases: tcases.length ? tcases : undefined,
             }),
           });
           const res = await r.json();
@@ -155,23 +185,14 @@ export function ReviewStep({
       <div className="card space-y-2">
         <h2 className="font-semibold">Revisión de pruebas generadas</h2>
         <p className="text-sm text-muted">
-          A partir de los <b>criterios de cada HU</b> preparé una prueba por criterio. Revisa en
-          lenguaje claro <b>qué valida cada una</b> y decide cuáles ejecutar. Solo lo que apruebes
-          se genera como código (etiquetado por HU), se ejecuta y crea su TC en el tracker.
+          A partir de los <b>criterios de cada HU</b> preparé una <b>especificación ejecutable</b>{" "}
+          (Gherkin): el criterio <b>es</b> la prueba. Revisa el escenario en lenguaje claro y decide
+          cuáles ejecutar. Determinista, sin alucinación — el AC se ejecuta tal cual.
         </p>
-        {aiInfo &&
-          (aiInfo.enabled ? (
-            <div className="text-xs rounded-lg px-3 py-2 border border-accent/40 bg-accent/10 text-accent">
-              ✨ Tests escritos por IA ({aiInfo.provider}
-              {aiInfo.model ? ` · ${aiInfo.model}` : ""}). Son <b>borradores reales</b> que se
-              ejecutan; revísalos antes de aprobar.
-            </div>
-          ) : (
-            <div className="text-xs rounded-lg px-3 py-2 border border-border bg-panel2/40 text-muted">
-              Modo <b>esqueleto</b> (sin IA): las pruebas salen como «pendiente». Configura un
-              proveedor de IA en <b>Ajustes → Generación con IA</b> para que escriba el código real.
-            </div>
-          ))}
+        <div className="text-xs rounded-lg px-3 py-2 border border-accent/40 bg-accent/10 text-accent">
+          📋 <b>BDD ejecutable</b> (Cucumber). Trazable: cada Scenario = un AC. El kit trae el runtime
+          si el proyecto no lo tiene.
+        </div>
         <div className="flex items-center gap-3 text-xs">
           <span className="text-muted">
             {totalApproved} de {totalSupported} prueba(s) aprobada(s)
@@ -222,11 +243,7 @@ export function ReviewStep({
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium text-sm">{tc.title}</span>
-                          {tc.source === "ai" ? (
-                            <span className="badge bg-accent/15 text-accent text-[10px]">✨ IA</span>
-                          ) : (
-                            <span className="badge bg-panel2 text-muted text-[10px]">esqueleto · pendiente</span>
-                          )}
+                          <span className="badge bg-accent/15 text-accent text-[10px]">📋 Gherkin · ejecutable</span>
                           {!tc.supported && (
                             <span className="badge bg-amber-900 text-amber-300 text-[10px]">no generable aún</span>
                           )}
@@ -235,16 +252,13 @@ export function ReviewStep({
                         {!tc.supported && tc.reason && (
                           <p className="text-[11px] text-warn mt-1">⚠ {tc.reason}</p>
                         )}
-                        {tc.aiError && (
-                          <p className="text-[11px] text-warn mt-1">⚠ La IA falló, se usó el esqueleto: {tc.aiError}</p>
-                        )}
                         {tc.code && (
                           <div className="mt-1">
                             <button
                               className="text-[11px] text-accent hover:underline"
                               onClick={() => setOpenCode((s) => ({ ...s, [ck]: !codeOpen }))}
                             >
-                              {codeOpen ? "▾ ocultar código" : "▸ ver código"}
+                              {codeOpen ? "▾ ocultar especificación" : "▸ ver especificación (Gherkin)"}
                             </button>
                             {codeOpen && (
                               <pre className="mt-1 max-h-60 overflow-auto rounded-md bg-black/40 p-2 text-[11px] text-gray-300 font-mono whitespace-pre">
@@ -263,6 +277,93 @@ export function ReviewStep({
         </div>
       ))}
 
+      {/* Casos adicionales (plantillas) → TC extra bajo la HU elegida */}
+      <div className="card space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold">Casos adicionales (plantillas)</h3>
+          <p className="text-xs text-muted mt-1">
+            Agrega pruebas que NO vienen de un criterio (smoke, salud de API, validación de
+            formularios…). Se crean como TC extra bajo la HU que elijas.
+          </p>
+        </div>
+        {catalog.length === 0 ? (
+          <p className="text-xs text-muted">No hay plantillas disponibles.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3 items-end">
+              <label className="text-xs text-muted">
+                Plantilla
+                <select
+                  className="input mt-1 block"
+                  value={selTpl}
+                  onChange={(e) => { setSelTpl(e.target.value); setTplParams({}); }}
+                >
+                  <option value="">— elige —</option>
+                  {catalog.map((t) => (
+                    <option key={t.id} value={t.id}>{t.id}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs text-muted">
+                HU dueña
+                <select className="input mt-1 block" value={tplHu} onChange={(e) => setTplHu(e.target.value)}>
+                  {huIds.map((h) => (
+                    <option key={h} value={h}>HU #{h}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {selTpl && curTplParams.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {curTplParams.map((p) => (
+                  <label key={p.name} className="text-xs text-muted">
+                    {p.name}
+                    {p.required ? <span className="text-warn"> *</span> : <span className="opacity-70"> (opcional)</span>}
+                    <input
+                      className="input mt-1"
+                      placeholder={p.default ? `default: ${p.default}` : ""}
+                      value={tplParams[p.name] || ""}
+                      onChange={(e) => setTplParams((s) => ({ ...s, [p.name]: e.target.value }))}
+                    />
+                  </label>
+                ))}
+                <p className="text-[11px] text-muted sm:col-span-2">
+                  Los campos con <span className="text-warn">*</span> son obligatorios; los demás usan su
+                  default. En un <b>monorepo</b>, pon una <b>URL completa</b> en los endpoints/paths para
+                  apuntar a un servicio específico (p.ej. <code>https://core-api.miapp.com/health</code>).
+                </p>
+              </div>
+            )}
+            {selTpl && (
+              <button className="btn-ghost w-fit" onClick={addCase} disabled={!canAdd}>+ Agregar caso</button>
+            )}
+          </div>
+        )}
+        {tcases.length > 0 && (
+          <ul className="space-y-1">
+            {tcases.map((c, i) => (
+              <li
+                key={i}
+                className="flex items-center justify-between rounded-md border border-border bg-panel2/30 px-3 py-1.5 text-xs"
+              >
+                <span>
+                  <b>{c.template}</b> → HU #{c.huId}
+                  {Object.keys(c.params).length
+                    ? ` · ${Object.entries(c.params).map(([k, v]) => `${k}=${v}`).join(", ")}`
+                    : ""}
+                </span>
+                <button
+                  className="text-muted hover:text-red-300"
+                  onClick={() => setTcases((cs) => cs.filter((_, j) => j !== i))}
+                >
+                  ✗
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="flex items-center gap-2 flex-wrap">
         <button className="btn-ghost" onClick={onBack}>
           ← Atrás
@@ -272,8 +373,10 @@ export function ReviewStep({
             {planPublished ? "✓ Plan publicado — republicar" : "📋 Publicar plan en el tracker"}
           </button>
         )}
-        <button className="btn-primary" onClick={() => onContinue(approvedKeys, approvedKeys.length > 0)}>
-          {approvedKeys.length > 0 ? `Ejecutar con ${approvedKeys.length} prueba(s) →` : "Continuar sin generar →"}
+        <button className="btn-primary" onClick={() => onContinue(approvedKeys, approvedKeys.length > 0, tcases)}>
+          {approvedKeys.length + tcases.length > 0
+            ? `Ejecutar con ${approvedKeys.length + tcases.length} prueba(s) →`
+            : "Continuar sin generar →"}
         </button>
         {featureId && !planPublished && (
           <span className="text-xs text-muted">

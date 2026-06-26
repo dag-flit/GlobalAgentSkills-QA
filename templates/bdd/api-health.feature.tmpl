@@ -1,0 +1,7 @@
+# language: es
+@plantilla @api @{{tag}}
+Feature: Salud de API — {{service|API}}
+
+  Scenario: {{endpoint}} responde OK
+    Cuando hago GET "{{endpoint}}"
+    Entonces el estado es {{status|200}}

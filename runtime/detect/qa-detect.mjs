@@ -16,7 +16,7 @@ const IGNORE_DIRS = new Set([
   "bin", "obj", ".venv", "venv", "__pycache__", "vendor", ".turbo", ".cache",
 ]);
 
-const ALL_LAYERS = ["static", "unit", "api", "e2e", "db", "security"];
+const ALL_LAYERS = ["static", "unit", "api", "e2e", "bdd", "db", "security"];
 
 // ── Walker acotado ──────────────────────────────────────────────────────────
 // Recolecta rutas relativas (posix), nombres de carpeta y los package.json.
@@ -260,6 +260,20 @@ function detectLayers(m, pyproject) {
     layers.e2e = signals.length
       ? { enabled: true, tool, signals }
       : { enabled: false, tool: null, signals: [], reason: "sin runner e2e (playwright/cypress)" };
+  }
+
+  // bdd — especificaciones ejecutables (Gherkin, Ruta B). Enciende si hay archivos `.feature` o
+  // un framework BDD instalado (cucumber-js / pytest-bdd / behave / Reqnroll). El AC ES el test.
+  {
+    const signals = [];
+    let tool = null;
+    if (m.hasDep("@cucumber/cucumber") || m.hasDep("cucumber")) { tool = "cucumber"; signals.push("cucumber"); }
+    if (!tool && (m.hasDep("pytest-bdd") || m.hasDep("behave"))) { tool = "pytest-bdd"; signals.push("pytest-bdd/behave"); }
+    if (!tool && (m.hasDep("Reqnroll") || m.hasDep("SpecFlow"))) { tool = "reqnroll"; signals.push("reqnroll/specflow"); }
+    if (m.hasPath(/\.feature$/)) { tool = tool || "cucumber"; signals.push(".feature"); }
+    layers.bdd = signals.length
+      ? { enabled: true, tool, signals }
+      : { enabled: false, tool: null, signals: [], reason: "sin BDD (.feature / cucumber / pytest-bdd / reqnroll)" };
   }
 
   // db — se prefiere una herramienta EJECUTABLE (pgtap/prisma) sobre el directorio

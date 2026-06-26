@@ -12,7 +12,61 @@ PAT, sin Cursor y sin configurar nada**. El tracker es un plug-in opcional: hay 
 (`local`, `azure-devops`, `github`, `jira`) y se cambia con una línea de perfil.
 
 Plan completo: **`docs/qa-kit-arquitectura-global.md`**. Guías de uso/extensión en `docs/`.
-**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 33/33 (incluye evidencia por HU, plan, generación y retry).
+**Estado: roadmap F0–F5 completo** (ver "Estado actual"). Smoke test: 40/40 (incluye evidencia por HU, plan, generación, retry y Ruta B BDD).
+
+## Ruta B — BDD ejecutable + plantillas (Fases B1, B2 — HECHO)
+
+Ruta alternativa al generador con IA: **el AC ES el test** (especificaciones ejecutables Gherkin),
+determinista y sin alucinación. Diseño y comparación en `docs/PLAN-rutas-generacion-pruebas.md`.
+
+- **B1 (AC → .feature + runner) — HECHO:**
+  - `runtime/generate/feature-writer.mjs`: AC → `.feature` (un Scenario por AC, tags `@HU-### @TC-AC<n>`,
+    pasos desde el Gherkin del AC, `# language: es` cuando aplica). Mismo contrato de salida que el
+    esqueleto → estrategia inyectable.
+  - `runtime/runners/bdd.mjs`: capa `bdd`; ejecuta los `.feature` con **Cucumber.js** (exec inyectable);
+    cada Scenario = un caso. pytest-bdd/Reqnroll → skip accionable (llegan en B4).
+  - `qa-detect`: capa `bdd` (señales `.feature` / cucumber / pytest-bdd / reqnroll); registrada en `RUNNERS`.
+  - `parse-cases.parseCucumber`: extrae Scenarios (pass/fail/pendiente) del JSON clásico de Cucumber.
+- **B2 (librería de step-definitions = el activo) — HECHO:**
+  - `bdd/steps/` (core reutilizable entre proyectos): `world.mjs` (estado/baseURL/hooks, Playwright
+    perezoso), `web.steps.mjs` (UI/Playwright), `api.steps.mjs` (HTTP/fetch), `db.steps.mjs` (SQL/pg,
+    conexión desde env). Frases en español tolerantes a variantes; matchean el texto sin importar el
+    keyword. Peer-deps (`@cucumber/cucumber`/`playwright`/`pg`) viven en el PROYECTO, no en el kit.
+  - El runner `bdd` **materializa** la librería en `qa-generated/bdd/steps/` del proyecto y la carga
+    con `--import`, junto a los steps PROPIOS del proyecto (convención `bdd/steps` · `tests/bdd/steps`
+    · `features/steps` · …). Ver `bdd/steps/README.md`.
+- **B2.5 (sin sesgo: el proyecto no preinstala nada) — HECHO:** el runner `bdd` no exige cucumber en
+  el proyecto. Si lo tiene → lo usa; si no → el KIT lo trae **on-demand** con
+  `npx --yes --package @cucumber/cucumber` (mismo patrón que `api`/redocly), y `runBddTests` inyecta
+  `NODE_PATH` (node_modules del kit) como puente para resolver los imports de los steps. Offline sin
+  caché → skip (no rompe). `hasLocalCucumber` decide el modo (proyecto vs gestionado). Nota: los steps
+  **web** necesitan `playwright` disponible (proyecto/kit/caché); BDD de API/BD es liviano (sin navegador).
+- **B3 (UX: Ruta B en la webapp) — HECHO:** la pantalla de **Revisión** muestra el **Gherkin legible**
+  (`.feature`) por criterio (badge "Gherkin · ejecutable", "ver especificación"); la corrida usa el
+  feature-writer (capa `bdd`). Piezas webapp: `lib/qa/bdd-generator.ts` (`makeBddGenerator`),
+  `generate.ts` (preview BDD), `runner.ts` (`withBddLayer` + `makeBddGenerator`), `/api/generate/preview`
+  + RunWizard. El core/kit no cambió en B3.
+- **Remoción de IA en la UX (versión laboral "limitada") — HECHO:** se eliminó por completo la
+  generación con IA de la webapp (la ruta única es BDD). Borrados: `webapp/src/components/AiSettings.tsx`,
+  `webapp/src/lib/qa/ai-generator.ts`, `webapp/src/app/api/ai/test/route.ts`, y la config `ai`
+  (`AiConfig`/`AiProvider`/`AppConfig.ai` en types/config). `generate.ts`/`runner.ts`/`ReviewStep`/
+  `RunWizard` quedaron BDD-only. Typecheck verde, cero referencias residuales. (La IA sigue viva en el
+  **repo personal** `damadogar/quality-assurance-suite`, congelada en `c279c03` — ver [[repo-personal-split]].)
+- **B3.5 (catálogo de plantillas — casos adicionales) — HECHO:** `templates/bdd/` con plantillas Gherkin
+  parametrizadas (`api-health`, `smoke-crud`, `form-validation`) que usan las frases de la librería de
+  steps; `runtime/generate/template-applier.mjs` (`listTemplates` + `applyTemplate`) rellena `{{params}}`
+  y marca `missing`/pendiente si faltan. **Params opcionales con default** (`{{name|default}}`): los campos
+  cosméticos (service/status/form_name/submit_button/create_button) NO son obligatorios → solo se pide lo
+  funcional (des-sesgo). En monorepo, el endpoint/path puede ser una **URL completa** (apunta a un servicio). **Wiring:** `runQaCycle` acepta `templateCases:[{template,params,
+  huId}]` → materializa el `.feature` (etiquetado `[HU-###]`) y lo publica como **TC extra bajo la HU
+  elegida** (decisión #1; clave `<prefix>PLANTILLA-<n>`; `fromTemplate` exento de la aprobación por-AC).
+  **UI:** bloque "Casos adicionales (plantillas)" en Revisión (elige plantilla del catálogo `/api/templates`,
+  rellena params, HU dueña); threading webapp `ReviewStep`→`RunWizard`→`runner.ts`→`runQaCycle`.
+- Smoke: 34 (feature-writer), 35 (parseCucumber), 36 (detección + runner offline), 37 (materialización
+  de steps + `--import` + steps del proyecto), 38 (runtime on-demand vs proyecto), 39 (catálogo+applier),
+  40 (wiring: TC de plantilla bajo la HU + `.feature` materializado).
+**Pendiente:** B4 (multi-stack pytest-bdd/Reqnroll + IA-asistente opcional). Nota delivery:
+`runtime/delivery/build.mjs` debe incluir `bdd/` y `templates/bdd/` al empaquetar (targets generados).
 
 ## Estado actual
 
@@ -230,6 +284,11 @@ evidencia/plan. Lo nuevo de esta tanda:
 7. **`dev-tester` está fuera del core** (en `packs/dev-side/`, opcional). No lo reincorpores.
 8. **El smoke test queda verde.** Tras cada cambio: `node runtime/smoke-test.mjs`. Si agregas
    capacidades, agrega su caso al smoke test.
+9. **Ningún archivo de código supera 400 líneas** (`.mjs/.ts/.tsx`). Regla dura: al acercarse al
+   umbral, partir por responsabilidad (un archivo = una responsabilidad nombrable). El guardrail
+   `scripts/check-line-budget.mjs` lo verifica; la deuda preexistente vive en su `ALLOWLIST` y se
+   vacía fase a fase (ver plan multitenant). El smoke test (caso 41) falla si el **motor** gana un
+   archivo nuevo > 400; la suite webapp lo verifica para `webapp/src`.
 
 ## Mapa del repo
 
@@ -262,7 +321,8 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 33/33 OK)
+node runtime/smoke-test.mjs        # verificar plumbing (debe dar 41/41 OK)
+node scripts/check-line-budget.mjs [all|engine|webapp]   # guardrail de 400 líneas (exit 1 si viola)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
 node runtime/cli.mjs [repoRoot] -w <HU> -f <FT> -d "<dev>"   # con trazabilidad por dev
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/

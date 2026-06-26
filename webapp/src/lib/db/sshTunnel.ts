@@ -1,6 +1,7 @@
 import net from "node:net";
 import fs from "node:fs";
 import { Client } from "ssh2";
+import { assertAbsoluteNoTraversal } from "../security/paths";
 import type { DbConnection } from "../types";
 
 export interface Tunnel {
@@ -83,7 +84,9 @@ export function openSshTunnel(db: DbConnection): Promise<Tunnel> {
       if (ssh.authMethod === "password") {
         cfg.password = ssh.password;
       } else if (ssh.authMethod === "privateKey") {
-        cfg.privateKey = fs.readFileSync(ssh.privateKeyPath);
+        // Ruta absoluta y sin traversal (evita leer archivos arbitrarios del servidor).
+        const keyPath = assertAbsoluteNoTraversal(ssh.privateKeyPath, "ruta de la llave privada");
+        cfg.privateKey = fs.readFileSync(keyPath);
         if (ssh.passphrase) cfg.passphrase = ssh.passphrase;
       } else if (ssh.authMethod === "agent") {
         cfg.agent =

@@ -1,13 +1,14 @@
-import fs from "node:fs";
-import path from "node:path";
 import { EventEmitter } from "node:events";
-import { EVENTS_DIR, ensureDataDirs } from "./paths";
+import { appendEvent, readEvents as repoReadEvents } from "./db/eventsRepo";
 import type { LogLevel, RunEvent } from "./types";
 
-// Bus en memoria por run (globalThis para sobrevivir al HMR). Cada run tiene su EventEmitter:
-// `event` para cada línea de log y `end` cuando el ciclo termina (cierra los SSE abiertos).
+// Bus en memoria por run (globalThis para sobrevivir al HMR): `event` por cada línea
+// de log y `end` al terminar el ciclo (cierra los SSE abiertos). La DURABILIDAD va a
+// la tabla run_events vía una cola serializada por run (no bloquea el hot-path síncrono
+// del ejecutor): emitEvent encola la escritura y publica al bus al instante.
 const g = globalThis as any;
 const buses: Map<string, EventEmitter> = g.__qofBuses ?? (g.__qofBuses = new Map());
+const queues: Map<string, Promise<void>> = g.__qofEvQueues ?? (g.__qofEvQueues = new Map());
 
 function bus(runId: string): EventEmitter {
   let b = buses.get(runId);
@@ -19,26 +20,34 @@ function bus(runId: string): EventEmitter {
   return b;
 }
 
-function fileFor(runId: string): string {
-  return path.join(EVENTS_DIR, `${runId}.jsonl`);
+// Encola el append durable manteniendo el orden (cada run drena en serie). Un fallo de
+// escritura se registra pero NO rompe la corrida ni el stream en vivo.
+function enqueue(runId: string, ev: RunEvent): void {
+  const prev = queues.get(runId) ?? Promise.resolve();
+  const next = prev
+    .then(() => appendEvent(runId, ev))
+    .catch((e) => console.error(`[run_events ${runId}]`, e?.message ?? e));
+  queues.set(runId, next);
 }
 
-/** Emite un evento: lo persiste (append-only) y lo publica a los SSE suscritos. */
+/** Emite un evento: lo publica al SSE al instante y encola su persistencia durable. */
 export function emitEvent(runId: string, level: LogLevel, msg: string): RunEvent {
   const ev: RunEvent = { ts: Date.now(), level, msg };
-  try {
-    ensureDataDirs();
-    fs.appendFileSync(fileFor(runId), JSON.stringify(ev) + "\n");
-  } catch {
-    /* el log en disco es best-effort */
-  }
+  enqueue(runId, ev);
   bus(runId).emit("event", ev);
   return ev;
 }
 
-/** Señala el fin del run a los SSE suscritos. */
-export function endRun(runId: string): void {
+/** Espera a que la cola durable del run termine (readEvents verá todo lo emitido). */
+export async function flushEvents(runId: string): Promise<void> {
+  await (queues.get(runId) ?? Promise.resolve());
+}
+
+/** Señala el fin del run a los SSE: primero asegura que todo quedó persistido. */
+export async function endRun(runId: string): Promise<void> {
+  await flushEvents(runId);
   bus(runId).emit("end");
+  queues.delete(runId);
 }
 
 /** Suscribe a eventos en vivo de un run. Devuelve la función para desuscribir. */
@@ -53,14 +62,6 @@ export function onEvent(runId: string, onEv: (ev: RunEvent) => void, onEnd: () =
 }
 
 /** Lee los eventos ya persistidos de un run (para reproducir al abrir el detalle). */
-export function readEvents(runId: string): RunEvent[] {
-  try {
-    const raw = fs.readFileSync(fileFor(runId), "utf-8");
-    return raw
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as RunEvent);
-  } catch {
-    return [];
-  }
+export async function readEvents(runId: string): Promise<RunEvent[]> {
+  return repoReadEvents(runId);
 }

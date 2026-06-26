@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { detectProject, type ProjectSource } from "@/lib/qa/detect";
+import { detectProject } from "@/lib/qa/detect";
+import { parseJson } from "@/lib/validation/parse";
+import { projectSourceSchema } from "@/lib/validation/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,14 +12,10 @@ export const dynamic = "force-dynamic";
  * Devuelve { ok, repoRoot, detection } o { ok:false, error }.
  */
 export async function POST(req: Request) {
-  let body: ProjectSource;
+  const parsed = await parseJson(req, projectSourceSchema, "ok");
+  if (!parsed.ok) return parsed.response;
   try {
-    body = (await req.json()) as ProjectSource;
-  } catch {
-    return NextResponse.json({ ok: false, error: "JSON inválido" }, { status: 400 });
-  }
-  try {
-    const { repoRoot, detection } = await detectProject(body);
+    const { repoRoot, detection } = await detectProject(parsed.data);
     return NextResponse.json({ ok: true, repoRoot, detection });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) });

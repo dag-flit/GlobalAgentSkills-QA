@@ -160,6 +160,45 @@ export function parseSemgrep(out, { repoRoot } = {}) {
   }));
 }
 
+// cucumber.js / BDD (formato JSON clásico): [ { name, uri, elements: [ { type, name, tags,
+//   steps: [ { result: { status, duration(ns), error_message } } ] } ] } ]. Un Scenario = un caso:
+// pasa si todos sus pasos pasan; falla si alguno falla; skip si quedó pendiente/undefined/skipped.
+export function parseCucumber(out) {
+  const j = pickJson(out.stdout) || pickJson(out.stderr);
+  if (!Array.isArray(j)) return null;
+  const cases = [];
+  for (const feat of j) {
+    const fname = feat?.name || feat?.uri || "Feature";
+    for (const el of feat.elements || []) {
+      if (el.type && el.type !== "scenario" && el.type !== "scenario_outline") continue;
+      let status = "pass";
+      let message = null;
+      let durNs = 0;
+      let sawResult = false;
+      for (const s of el.steps || []) {
+        const r = s.result || {};
+        if (typeof r.duration === "number") durNs += r.duration;
+        if (!r.status) continue;
+        sawResult = true;
+        if (r.status === "failed") {
+          status = "fail";
+          if (!message) message = r.error_message || null;
+        } else if (status !== "fail" && ["undefined", "pending", "skipped", "ambiguous"].includes(r.status)) {
+          status = "skip";
+        }
+      }
+      if (!sawResult) status = "skip";
+      cases.push({
+        name: `${fname} › ${el.name || "(scenario)"}`,
+        status,
+        duration: durNs ? Math.round(durNs / 1e6) : null, // cucumber reporta nanosegundos → ms
+        message: cleanMsg(message),
+      });
+    }
+  }
+  return cases;
+}
+
 // bandit (`-f json`): { results: [ { test_id, issue_text, issue_severity, filename, line_number } ] }
 export function parseBandit(out, { repoRoot } = {}) {
   const j = pickJson(out.stdout);
@@ -180,4 +219,5 @@ export default {
   parseRuff,
   parseSemgrep,
   parseBandit,
+  parseCucumber,
 };

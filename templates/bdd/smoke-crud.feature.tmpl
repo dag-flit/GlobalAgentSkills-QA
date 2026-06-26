@@ -1,0 +1,12 @@
+# language: es
+@plantilla @smoke @{{tag}}
+Feature: Smoke CRUD — {{entity}}
+
+  Scenario: Listar {{entity}}
+    Dado que estoy en "{{list_path}}"
+    Entonces debería ver "{{entity}}"
+
+  Scenario: Crear {{entity}}
+    Dado que estoy en "{{create_path}}"
+    Cuando hago clic en "{{create_button|Crear}}"
+    Entonces debería ver "{{success_text}}"

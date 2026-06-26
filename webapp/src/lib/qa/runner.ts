@@ -7,7 +7,7 @@ import { trackerEnv } from "./tracker";
 import { buildConnectionString } from "@/lib/db/dbClient";
 import { openSshTunnel, type Tunnel } from "@/lib/db/sshTunnel";
 import { emitEvent, endRun } from "@/lib/events";
-import { makeGenerator } from "./ai-generator";
+import { makeBddGenerator } from "./bdd-generator";
 import { saveRun } from "@/lib/runStore";
 import { isStopRequested, clearStop } from "@/lib/procRegistry";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
@@ -19,8 +19,14 @@ export interface RunInput {
   appUrl?: string;
   featureId?: string;
   huIds?: string[];
-  generate?: boolean;          // generar tests desde los criterios (Fase A: esqueletos)
+  generate?: boolean;          // generar tests desde los criterios
   approvedTcKeys?: string[];   // claves "<huId>:<TC-AC#>" aprobadas en la revisión
+  templateCases?: { template: string; params?: Record<string, string>; huId: string }[]; // casos adicionales (plantillas)
+}
+
+/** Capas efectivas para código (Ruta B): fuerza la capa `bdd` que ejecuta los `.feature` generados. */
+function withBddLayer(layers: string[]): string[] {
+  return Array.from(new Set([...layers, "bdd"]));
 }
 
 /**
@@ -113,10 +119,11 @@ async function buildEnv(
  * del plan (testPlan + plan). No abre túnel SSH (no se ejecuta la capa db).
  */
 export async function publishPlanOnly(input: RunInput): Promise<any> {
-  const cfg = loadConfig();
+  const cfg = await loadConfig();
   const tracker = cfg.tracker.selected;
   const { runQaCycle } = await importKit("runtime/orchestrator.mjs");
-  const profile = await buildProfile(tracker, input.layers || []);
+  const layers = withBddLayer(input.layers || []);
+  const profile = await buildProfile(tracker, layers);
   const built = await buildEnv(cfg, []); // sin túnel: la planificación no ejecuta db
   try {
     const summary = await runQaCycle({
@@ -127,8 +134,9 @@ export async function publishPlanOnly(input: RunInput): Promise<any> {
       featureId: input.featureId,
       huIds: input.huIds,
       generate: !!input.generate,
-      generateTests: makeGenerator(), // IA con fallback a esqueleto
+      generateTests: makeBddGenerator(), // Ruta B: AC → .feature (Gherkin ejecutable)
       approvedTcKeys: input.approvedTcKeys,
+      templateCases: input.templateCases, // casos adicionales (plantillas) → TC bajo la HU elegida
       planOnly: true,
     });
     return { ok: true, summary };
@@ -142,8 +150,8 @@ export async function publishPlanOnly(input: RunInput): Promise<any> {
 }
 
 /** Crea el run y lo arranca en segundo plano (fire-and-forget). Devuelve el registro inicial. */
-export function startRun(input: RunInput): RunRecord {
-  const cfg = loadConfig();
+export async function startRun(input: RunInput): Promise<RunRecord> {
+  const cfg = await loadConfig();
   const tracker = cfg.tracker.selected;
   const id = runId();
   const now = new Date().toISOString();
@@ -161,7 +169,7 @@ export function startRun(input: RunInput): RunRecord {
     huIds: input.huIds,
     layers: input.layers,
   };
-  saveRun(record);
+  await saveRun(record); // la fila del run debe existir antes de emitir eventos (FK run_events)
   void execute(record, input, cfg);
   return record;
 }
@@ -174,7 +182,8 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
   try {
     const { runQaCycle } = await importKit("runtime/orchestrator.mjs");
     const { defaultExec } = await importKit("runtime/runners/_runner-core.mjs");
-    const layers = input.layers || [];
+    // Ruta B fuerza la capa `bdd` para ejecutar los `.feature` generados.
+    const layers = record.mode === "code" ? withBddLayer(input.layers || []) : (input.layers || []);
 
     emitEvent(id, "info", "Resolviendo perfil y entorno…");
     const profile = await buildProfile(tracker, layers);
@@ -190,7 +199,7 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
       repoRoot = path.join(DATA_DIR, "evidence", id);
       fs.mkdirSync(repoRoot, { recursive: true });
       record.repoRoot = repoRoot;
-      saveRun(record);
+      await saveRun(record);
       try {
         const pw: any = await import("playwright");
         const chromium = pw.chromium ?? pw.default?.chromium;
@@ -229,8 +238,9 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
       featureId: input.featureId,
       huIds: record.mode === "code" ? input.huIds : undefined,
       generate: record.mode === "code" ? !!input.generate : false,
-      generateTests: makeGenerator(), // IA con fallback a esqueleto (inyectado en la webapp)
+      generateTests: makeBddGenerator(), // Ruta B: AC → .feature (Gherkin ejecutable)
       approvedTcKeys: record.mode === "code" ? input.approvedTcKeys : undefined,
+      templateCases: record.mode === "code" ? input.templateCases : undefined,
       appUrl: input.appUrl,
       explore: record.mode === "explore",
       launchBrowser,
@@ -243,7 +253,7 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
     record.status = summary.stopped ? "error" : fails ? "failed" : "passed";
     record.summary = summary;
     record.finishedAt = new Date().toISOString();
-    saveRun(record);
+    await saveRun(record);
     emitEvent(id, "result", `Ciclo terminado: ${record.status} · ${fails} fallo(s).`);
     const local = summary.report?.local || summary.report;
     if (local?.htmlPath) emitEvent(id, "info", `Reporte: ${local.htmlPath}`);
@@ -251,7 +261,7 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
     record.status = "error";
     record.error = describeError(e);
     record.finishedAt = new Date().toISOString();
-    saveRun(record);
+    await saveRun(record);
     emitEvent(id, "error", `Error: ${record.error}`);
   } finally {
     try {
@@ -260,6 +270,6 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
       /* noop */
     }
     clearStop(id);
-    endRun(id);
+    await endRun(id);
   }
 }

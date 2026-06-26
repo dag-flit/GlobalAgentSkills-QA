@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { loadConfig, applySecretPreserving } from "@/lib/config";
 import { fetchFeatureTree, trackerEnv } from "@/lib/qa/tracker";
-import type { TrackerConfig } from "@/lib/types";
+import { parseJson } from "@/lib/validation/parse";
+import { featureTreeSchema } from "@/lib/validation/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,17 +13,13 @@ export const dynamic = "force-dynamic";
  * el Feature y sus HUs hijas vía el adapter del kit.
  */
 export async function POST(req: Request) {
-  let body: { featureId?: string; tracker?: TrackerConfig };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ ok: false, error: "JSON inválido" }, { status: 400 });
-  }
-  const featureId = (body.featureId || "").trim();
+  const parsed = await parseJson(req, featureTreeSchema, "ok");
+  if (!parsed.ok) return parsed.response;
+  const featureId = parsed.data.featureId.trim();
   if (!featureId) return NextResponse.json({ ok: false, error: "Falta featureId." }, { status: 400 });
 
-  const current = loadConfig();
-  const incoming = body.tracker ?? current.tracker;
+  const current = await loadConfig();
+  const incoming = parsed.data.tracker ?? current.tracker;
   const resolved = applySecretPreserving(current, { ...current, tracker: incoming }).tracker;
 
   try {

@@ -23,7 +23,7 @@ puede corromperse). Si la UI se rompe: detén dev → borra `.next` → reinicia
 - **Bases de datos** (`/databases`): gestor estilo pgAdmin (varias conexiones, **túnel SSH**),
   con "Probar conexión" real y secretos enmascarados.
 - **Ajustes** (`/settings`): credenciales del tracker (local/Azure DevOps/GitHub/Jira) con
-  "Probar conexión" (preflight real del adapter), y **Generación de pruebas con IA** (ver abajo).
+  "Probar conexión" (preflight real del adapter).
 - **Ejecutar** (`/`): asistente con **2 modos**
   - **QA del código** — corre las 6 capas (estático · unit · API · BD · seguridad · E2E). Origen
     (repo Git o ruta local) → detección de capas → tracker → *(opcional)* Feature→HUs →
@@ -31,24 +31,26 @@ puede corromperse). Si la UI se rompe: detén dev → borra `.next` → reinicia
     hijas de un Feature por la conexión REST del adapter.
   - **Explorar una URL** — crawler (Playwright): smoke + capturas de una app viva, sin repo.
 - **Revisión + Plan + evidencia por HU** (paso "Revisión"): a partir de los **criterios de cada HU**
-  prepara **una prueba por criterio** y las muestra en lenguaje claro (✓ aprobar / ✎ ajustar / ✗ descartar,
-  "ver código"). Botón **"Publicar plan en el tracker"** crea, ANTES de ejecutar, la Task **"PLAN
-  PRUEBAS FEATURE …"** + los **TC por criterio** (estado *planificado*). Al ejecutar, se actualizan
-  con el resultado y se comenta por HU. Todo con paridad online (tracker) y offline (reporte local).
+  prepara **una especificación ejecutable (BDD/Gherkin) por criterio** y la muestra en lenguaje claro
+  (✓ aprobar / ✎ ajustar / ✗ descartar, "ver especificación"). El AC **es** la prueba: se ejecuta tal
+  cual con Cucumber.js — determinista, sin IA. Botón **"Publicar plan en el tracker"** crea, ANTES de
+  ejecutar, la Task **"PLAN PRUEBAS FEATURE …"** + los **TC por criterio** (estado *planificado*). Al
+  ejecutar, se actualizan con el resultado y se comenta por HU. Paridad online (tracker) y offline (reporte).
 - **Ejecución en vivo** (`/runs/[id]`): consola por SSE + resultados claros por capa (qué se
   ejecutó, comando, duración, casos con pass/fail/**skip**), **Plan del Feature**, **evidencia por HU**,
   cobertura, reporte y galería de capturas.
 
-## Generación de pruebas con IA (opcional)
+## Generación de pruebas: BDD ejecutable (Ruta B)
 
-En **Ajustes → Generación con IA** eliges proveedor (**Google Gemini** — capa gratis en AI Studio —,
-**Anthropic Claude**, o **Ninguno**), pegas la **API key** (enmascarada; o la expones como variable de
-entorno `GOOGLE_AI_API_KEY`/`ANTHROPIC_API_KEY`) y el modelo. Con IA, la pantalla de Revisión muestra
-**tests reales** escritos por el modelo desde el criterio (+ resumen en español). Sin proveedor, el kit
-usa **esqueletos** deterministas (estado "pendiente"). La IA vive solo en la webapp; el core del kit
-sigue offline. Los tests generados se escriben en `qa-generated/HU-<id>/` dentro del proyecto (visibles
-y revisables; añádelo a tu `.gitignore` si no los versionas). **Nota de integridad:** los tests por IA son
-**borradores que SÍ se ejecutan** (resultado real); revísalos antes de aprobar.
+Las pruebas se generan como **especificaciones ejecutables Gherkin** a partir de los criterios de cada
+HU: el AC **es** el test (determinista, sin IA, sin alucinación). El feature-writer del kit emite un
+`.feature` por criterio (un Scenario, etiquetado `@HU-### @TC-AC<n>`) y la capa `bdd` los ejecuta con
+**Cucumber.js**. Si el proyecto no tiene el runtime, el kit lo trae on-demand (`npx`); los steps **web**
+usan Playwright. Los `.feature` se escriben en `qa-generated/HU-<id>/` (visibles y revisables; ya en
+`.gitignore`). La librería de step-definitions reutilizable vive en `bdd/steps/` (web/api/db) y se
+extiende por proyecto (`bdd/steps/`, `tests/bdd/steps/`, `features/steps/`…).
+
+> Esta versión (limitada) **no** incluye generación con IA: la ruta única es BDD.
 
 ## Dónde quedan las evidencias (y por qué NO se suben al repo)
 

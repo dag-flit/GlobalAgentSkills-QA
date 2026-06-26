@@ -9,6 +9,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { runLayer } from "./_runner-core.mjs";
 
+// Versión PINEADA de redocly para el modo OpenAPI (F2: nunca `@latest`). Major estable;
+// el perfil puede fijar un pin exacto vía api.redocly_pkg.
+const REDOCLY_PKG = "@redocly/cli@1";
+
 // Busca un archivo (por matcher) en la raíz y un nivel de subcarpetas (sin node_modules).
 function findInRootOrSubdir(repoRoot, isMatch) {
   let entries;
@@ -85,7 +89,10 @@ const TOOLS = {
     const spec = findByPath(repoRoot, isOpenapiPath);
     if (!spec) return { skip: "contrato OpenAPI detectado pero no localizado (openapi.yaml o */openapi/*.yaml)" };
     const ruleset = profile?.api?.openapi_ruleset || "minimal";
-    return ["npx", "--yes", "@redocly/cli@latest", "lint", spec, `--extends=${ruleset}`, "--format=stylish"];
+    // Pin de versión (F2): nunca `@latest` (no reproducible + riesgo de supply-chain). Se fija un
+    // major estable, sobreescribible por perfil (api.redocly_pkg, p.ej. "@redocly/cli@1.25.11").
+    const pkg = profile?.api?.redocly_pkg || REDOCLY_PKG;
+    return ["npx", "--yes", pkg, "lint", spec, `--extends=${ruleset}`, "--format=stylish"];
   },
 };
 
