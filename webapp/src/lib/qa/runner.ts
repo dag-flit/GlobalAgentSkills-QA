@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { importKit } from "./kit";
-import { KIT_ROOT, DATA_DIR, ensureDataDirs } from "@/lib/paths";
+import { KIT_ROOT, DATA_DIR, tenantDir, ensureDataDirs } from "@/lib/paths";
 import { loadConfig } from "@/lib/config";
 import { trackerEnv } from "./tracker";
 import { buildConnectionString } from "@/lib/db/dbClient";
@@ -9,6 +9,7 @@ import { openSshTunnel, type Tunnel } from "@/lib/db/sshTunnel";
 import { emitEvent, endRun } from "@/lib/events";
 import { makeBddGenerator } from "./bdd-generator";
 import { saveRun } from "@/lib/runStore";
+import { currentTenantId, runInTenant } from "@/lib/db/tenantContext";
 import { isStopRequested, clearStop } from "@/lib/procRegistry";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
 
@@ -170,7 +171,10 @@ export async function startRun(input: RunInput): Promise<RunRecord> {
     layers: input.layers,
   };
   await saveRun(record); // la fila del run debe existir antes de emitir eventos (FK run_events)
-  void execute(record, input, cfg);
+  // La corrida es fire-and-forget tras responder: re-abre el contexto de tenant con un
+  // snapshot, para que saveRun/eventos en background queden scopeados por RLS al tenant dueño.
+  const tenantId = currentTenantId();
+  void runInTenant(tenantId, () => execute(record, input, cfg));
   return record;
 }
 
@@ -196,7 +200,8 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
     let repoRoot = input.repoRoot || KIT_ROOT;
     let launchBrowser: (() => Promise<any>) | undefined;
     if (record.mode === "explore") {
-      repoRoot = path.join(DATA_DIR, "evidence", id);
+      // Evidencia bajo data/tenants/<tenantId>/evidence/<runId> (aislada por tenant en disco).
+      repoRoot = path.join(tenantDir(currentTenantId()), "evidence", id);
       fs.mkdirSync(repoRoot, { recursive: true });
       record.repoRoot = repoRoot;
       await saveRun(record);

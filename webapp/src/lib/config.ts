@@ -1,4 +1,5 @@
 import { readConfig, writeConfig } from "./db/configRepo";
+import { currentTenantId } from "./db/tenantContext";
 import type { AppConfig, DbConnection } from "./types";
 import { SECRET_MASK } from "./types";
 
@@ -64,7 +65,8 @@ function normalizeDb(db: Partial<DbConnection>): DbConnection {
 
 // ---------- Persistencia ----------
 
-let cached: AppConfig | null = null;
+// Caché POR TENANT (un caché global filtraría config/secretos entre tenants).
+const cache = new Map<string, AppConfig>();
 
 function deepMerge<T>(base: T, override: Partial<T>): T {
   if (override == null) return base;
@@ -82,26 +84,28 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
 }
 
 export async function loadConfig(): Promise<AppConfig> {
-  if (cached) return cached;
+  const tid = currentTenantId();
+  const hit = cache.get(tid);
+  if (hit) return hit;
   const { databases, tracker } = await readConfig();
   const def = defaultConfig();
   // normaliza cada conexión (rellena `ssh` y campos nuevos en filas viejas).
   const dbs = databases.length ? databases.map(normalizeDb) : def.databases;
   const trk = tracker ? deepMerge(defaultTrackerConfig(), tracker) : def.tracker;
   const cfg: AppConfig = { databases: dbs, tracker: trk };
-  // Primer arranque (control-plane vacío): siémbralo con los defaults.
+  // Primer acceso del tenant (sin filas aún): siémbrale los defaults.
   if (!databases.length || !tracker) await writeConfig(cfg);
-  cached = cfg;
+  cache.set(tid, cfg);
   return cfg;
 }
 
 export async function saveConfig(cfg: AppConfig): Promise<void> {
   await writeConfig(cfg);
-  cached = cfg;
+  cache.set(currentTenantId(), cfg);
 }
 
 export async function reloadConfig(): Promise<AppConfig> {
-  cached = null;
+  cache.delete(currentTenantId());
   return loadConfig();
 }
 

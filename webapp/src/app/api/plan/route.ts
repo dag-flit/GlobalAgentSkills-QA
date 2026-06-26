@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { publishPlanOnly } from "@/lib/qa/runner";
+import { withTenantScope } from "@/lib/auth/route";
 import { parseJson } from "@/lib/validation/parse";
 import { planInputSchema } from "@/lib/validation/schemas";
 
@@ -10,10 +11,12 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const parsed = await parseJson(req, planInputSchema, "ok");
   if (!parsed.ok) return parsed.response;
-  try {
-    const res = await publishPlanOnly(parsed.data);
-    return NextResponse.json({ ok: true, ...res });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
-  }
+  return withTenantScope(async () => {
+    try {
+      const res = await publishPlanOnly(parsed.data);
+      return NextResponse.json({ ok: true, ...res });
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
+    }
+  });
 }

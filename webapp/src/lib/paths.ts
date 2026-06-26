@@ -7,19 +7,18 @@ export const PROJECT_ROOT = process.cwd();
 /** Raíz del qa-kit (un nivel arriba de webapp/). Aquí viven runtime/, core/, adapters/. */
 export const KIT_ROOT = path.resolve(PROJECT_ROOT, "..");
 
-/** Carpeta de datos locales (gitignored): config con secretos, runs, repos, evidencia. */
+/** Carpeta de datos locales (gitignored): repos clonados y evidencia por tenant.
+ *  La config, runs y eventos viven en Postgres (control-plane), ya NO en archivos. */
 export const DATA_DIR = path.join(PROJECT_ROOT, "data");
 
-export const CONFIG_FILE = path.join(DATA_DIR, "config.json");
-export const RUNS_FILE = path.join(DATA_DIR, "runs.json");
-export const RUNS_DIR = path.join(DATA_DIR, "runs");
-export const EVENTS_DIR = path.join(DATA_DIR, "events");
-export const REPOS_DIR = path.join(DATA_DIR, "repos");
+/** Raíz en disco de los artefactos de un tenant (repos clonados + evidencia). Aísla por
+ *  tenant en el filesystem (defensa en profundidad; la API ya la acota por RLS). */
+export function tenantDir(tenantId: string): string {
+  return path.join(DATA_DIR, "tenants", tenantId);
+}
 
 export function ensureDataDirs(): void {
-  for (const dir of [DATA_DIR, RUNS_DIR, EVENTS_DIR, REPOS_DIR]) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 /** Ruta absoluta a un módulo del motor del kit (p.ej. "runtime/orchestrator.mjs"). */

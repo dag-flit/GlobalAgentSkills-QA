@@ -1,37 +1,52 @@
+import { NextResponse } from "next/server";
 import { onEvent, readEvents } from "@/lib/events";
 import { getRun } from "@/lib/runStore";
+import { requireTenant, AuthError } from "@/lib/auth/context";
+import { runInTenant } from "@/lib/db/tenantContext";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const encoder = new TextEncoder();
+  let tenantId: string;
+  try {
+    tenantId = (await requireTenant()).tenantId;
+  } catch (e) {
+    if (e instanceof AuthError) {
+      return NextResponse.json({ ok: false, error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
 
+  // Verifica la PROPIEDAD del run antes de abrir el stream: el bus en vivo es en memoria por
+  // runId (no lo cubre RLS), así que sin esto un tenant podría escuchar la corrida de otro.
+  const rec0 = await runInTenant(tenantId, () => getRun(id));
+  if (!rec0) return NextResponse.json({ ok: false, error: "Run no encontrado" }, { status: 404 });
+
+  const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       const send = (type: string, data: unknown) => {
         controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`));
       };
 
-      // 1) reproducir lo ya ocurrido (al abrir/recargar el detalle)
-      for (const ev of await readEvents(id)) send("log", ev);
+      // El start corre tras devolver la respuesta → reabrimos el contexto de tenant para las
+      // lecturas a BD (RLS) con el snapshot capturado.
+      for (const ev of await runInTenant(tenantId, () => readEvents(id))) send("log", ev);
 
-      // si el run ya terminó, cierra de una vez
-      const rec = await getRun(id);
-      if (rec && rec.status !== "running") {
-        send("done", { status: rec.status });
+      if (rec0.status !== "running") {
+        send("done", { status: rec0.status });
         controller.close();
         return;
       }
 
-      // 2) transmitir en vivo
       const unsub = onEvent(
         id,
         (ev) => send("log", ev),
         () => {
           void (async () => {
-            const r = await getRun(id);
+            const r = await runInTenant(tenantId, () => getRun(id));
             send("done", { status: r?.status ?? "passed" });
             try {
               controller.close();
@@ -40,7 +55,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             }
             unsub();
           })();
-        }
+        },
       );
     },
   });

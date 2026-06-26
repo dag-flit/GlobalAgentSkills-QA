@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadConfig, applySecretPreserving } from "@/lib/config";
 import { fetchFeatureTree, trackerEnv } from "@/lib/qa/tracker";
+import { withTenantScope } from "@/lib/auth/route";
 import { parseJson } from "@/lib/validation/parse";
 import { featureTreeSchema } from "@/lib/validation/schemas";
 
@@ -18,18 +19,20 @@ export async function POST(req: Request) {
   const featureId = parsed.data.featureId.trim();
   if (!featureId) return NextResponse.json({ ok: false, error: "Falta featureId." }, { status: 400 });
 
-  const current = await loadConfig();
-  const incoming = parsed.data.tracker ?? current.tracker;
-  const resolved = applySecretPreserving(current, { ...current, tracker: incoming }).tracker;
+  return withTenantScope(async () => {
+    const current = await loadConfig();
+    const incoming = parsed.data.tracker ?? current.tracker;
+    const resolved = applySecretPreserving(current, { ...current, tracker: incoming }).tracker;
 
-  try {
-    const { feature, children } = await fetchFeatureTree(
-      resolved.selected,
-      trackerEnv(resolved),
-      featureId
-    );
-    return NextResponse.json({ ok: true, tracker: resolved.selected, feature, children });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e) });
-  }
+    try {
+      const { feature, children } = await fetchFeatureTree(
+        resolved.selected,
+        trackerEnv(resolved),
+        featureId
+      );
+      return NextResponse.json({ ok: true, tracker: resolved.selected, feature, children });
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: e?.message ?? String(e) });
+    }
+  });
 }

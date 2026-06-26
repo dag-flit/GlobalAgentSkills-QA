@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
-import { REPOS_DIR, ensureDataDirs } from "@/lib/paths";
+import { tenantDir, ensureDataDirs } from "@/lib/paths";
+import { currentTenantId } from "@/lib/db/tenantContext";
 
 const pexec = promisify(execFile);
 
@@ -56,14 +57,16 @@ async function git(args: string[], cwd?: string): Promise<string> {
 }
 
 /**
- * Clona (o actualiza si ya existe) un repo Git en data/repos/<slug>.
- * Devuelve la ruta absoluta del repo local listo para analizar.
+ * Clona (o actualiza si ya existe) un repo Git en data/tenants/<tenantId>/repos/<slug>
+ * (aislado por tenant). Devuelve la ruta absoluta del repo local listo para analizar.
  */
 export async function cloneOrUpdate(url: string, branch?: string): Promise<string> {
   validateGitUrl(url);
   validateBranch(branch);
   ensureDataDirs();
-  const dir = path.join(REPOS_DIR, repoSlug(url));
+  const reposDir = path.join(tenantDir(currentTenantId()), "repos");
+  fs.mkdirSync(reposDir, { recursive: true });
+  const dir = path.join(reposDir, repoSlug(url));
   const isRepo = fs.existsSync(path.join(dir, ".git"));
 
   if (!isRepo) {

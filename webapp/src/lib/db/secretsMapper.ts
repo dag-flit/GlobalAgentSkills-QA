@@ -1,10 +1,11 @@
 import { encryptSecret, decryptSecret } from "@/lib/security/secretsCrypto";
+import { currentTenantId } from "./tenantContext";
 import type { DbConnection, TrackerConfig } from "@/lib/types";
 
 // Cifra/descifra los campos SECRETOS de la config en la frontera con la BD. El resto del
-// código (config.ts, rutas, UI) trabaja con texto plano en memoria. AAD por campo liga
-// cada criptograma a su contexto lógico; en F6 se le antepondrá el tenant_id real.
-const aad = (s: string) => `system:${s}`;
+// código (config.ts, rutas, UI) trabaja con texto plano en memoria. AAD = `<tenantId>:<campo>`
+// → liga cada criptograma a su tenant Y su campo: copiarlo a otro tenant/campo falla GCM.
+const aad = (s: string) => `${currentTenantId()}:${s}`;
 
 function mapDb(db: DbConnection, fn: (v: string, aad: string) => string): DbConnection {
   const ssh = db.ssh ?? ({} as DbConnection["ssh"]);
