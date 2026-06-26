@@ -6,11 +6,27 @@ motor**: importa `runQaCycle` del kit (`../runtime/`) y lo orquesta desde el nav
 
 ## Arrancar
 
+Requiere **PostgreSQL** (control-plane del servicio). Primera vez:
+
+1. En pgAdmin, como superusuario, ejecuta `webapp/db/provision.sql` (crea la base
+   `flit_qa_kit` + el rol `flit_qa_app`; cambia el `CHANGE_ME` por una clave real).
+2. Crea `webapp/.env.local` (NO se commitea):
+   ```
+   CONTROL_PLANE_URL=postgresql://flit_qa_app:<clave>@localhost:5432/flit_qa_kit
+   QA_KIT_MASTER_KEY=<32 bytes base64>
+   ```
+   (genera la clave: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
+
 ```bash
 cd webapp
 npm install
-npm run dev          # http://localhost:4312
+node --env-file=.env.local db/migrate.mjs   # aplica migraciones (idempotente)
+npm run dev                                   # http://localhost:4312
 ```
+
+La app **exige login**. No hay usuarios preexistentes → entra a **`/register`** ("Crear
+organización"): nombre + tu email + contraseña (mín. 8). Esa cuenta queda como *owner*.
+Arquitectura, setup y reglas de extensión completas en **[../docs/MULTITENANT.md](../docs/MULTITENANT.md)**.
 
 > Para el modo **Explorar URL** se necesita Chromium de Playwright:
 > `npx playwright install chromium` (una sola vez).
@@ -57,7 +73,7 @@ extiende por proyecto (`bdd/steps/`, `tests/bdd/steps/`, `features/steps/`…).
 | Modo | Carpeta local de evidencia |
 |------|----------------------------|
 | **QA del código** | `<repo-probado>/qa-evidence/<fecha>/FT-<feature>__<dev>/` (o `WI-<id>/`) |
-| **Explorar una URL** | `webapp/data/evidence/<id>/qa-evidence/<fecha>/WI-local/` |
+| **Explorar una URL** | `webapp/data/tenants/<tenantId>/evidence/<id>/qa-evidence/<fecha>/WI-local/` |
 
 Cada carpeta es **autocontenida**: `report.html` + `report.md` + subcarpeta `capturas/` (las
 imágenes se copian ahí y se embeben en el HTML).
@@ -68,9 +84,10 @@ imágenes se copian ahí y se embeben en el HTML).
   `webapp/.gitignore`.
 - En **tus** proyectos, agrega `qa-evidence/` al `.gitignore` del repo para no subir corridas.
 
-> Datos locales de la app (no versionados): `webapp/data/` → `config.json` (con secretos
-> enmascarados al enviar al navegador), `runs.json` + `events/` (historial), `repos/` (repos
-> clonados), `evidence/` (evidencias del modo explorar).
+> **Persistencia:** config, conexiones, runs y eventos viven en **PostgreSQL** (control-plane),
+> con secretos **cifrados** (AES-GCM) y aislados por tenant (RLS). En disco, `webapp/data/` (no
+> versionado) solo guarda artefactos por tenant: `tenants/<tenantId>/repos/` (repos clonados) y
+> `tenants/<tenantId>/evidence/` (modo explorar).
 
 ## Trazabilidad por-HU (etiqueta `[HU-###]`)
 
@@ -82,11 +99,14 @@ qué HUs seleccionadas quedaron cubiertas por pruebas y cuáles no.
 ## Pruebas
 
 ```bash
-node ../runtime/smoke-test.mjs        # motor del kit → 27/27
-# Suite E2E de la webapp (con el dev server arriba):
-cp test/fixtures/seed-runs.json data/runs.json   # siembra el caso de cobertura
-node test/full-suite.mjs                          # API + ejecución + navegador → PASS
+node ../runtime/smoke-test.mjs                 # motor del kit → 42/42
+node ../scripts/check-line-budget.mjs all      # regla de 400 líneas → 0 violaciones
+npx tsc --noEmit                               # typecheck de la webapp
 ```
+
+> El aislamiento por tenant (AIS-01..08) se valida directamente contra Postgres (RLS) y por
+> HTTP con dos organizaciones (ver `docs/MULTITENANT.md`). `test/full-suite.mjs` cubre el
+> guardrail de 400 líneas sobre `webapp/src`.
 
 `test/fixtures/demo-repo/` es un repo de fixtura (vitest con pruebas etiquetadas `[HU-201]`/
 `[HU-202]`) para validar QA del código de punta a punta.
@@ -94,10 +114,16 @@ node test/full-suite.mjs                          # API + ejecución + navegador
 ## Estructura
 
 ```
-src/app/            páginas + API routes (config, db/test, detect, tracker/*, runs/*, artifacts)
-src/components/      AppShell (menú) · RunWizard · TrackerStep · FeatureStep · DbConnections · RunDetail · ui
-src/lib/             config · runStore · events · procRegistry · db/* (cliente + túnel SSH)
+src/middleware.ts   portón de auth (Edge) + cabeceras de seguridad
+src/app/            páginas (login, register, …) + API routes (auth/*, config, db/test, detect, tracker/*, runs/*, artifacts)
+src/components/      AppShell · SessionBadge · AuthCard · run-wizard/* · db-connections/* · run-detail/* · ui
+src/lib/auth/        password (scrypt) · session · context · cookie · route (withTenantScope)
+src/lib/db/          pool · tx (withTenant) · tenantContext (ALS) · {config,runs,events,session,auth}Repo · secretsMapper
+src/lib/security/    secretsCrypto (AES-GCM) · paths (anti-traversal)
+src/lib/validation/  schemas (zod) · parse
 src/lib/qa/          puentes al motor del kit: runner (runQaCycle) · detect · tracker · gitService · kit
-data/                local, NO versionado (config, runs, repos, evidencia de exploración)
+db/                  migrations/*.sql + migrate.mjs + provision.sql
+scripts/             retention.mjs (retención por tenant)
+data/                local, NO versionado (repos + evidencia por tenant)
 test/                full-suite.mjs + fixtures/
 ```

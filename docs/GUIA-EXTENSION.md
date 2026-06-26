@@ -3,6 +3,9 @@
 Cómo añadir un runner de capa, un tracker o un overlay de organización, y cómo empaquetar.
 Antes de tocar el core, lee las **invariantes** (al final) y `CLAUDE.md`.
 
+> Para extender la **webapp multitenant** (rutas, tablas, secretos, migraciones sin romper el
+> aislamiento por tenant), ver **`MULTITENANT.md`** — tiene su propio playbook acción→camino.
+
 Regla transversal: **todo se prueba offline**. La ejecución de herramientas (`exec`) y el
 transporte HTTP de los trackers (`http`) son **inyectables** — añade siempre un caso al
 `runtime/smoke-test.mjs` con un `exec`/`http` falso. Tras cualquier cambio: `node runtime/smoke-test.mjs`.

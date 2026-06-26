@@ -3,6 +3,10 @@
 Cómo correr el kit en cualquier repo, elegir tracker y leer la evidencia. Para extenderlo
 (añadir runners/trackers) ver **GUIA-EXTENSION.md**; para el catálogo de piezas, **GUIA-AGENTES-SKILLS.md**.
 
+> ¿Buscas la **interfaz web** (correr el kit a clics, multiusuario)? Es un servicio multitenant
+> aparte: ver **`MULTITENANT.md`** (setup con PostgreSQL, login) y `../webapp/README.md`. El
+> motor de esta guía sigue corriendo **offline e independiente** de la webapp.
+
 ## Requisitos
 
 - **Node 18+** (usa `fetch` y `fs.cpSync` nativos). Cross-platform (Windows/macOS/Linux).

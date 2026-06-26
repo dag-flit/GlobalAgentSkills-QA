@@ -286,9 +286,19 @@ evidencia/plan. Lo nuevo de esta tanda:
    capacidades, agrega su caso al smoke test.
 9. **Ningún archivo de código supera 400 líneas** (`.mjs/.ts/.tsx`). Regla dura: al acercarse al
    umbral, partir por responsabilidad (un archivo = una responsabilidad nombrable). El guardrail
-   `scripts/check-line-budget.mjs` lo verifica; la deuda preexistente vive en su `ALLOWLIST` y se
-   vacía fase a fase (ver plan multitenant). El smoke test (caso 41) falla si el **motor** gana un
-   archivo nuevo > 400; la suite webapp lo verifica para `webapp/src`.
+   `scripts/check-line-budget.mjs` lo verifica. La `ALLOWLIST` quedó **vacía** (deuda en cero):
+   NO la repueble. El smoke test (caso 41) falla si el **motor** gana un archivo nuevo > 400; la
+   suite webapp lo verifica para `webapp/src`.
+10. **Webapp multitenant — aislamiento por tenant (detalle en `docs/MULTITENANT.md`).** La webapp
+   es un servicio multitenant (Postgres + RLS forzada, auth propia, secretos cifrados); el **motor
+   sigue offline** (invariante #1, intacto). Al extender la webapp:
+   - **Control-plane (`CONTROL_PLANE_URL`) ≠ data-plane (`DATABASE_URL`):** nunca mezclar.
+   - **Datos del tenant SOLO por `withTenant`/`withTenantScope`** (nunca `query()` crudo → te
+     saltarías el `SET LOCAL app.current_tenant` y el RLS no filtra).
+   - **Secretos SOLO por `secretsCrypto`/`secretsMapper`; inputs SOLO por zod** (`lib/validation`).
+   - **Tabla nueva con datos del tenant** → migración (forward-only) con `tenant_id` +
+     `FORCE ROW LEVEL SECURITY` + policy de aislamiento (copiar `webapp/db/migrations/0003_rls.sql`).
+   - Gate al cerrar: `npx tsc --noEmit` + `check-line-budget all` + smoke 42/42.
 
 ## Mapa del repo
 
@@ -321,11 +331,16 @@ Repo sin perfil → `tracker: local`, `layers: auto`. `profile: flit` → hereda
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing (debe dar 41/41 OK)
+node runtime/smoke-test.mjs        # verificar plumbing del motor (debe dar 42/42 OK)
 node scripts/check-line-budget.mjs [all|engine|webapp]   # guardrail de 400 líneas (exit 1 si viola)
 node runtime/cli.mjs [repoRoot]    # correr el ciclo QA local-first sobre un repo
 node runtime/cli.mjs [repoRoot] -w <HU> -f <FT> -d "<dev>"   # con trazabilidad por dev
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/
+
+# Webapp multitenant (control-plane Postgres; ver docs/MULTITENANT.md):
+cd webapp && node --env-file=.env.local db/migrate.mjs    # aplicar migraciones (idempotente)
+cd webapp && npm run dev                                   # :4312 — exige login; crea la 1ª org en /register
+cd webapp && node --env-file=.env.local scripts/retention.mjs [días]   # retención por tenant
 ```
 
 **Trazabilidad de evidencia (FT + dev):** el sink local nombra la subcarpeta **netamente con el
@@ -354,6 +369,8 @@ Smoke test caso 23 cubre parseo + render.
 - `docs/GUIA-USO.md` — cómo correr el kit, perfiles/trackers, capas, evidencia.
 - `docs/GUIA-AGENTES-SKILLS.md` — catálogo de agentes/skills/archivos y qué hace cada uno.
 - `docs/GUIA-EXTENSION.md` — cómo añadir un runner, un tracker o un overlay; cómo empaquetar.
+- `docs/MULTITENANT.md` — la **webapp como servicio multitenant**: arquitectura (Postgres+RLS,
+  auth, cifrado), setup/login y **reglas para extenderla SIN romper el aislamiento**.
 
 ## Roadmap completo — posibles siguientes (fuera del plan original)
 
