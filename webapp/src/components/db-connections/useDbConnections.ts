@@ -28,8 +28,6 @@ export function useDbConnections() {
           tracker: {
             selected: "local",
             azure: { orgUrl: "", project: "", pat: "", userEmail: "" },
-            github: { repository: "", token: "" },
-            jira: { baseUrl: "", email: "", token: "", projectKey: "" },
           },
         }),
       );

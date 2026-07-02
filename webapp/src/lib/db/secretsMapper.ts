@@ -24,8 +24,6 @@ function mapTracker(t: TrackerConfig, fn: (v: string, aad: string) => string): T
   return {
     ...t,
     azure: { ...t.azure, pat: fn(t.azure.pat ?? "", aad("tracker:azure.pat")) },
-    github: { ...t.github, token: fn(t.github.token ?? "", aad("tracker:github.token")) },
-    jira: { ...t.jira, token: fn(t.jira.token ?? "", aad("tracker:jira.token")) },
   };
 }
 

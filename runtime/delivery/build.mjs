@@ -103,8 +103,8 @@ function plainReadme(skills) {
   return (
     `# qa-kit (target plano)\n\n` +
     `Generado desde \`core/\`. Kit autocontenido + CLI Node.\n\n` +
-    `\`\`\`bash\nnode bin/qa.mjs [repoRoot] --work-item <id>\n\`\`\`\n\n` +
-    `Corre static/unit/e2e/db/security/api según lo que el repo permita y deja \`qa-evidence/\`.\n` +
+    `\`\`\`bash\nnode bin/qa.mjs --url <https://app> [--work-item <id>]\n\`\`\`\n\n` +
+    `Explora una URL viva (smoke E2E: status HTTP + errores de consola + captura) y deja \`qa-evidence/\`.\n` +
     `Skills: ${skills.map((s) => s.name).join(", ") || "(ninguna)"}.\n`
   );
 }

@@ -32,11 +32,9 @@ export async function readConfig(): Promise<{
 }> {
   return withTenant(async (c) => {
     const dbs = await c.query("SELECT * FROM db_connections ORDER BY sort_order, id");
-    const tc = await c.query("SELECT selected, azure, github, jira FROM tracker_config LIMIT 1");
+    const tc = await c.query("SELECT selected, azure FROM tracker_config LIMIT 1");
     const t = tc.rows[0];
-    const tracker = t
-      ? ({ selected: t.selected, azure: t.azure, github: t.github, jira: t.jira } as TrackerConfig)
-      : null;
+    const tracker = t ? ({ selected: t.selected, azure: t.azure } as TrackerConfig) : null;
     return {
       databases: dbs.rows.map(rowToDb).map(decryptDb),
       tracker: tracker ? decryptTracker(tracker) : null,
@@ -64,10 +62,10 @@ export async function writeConfig(cfg: AppConfig): Promise<void> {
   await withTenant(async (c) => {
     const t = encryptTracker(cfg.tracker);
     await c.query(
-      `INSERT INTO tracker_config (selected, azure, github, jira, updated_at)
-       VALUES ($1, $2, $3, $4, now())
-       ON CONFLICT (tenant_id) DO UPDATE SET selected=$1, azure=$2, github=$3, jira=$4, updated_at=now()`,
-      [t.selected, JSON.stringify(t.azure), JSON.stringify(t.github), JSON.stringify(t.jira)],
+      `INSERT INTO tracker_config (selected, azure, updated_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT (tenant_id) DO UPDATE SET selected=$1, azure=$2, updated_at=now()`,
+      [t.selected, JSON.stringify(t.azure)],
     );
     const ids = cfg.databases.map((d) => d.id);
     if (ids.length) await c.query("DELETE FROM db_connections WHERE NOT (id = ANY($1))", [ids]);

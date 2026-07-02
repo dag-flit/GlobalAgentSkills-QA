@@ -41,8 +41,6 @@ export function defaultTrackerConfig(): AppConfig["tracker"] {
   return {
     selected: "local",
     azure: { orgUrl: "https://dev.azure.com/", project: "", pat: "", userEmail: "" },
-    github: { repository: "", token: "" },
-    jira: { baseUrl: "", email: "", token: "", projectKey: "" },
   };
 }
 
@@ -130,8 +128,6 @@ export function redactConfig(cfg: AppConfig): AppConfig {
   c.tracker = {
     ...t,
     azure: { ...t.azure, pat: mask(t.azure.pat) },
-    github: { ...t.github, token: mask(t.github.token) },
-    jira: { ...t.jira, token: mask(t.jira.token) },
   };
   return c;
 }
@@ -163,8 +159,6 @@ export function applySecretPreserving(current: AppConfig, incoming: AppConfig): 
   merged.tracker = {
     ...inT,
     azure: { ...inT.azure, pat: keep(inT.azure.pat, curT.azure.pat) },
-    github: { ...inT.github, token: keep(inT.github.token, curT.github.token) },
-    jira: { ...inT.jira, token: keep(inT.jira.token, curT.jira.token) },
   };
 
   return merged;

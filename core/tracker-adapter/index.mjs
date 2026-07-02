@@ -3,14 +3,12 @@
 
 import { LocalAdapter } from "../../adapters/trackers/local/local-adapter.mjs";
 import { AzureDevOpsAdapter } from "../../adapters/trackers/azure-devops/azure-devops-adapter.mjs";
-import { GithubAdapter } from "../../adapters/trackers/github/github-adapter.mjs";
-import { JiraAdapter } from "../../adapters/trackers/jira/jira-adapter.mjs";
 
+// El kit laboral quedó acotado a dos trackers: `local` (reporte en disco, sin red) y
+// `azure-devops` (destino de las evidencias E2E). Jira/GitHub se retiraron del producto.
 const REGISTRY = {
   local: LocalAdapter,
   "azure-devops": AzureDevOpsAdapter,
-  github: GithubAdapter,
-  jira: JiraAdapter,
 };
 
 export function getAdapter(ctx = {}) {

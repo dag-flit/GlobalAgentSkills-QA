@@ -3,12 +3,9 @@
 import Link from "next/link";
 import { StatusBadge, Spinner } from "@/components/ui";
 import { useRunDetail } from "@/components/run-detail/useRunDetail";
-import { computeCoverage } from "@/components/run-detail/helpers";
 import { RunMeta } from "@/components/run-detail/RunMeta";
 import { RunConsole } from "@/components/run-detail/RunConsole";
 import { RunResults } from "@/components/run-detail/RunResults";
-import { EvidenceSection } from "@/components/run-detail/EvidenceSection";
-import { CoverageCard } from "@/components/run-detail/CoverageCard";
 
 export function RunDetail({ id }: { id: string }) {
   const { record, events, live, autoscroll, setAutoscroll, logRef, stop } = useRunDetail(id);
@@ -16,12 +13,9 @@ export function RunDetail({ id }: { id: string }) {
   const summary = record?.summary;
   const results: any[] = summary?.results || [];
   const report = summary?.report?.local || summary?.report;
-  const huEvidence: any[] = summary?.huEvidence || [];
-  const testPlan: any = summary?.testPlan || null;
   const shots: string[] = results
     .flatMap((r) => (Array.isArray(r.files) ? r.files : []))
     .filter((f) => /\.(png|jpe?g)$/i.test(f));
-  const cov = computeCoverage(record, results);
 
   return (
     <div className="space-y-4">
@@ -45,9 +39,7 @@ export function RunDetail({ id }: { id: string }) {
 
       {record && <RunMeta record={record} />}
       <RunConsole events={events} autoscroll={autoscroll} setAutoscroll={setAutoscroll} logRef={logRef} />
-      <RunResults results={results} report={report} shots={shots} novelties={summary?.novelties || []} />
-      <EvidenceSection testPlan={testPlan} huEvidence={huEvidence} />
-      <CoverageCard cov={cov} />
+      <RunResults results={results} report={report} shots={shots} />
       {record?.error && <div className="card text-sm text-red-300">Error: {record.error}</div>}
     </div>
   );

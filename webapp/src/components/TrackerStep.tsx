@@ -8,8 +8,6 @@ import { useAction } from "@/components/ActionFeedback";
 const TRACKERS: { id: TrackerName; label: string; desc: string; icon: string }[] = [
   { id: "local", label: "Local", desc: "Solo reporte en el repo. Sin conexión.", icon: "💾" },
   { id: "azure-devops", label: "Azure DevOps", desc: "Comenta en la HU + adjuntos.", icon: "🔷" },
-  { id: "github", label: "GitHub", desc: "Comenta en el Issue.", icon: "🐙" },
-  { id: "jira", label: "Jira", desc: "Comenta en el issue (ADF).", icon: "🟦" },
 ];
 
 type TestState = { status: "idle" | "testing" | "ok" | "err"; detail?: string };
@@ -51,12 +49,6 @@ export function TrackerStep({
   }
   function patchAzure(p: Partial<TrackerConfig["azure"]>) {
     patchTracker({ azure: { ...t.azure, ...p } });
-  }
-  function patchGithub(p: Partial<TrackerConfig["github"]>) {
-    patchTracker({ github: { ...t.github, ...p } });
-  }
-  function patchJira(p: Partial<TrackerConfig["jira"]>) {
-    patchTracker({ jira: { ...t.jira, ...p } });
   }
 
   async function save(): Promise<boolean> {
@@ -131,7 +123,7 @@ export function TrackerStep({
         </div>
 
         {/* selector */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {TRACKERS.map((opt) => {
             const active = t.selected === opt.id;
             return (
@@ -173,34 +165,6 @@ export function TrackerStep({
             </Field>
             <Field label="Tu email (supervisión)">
               <input className="input" value={t.azure.userEmail} onChange={(e) => patchAzure({ userEmail: e.target.value })} />
-            </Field>
-          </div>
-        )}
-
-        {t.selected === "github" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Repositorio" hint="formato owner/repo">
-              <input className="input font-mono" placeholder="org/proyecto" value={t.github.repository} onChange={(e) => patchGithub({ repository: e.target.value })} />
-            </Field>
-            <Field label="Token" hint="Personal access token; se enmascara">
-              <input className="input" type="password" value={t.github.token} onChange={(e) => patchGithub({ token: e.target.value })} />
-            </Field>
-          </div>
-        )}
-
-        {t.selected === "jira" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Base URL" hint="https://&lt;org&gt;.atlassian.net">
-              <input className="input" value={t.jira.baseUrl} onChange={(e) => patchJira({ baseUrl: e.target.value })} />
-            </Field>
-            <Field label="Project Key" hint="ej. QA, PROJ">
-              <input className="input" value={t.jira.projectKey} onChange={(e) => patchJira({ projectKey: e.target.value })} />
-            </Field>
-            <Field label="Email">
-              <input className="input" value={t.jira.email} onChange={(e) => patchJira({ email: e.target.value })} />
-            </Field>
-            <Field label="API Token" hint="Se guarda local y se enmascara">
-              <input className="input" type="password" value={t.jira.token} onChange={(e) => patchJira({ token: e.target.value })} />
             </Field>
           </div>
         )}

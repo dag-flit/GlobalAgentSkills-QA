@@ -1,61 +1,22 @@
 # Perfil QA genérico — DEFAULT local-first.
-# Un repo nuevo corre con SOLO este archivo: sin tracker, sin red, sin editar nada.
+# El kit está acotado a EXPLORAR una URL viva (E2E). Un repo nuevo corre con SOLO este archivo:
+# sin tracker, sin red, sin editar nada.
 # Resolución: default.yaml <- presets/<tracker>.yaml <- overlays/<org>.yaml <- qa-project.profile.yaml
-# 'auto' = el kit lo detecta del repo. Cualquier valor explícito SOBRESCRIBE la detección.
 
-tracker: local            # local | azure-devops | github | jira
+tracker: local            # local | azure-devops
 
 project:
   name: auto              # auto = nombre de carpeta / git remote
-  architecture: auto      # monolith | microservices | react-spa | api-rest | auto
 
 locale:
-  timezone: auto          # auto = TZ del sistema (antes: America/Bogota hardcodeado)
-
-stack:
-  backend: auto           # dotnet | node | python | java | go | none | auto
-  frontend: auto          # react | vue | angular | none | auto
-
-testing:
-  ac_format: auto         # gherkin | checklist | free_text | auto
-  layers_enabled: auto    # auto = qa-detect enciende solo las capas cuya herramienta existe
-  coverage_minimum:
-    happy_path: 1
-    edge: 1
-    error: 1
-    total_recommended: 5
-  environments:
-    - LOCAL
-    - DEV
-  locators_priority:
-    - role
-    - label
-    - text
-    - testid
+  timezone: auto          # auto = TZ del sistema
 
 evidence:
-  sink: auto              # auto = sigue al tracker (local->local, ado->dual)
-  output_dir: qa-evidence # carpeta del reporte local en el repo
+  sink: auto              # auto = sigue al tracker (local->local, azure->dual)
+  output_dir: qa-evidence # carpeta del reporte local
   formats:
     - md                  # para diff / CI
     - html               # para abrir
-
-runtime:
-  db:
-    driver: auto          # postgres | mysql | sqlite | none | auto
-    connection: env       # SIEMPRE desde env, nunca hardcode
-
-security:
-  target_profile: auto    # api | web | generic | auto
-
-regression:
-  default_criticality: ["critical", "high"]
-  module_dependencies: {}
-
-human_gates:
-  publish_test_cases: false  # local: nada se publica fuera del repo
-  publish_bugs: false
-  approve_regression: false
 
 supervision:
   enabled: false          # bloque "@encargado" solo cuando el tracker lo exige

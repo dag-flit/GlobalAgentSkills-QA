@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// cli.mjs — entrypoint del kit. Corre el ciclo QA local-first y sale con código según
+// cli.mjs — entrypoint del kit. Explora una URL viva (pruebas E2E) y sale con código según
 // fallos (0 sin fallos, 1 con fallos, 2 preflight de tracker, 3 error). Es el ejecutable
 // que usan los tres targets de entrega (plain/claude-code/cursor) vía bin/qa.mjs.
 //
-//   node runtime/cli.mjs [repoRoot] [--work-item <id>] [--repo <dir>]
+//   node runtime/cli.mjs --url <https://app> [--work-item <id>] [--repo <dir>]
 //                        [--feature <FT>] [--developer "<nombre>"]
 //
-// --feature/-f y --developer/-d se anexan a la subcarpeta de evidencia
-// (qa-evidence/<fecha>/WI-<id>__FT-<feature>__<dev>) para trazar corridas de distintos devs.
+// --url/-u es la app viva a explorar (sin ella no hay nada que probar). --feature/-f y
+// --developer/-d se anexan a la subcarpeta de evidencia (qa-evidence/<fecha>/FT-<feature>__<dev>)
+// para trazar corridas de distintos devs. El tracker (local o azure-devops) sale del perfil.
 
 import { fileURLToPath } from "node:url";
 import { runQaCycle } from "./orchestrator.mjs";
@@ -15,13 +16,14 @@ import { runQaCycle } from "./orchestrator.mjs";
 const ICONS = { pass: "✅", fail: "❌", skip: "⏭" };
 
 function parseArgs(argv) {
-  const out = { repoRoot: undefined, workItem: "local", feature: undefined, developer: undefined };
+  const out = { repoRoot: undefined, workItem: "local", feature: undefined, developer: undefined, url: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--work-item" || a === "-w") out.workItem = argv[++i];
     else if (a === "--repo" || a === "-C") out.repoRoot = argv[++i];
     else if (a === "--feature" || a === "-f") out.feature = argv[++i];
     else if (a === "--developer" || a === "-d") out.developer = argv[++i];
+    else if (a === "--url" || a === "-u") out.url = argv[++i];
     else if (!a.startsWith("-")) out.repoRoot = a;
   }
   return out;
@@ -39,12 +41,17 @@ function reportPath(summary) {
  */
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  if (!args.url) {
+    console.error("✗ Falta --url <https://app>: indica la URL viva a explorar.");
+    return 3;
+  }
   const summary = await runQaCycle({
     repoRoot: args.repoRoot || process.cwd(),
     env: process.env,
     workItemId: args.workItem,
     featureId: args.feature,
     developer: args.developer,
+    appUrl: args.url,
   });
 
   if (summary.stopped === "preflight") {

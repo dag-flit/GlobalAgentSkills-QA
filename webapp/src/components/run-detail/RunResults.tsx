@@ -1,16 +1,14 @@
 import { LAYER_INFO, STATUS_TXT, statusSentence, artifactUrl } from "./helpers";
 
-/** Tarjeta de resultados por capa: estado, casos, reporte, capturas y novedades. */
+/** Tarjeta de resultados: estado, casos, reporte y capturas de la exploración. */
 export function RunResults({
   results,
   report,
   shots,
-  novelties,
 }: {
   results: any[];
   report: any;
   shots: string[];
-  novelties: any[];
 }) {
   if (results.length === 0) return null;
   const counts = {
@@ -124,20 +122,6 @@ export function RunResults({
               </a>
             ))}
           </div>
-        </div>
-      )}
-
-      {Array.isArray(novelties) && novelties.length > 0 && (
-        <div className="text-sm">
-          <div className="label">Novedades</div>
-          <ul className="space-y-0.5">
-            {novelties.map((n: any, i: number) => (
-              <li key={i} className="text-xs">
-                HU #{n.work_item_id}: Bug {n.bugId || "(error)"} · {n.fails} fallo(s)
-                {n.reactivation?.state ? ` · reactivada (${n.reactivation.state})` : ""}
-              </li>
-            ))}
-          </ul>
         </div>
       )}
     </div>

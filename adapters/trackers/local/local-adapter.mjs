@@ -1,6 +1,6 @@
 // local-adapter.mjs — adapter de tracker LOCAL. Default del kit. Sin red, sin PAT.
 // Preflight siempre OK. Work items se leen de .qa/work-items/{id}.md o devuelven stub.
-// Evidencia → reporte local md+html. update_cycle/closeArtifact son no-ops registrados.
+// Evidencia → reporte local md+html.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -47,16 +47,6 @@ export class LocalAdapter extends TrackerAdapter {
     };
   }
 
-  async resolveRequirements(ref) {
-    const wi = await this.getWorkItem(ref);
-    return wi?.acceptance_criteria || [];
-  }
-
-  // local no tiene jerarquía remota (capabilities.network === false): []. No requiere red.
-  async listChildren(id) {
-    return [];
-  }
-
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload?.results) ? payload.results : [];
     const out = writeLocalReport({
@@ -69,39 +59,6 @@ export class LocalAdapter extends TrackerAdapter {
       results,
     });
     return { ok: true, sink: "local", ...out };
-  }
-
-  async createDefect(defect) {
-    // local: registra el defecto como archivo md en qa-evidence/defects/
-    const dir = path.join(this.repoRoot, (this.profile.evidence?.output_dir) || "qa-evidence", "defects");
-    fs.mkdirSync(dir, { recursive: true });
-    const id = `LOCAL-BUG-${Date.now()}`;
-    fs.writeFileSync(
-      path.join(dir, `${id}.md`),
-      `# ${id}\n\n${defect?.title || "(sin título)"}\n\n${defect?.description || ""}\n`,
-      "utf8"
-    );
-    return id;
-  }
-
-  async updateCycle(id, fields) {
-    return { ok: true, noop: true, reason: "tracker local: sin campos de ciclo" };
-  }
-
-  async closeArtifact(id, result) {
-    return { ok: true, noop: true, reason: "tracker local: nada que cerrar" };
-  }
-
-  async reactivateRequirement(id, info = {}) {
-    // local no tiene estados ni comentarios remotos (capabilities.states/comments === false):
-    // la trazabilidad del defecto ya queda en qa-evidence/defects/ vía createDefect.
-    return {
-      ok: true,
-      noop: true,
-      reason: "tracker local: sin estados ni comentarios remotos",
-      id: String(id),
-      bugId: info.bugId || null,
-    };
   }
 }
 

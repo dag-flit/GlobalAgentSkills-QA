@@ -26,7 +26,7 @@ export interface RunEvent {
   msg: string;
 }
 
-export type RunMode = "code" | "explore";
+export type RunMode = "explore";
 
 export interface RunRecord {
   id: string;
@@ -38,11 +38,8 @@ export interface RunRecord {
   tracker: string;
   title: string;
   // inputs
-  repoRoot?: string;
+  repoRoot?: string; // carpeta de evidencia de la corrida (capturas)
   appUrl?: string;
-  featureId?: string;
-  huIds?: string[];
-  layers?: string[];
   // outputs
   summary?: any; // resumen de runQaCycle
   error?: string;
@@ -87,7 +84,7 @@ export interface DbConnection {
 
 // ---------- Tracker (dónde reportar) ----------
 
-export type TrackerName = "local" | "azure-devops" | "github" | "jira";
+export type TrackerName = "local" | "azure-devops";
 
 export interface AzureCfg {
   orgUrl: string; // https://dev.azure.com/<org>
@@ -95,21 +92,9 @@ export interface AzureCfg {
   pat: string; // secreto
   userEmail: string;
 }
-export interface GithubCfg {
-  repository: string; // owner/repo
-  token: string; // secreto
-}
-export interface JiraCfg {
-  baseUrl: string; // https://<org>.atlassian.net
-  email: string;
-  token: string; // secreto
-  projectKey: string;
-}
 export interface TrackerConfig {
   selected: TrackerName;
   azure: AzureCfg;
-  github: GithubCfg;
-  jira: JiraCfg;
 }
 
 // ---------- Configuración persistente (data/config.json) ----------

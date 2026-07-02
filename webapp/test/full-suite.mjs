@@ -1,8 +1,7 @@
-// full-suite.mjs — batería E2E completa de la webapp Quality Ops Framework.
-// Requiere el dev server corriendo en :4312 (y, para cobertura, el seed cargado:
-// data/runs.json = test/fixtures/seed-runs.json). Cubre TODOS los escenarios de hoy:
-// BD (espacios/SSH), trackers (preflight), children, detección, ejecución de los 2 modos,
-// TLS endurecido, artefactos (sandbox), cobertura de HUs y carga de páginas.
+// full-suite.mjs — batería E2E de la webapp (kit acotado a Explorar una URL).
+// Requiere el dev server corriendo en :4312 y una sesión autenticada. Cubre: config, BD
+// (espacios/SSH), trackers (preflight local + guardrail azure), ejecución del modo explorar
+// (Playwright real), artefactos (sandbox), y carga/recorrido de páginas.
 //
 // Uso:  node test/full-suite.mjs     (con el dev server arriba)
 
@@ -39,7 +38,7 @@ const post = (p, body) => api(p, { method: "POST", headers: { "Content-Type": "a
 
 const SSH0 = { enabled: false, host: "", port: 22, user: "", authMethod: "password", password: "", privateKeyPath: "", passphrase: "", forwardHost: "", forwardPort: 0 };
 const dbConn = (over = {}) => ({ id: "__t__", name: "t", engine: "postgres", host: "localhost", port: 5432, database: "d", user: "u", password: "p", ssl: false, sslAllowSelfSigned: false, ssh: { ...SSH0 }, isDefault: false, ...over });
-const trk = (selected, over = {}) => ({ selected, azure: { orgUrl: "", project: "", pat: "", userEmail: "" }, github: { repository: "", token: "" }, jira: { baseUrl: "", email: "", token: "", projectKey: "" }, ...over });
+const trk = (selected, over = {}) => ({ selected, azure: { orgUrl: "", project: "", pat: "", userEmail: "" }, ...over });
 
 async function runAndWait(body, timeoutMs = 180000) {
   const r = await post("/api/runs", body);
@@ -96,69 +95,19 @@ await check("tracker: preflight local OK", async () => {
   assert(r.json.ok === true, "local no dio ok: " + r.text.slice(0, 120));
   return r.json.detail;
 });
-await check("tracker: azure sin credenciales avisa variables faltantes", async () => {
+await check("tracker: azure sin credenciales → guardrail de campos (zod, frontera)", async () => {
   const r = await post("/api/tracker/test", { tracker: trk("azure-devops") });
-  assert(r.json.ok === false && /Faltan variables/.test(r.json.detail || ""), "no avisó faltantes: " + r.text.slice(0, 120));
+  // El guardrail de selección (trackerConfigSchema.superRefine) rechaza en la frontera, con
+  // el nombre HUMANO del campo, ANTES del preflight del adapter ("Faltan variables: …").
+  assert(
+    r.json.ok === false && /Datos inválidos/.test(r.json.detail || "") && /azure\.userEmail/.test(r.json.detail || ""),
+    "no avisó campos faltantes: " + r.text.slice(0, 160),
+  );
   return r.json.detail;
-});
-await check("tracker: github token falso → 401 (red real)", async () => {
-  let r;
-  try { r = await post("/api/tracker/test", { tracker: trk("github", { github: { repository: "octocat/Hello-World", token: "ghp_fake_xyz" } }) }); }
-  catch (e) { skip("sin red: " + e.message); }
-  if (/no se pudo contactar|fetch failed|ENOTFOUND|ETIMEDOUT/i.test(r.json.detail || "")) skip("sin red: " + r.json.detail);
-  assert(r.json.ok === false && /401/.test(r.json.detail || ""), "no dio 401: " + r.text.slice(0, 120));
-  return r.json.detail;
-});
-
-// ---- Children ----
-await check("children: local devuelve estructura vacía", async () => {
-  const r = await post("/api/tracker/children", { featureId: "100", tracker: trk("local") });
-  assert(r.json.ok === true && Array.isArray(r.json.children) && r.json.children.length === 0, "no vacío: " + r.text.slice(0, 120));
-  return "ok, children=[]";
-});
-
-// ---- Detección ----
-let detection;
-await check("detect: el kit detecta 6 capas (static+security activas)", async () => {
-  const r = await post("/api/detect", { kind: "local", localPath: KIT });
-  assert(r.json.ok === true, "detect falló: " + r.text.slice(0, 200));
-  detection = r.json.detection;
-  assert(Object.keys(detection.layers).length === 6, "no son 6 capas");
-  assert(detection.enabled.includes("static") && detection.enabled.includes("security"), "static/security no activas");
-  return `enabled: ${detection.enabled.join(", ")}`;
-});
-
-// ---- Ejecución modo código (TLS: security debe pasar limpio) ----
-let codeReport;
-await check("run código: ejecuta static+security; security PASA (TLS endurecido, 0 hallazgos)", async () => {
-  const rec = await runAndWait({ mode: "code", repoRoot: KIT, layers: ["static", "security"] }, 180000);
-  const sec = (rec.summary.results || []).find((x) => x.layer === "security");
-  const stat = (rec.summary.results || []).find((x) => x.layer === "static");
-  assert(sec, "sin resultado de security");
-  const findings = (sec.cases || []).map((c) => c.name).join("; ");
-  assert(sec.status === "pass", `security no pasó: ${sec.narrative} | ${findings}`);
-  assert(stat && stat.status === "pass", "static no pasó: " + (stat && stat.narrative));
-  codeReport = rec.summary.report && (rec.summary.report.local || rec.summary.report);
-  assert(codeReport && codeReport.htmlPath, "sin report.htmlPath");
-  return `status=${rec.status} · security=${sec.status} · static=${stat.status}`;
-});
-
-// ---- Artefactos (sandbox) ----
-await check("artefactos: sirve el report.html (200)", async () => {
-  assert(codeReport && codeReport.htmlPath, "sin reporte del paso anterior");
-  const r = await api("/api/artifacts?path=" + encodeURIComponent(codeReport.htmlPath));
-  assert(r.status === 200, "status " + r.status);
-  assert(/text\/html/.test(r.headers.get("content-type") || ""), "content-type no html");
-  return "200 text/html";
-});
-await check("artefactos: bloquea path traversal (403)", async () => {
-  const r = await api("/api/artifacts?path=" + encodeURIComponent("C:\\Windows\\win.ini"));
-  assert(r.status === 403, "no bloqueó (status " + r.status + ")");
-  return "403";
 });
 
 // ---- Ejecución modo explorar (Playwright/Chromium real) ----
-let exploreShot;
+let exploreReport, exploreShot;
 await check("run explorar: Chromium visita la URL, explore PASA y guarda captura", async () => {
   const rec = await runAndWait({ mode: "explore", appUrl: "https://example.com" }, 120000);
   const exp = (rec.summary.results || []).find((x) => x.layer === "explore");
@@ -167,7 +116,22 @@ await check("run explorar: Chromium visita la URL, explore PASA y guarda captura
   assert(Array.isArray(exp.files) && exp.files.length > 0, "sin captura");
   exploreShot = exp.files[0];
   assert(fs.existsSync(exploreShot), "el archivo de captura no existe en disco");
+  exploreReport = rec.summary.report && (rec.summary.report.local || rec.summary.report);
   return `explore=pass · captura ${path.basename(exploreShot)}`;
+});
+
+// ---- Artefactos (sandbox) ----
+await check("artefactos: sirve el report.html (200)", async () => {
+  assert(exploreReport && exploreReport.htmlPath, "sin reporte del paso anterior");
+  const r = await api("/api/artifacts?path=" + encodeURIComponent(exploreReport.htmlPath));
+  assert(r.status === 200, "status " + r.status);
+  assert(/text\/html/.test(r.headers.get("content-type") || ""), "content-type no html");
+  return "200 text/html";
+});
+await check("artefactos: bloquea path traversal (403)", async () => {
+  const r = await api("/api/artifacts?path=" + encodeURIComponent("C:\\Windows\\win.ini"));
+  assert(r.status === 403, "no bloqueó (status " + r.status + ")");
+  return "403";
 });
 await check("artefactos: sirve la captura del crawler (png 200)", async () => {
   assert(exploreShot, "sin captura del paso anterior");
@@ -195,42 +159,26 @@ try {
     });
   }
 
-  await check("UI: mode-picker muestra los 2 modos", async () => {
+  await check("UI: mode-picker muestra solo 'Explorar una URL'", async () => {
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
-    assert(await page.getByText("QA del código").first().isVisible(), "falta QA del código");
     assert(await page.getByText("Explorar una URL").first().isVisible(), "falta Explorar una URL");
+    const body = await page.locator("body").innerText();
+    assert(!/QA del código/.test(body), "el modo 'QA del código' sigue visible");
     await page.screenshot({ path: SHOTS + "\\suite-mode-picker.png", fullPage: true });
-    return "QA del código + Explorar una URL";
+    return "solo Explorar una URL";
   });
 
-  await check("UI: wizard 'QA del código' recorre origen→detección→tracker→ejecutar", async () => {
+  await check("UI: wizard 'Explorar' recorre tracker→url→ejecutar", async () => {
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: /QA del código/ }).click();
-    await page.getByText("¿Dónde está el código a probar?").waitFor({ timeout: 10000 });
-    await page.getByPlaceholder(/ruta.*proyecto/).fill(KIT);
-    await page.getByRole("button", { name: /Detectar capas/ }).click();
-    await page.getByText("Esto detecté en tu proyecto").waitFor({ timeout: 30000 });
-    const body = await page.locator("body").innerText();
-    const six = ["Análisis estático", "Pruebas unitarias", "Contrato de API", "Pruebas E2E", "Base de datos", "Seguridad"].filter((l) => body.includes(l));
-    assert(six.length === 6, "no se ven las 6 capas: " + six.length);
-    await page.screenshot({ path: SHOTS + "\\suite-detect.png", fullPage: true });
-    await page.getByRole("button", { name: /^Continuar/ }).click();
+    await page.getByRole("button", { name: /Explorar una URL/ }).click();
     await page.getByText("¿Dónde se reportan los resultados?").waitFor({ timeout: 10000 });
     await page.getByRole("button", { name: /Continuar/ }).click();
+    await page.getByText("URL de la app").waitFor({ timeout: 10000 });
+    await page.getByPlaceholder("https://qa.miapp.com").fill("https://example.com");
+    await page.getByRole("button", { name: /^Continuar/ }).click();
     await page.getByText("Resumen — listo para ejecutar").waitFor({ timeout: 15000 });
-    return "llegó a 'Ejecutar' con las 6 capas detectadas";
-  });
-
-  await check("UI: cobertura de HUs marca cubiertas y la HU sin pruebas (seed)", async () => {
-    const resp = await page.goto(BASE + "/runs/SEED-coverage-demo", { waitUntil: "networkidle" });
-    if (resp.status() !== 200) skip("seed no cargado (data/runs.json sin SEED-coverage-demo)");
-    await page.getByText("Cobertura de HUs seleccionadas").waitFor({ timeout: 10000 });
-    const t = await page.locator("body").innerText();
-    assert(/#103/.test(t) && /#104/.test(t), "faltan HUs cubiertas");
-    assert(/#105[\s\S]*sin pruebas etiquetadas/.test(t) || /sin pruebas etiquetadas \[HU-105\]/.test(t), "no marcó la HU 105 sin cobertura");
-    assert(/sin cobertura/.test(t), "no muestra el aviso de cobertura");
-    await page.screenshot({ path: SHOTS + "\\suite-coverage.png", fullPage: true });
-    return "103/104 cubiertas, 105 sin cobertura";
+    await page.screenshot({ path: SHOTS + "\\suite-explore-wizard.png", fullPage: true });
+    return "llegó a 'Ejecutar' (Tracker → URL → Resumen)";
   });
 
   await check("UI: 0 errores de consola en el recorrido", async () => {

@@ -1,5 +1,5 @@
 // http-retry.mjs — transporte HTTP por defecto con reintento ante errores de RED transitorios,
-// compartido por los adapters remotos (azure-devops / github / jira).
+// compartido por los adapters remotos (azure-devops).
 //
 // POR QUÉ: con `fetch` (undici) y keep-alive activo (Node 18+), un socket que quedó ocioso
 // puede ser cerrado por el servidor (balanceador de ADO/GitHub/Jira) tras unos segundos. Si

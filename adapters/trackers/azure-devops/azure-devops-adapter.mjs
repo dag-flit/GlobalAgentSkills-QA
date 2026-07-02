@@ -1,14 +1,12 @@
-// azure-devops-adapter.mjs — adapter REAL de Azure DevOps (F2).
-// Implementa el contrato TrackerAdapter sobre un cliente REST con transporte INYECTABLE,
-// para poder probarlo offline. CERO literales: org/proyecto/PAT vienen de `env`; estados,
-// campos y tags vienen del perfil (azure.*). Local-first: este adapter solo se usa cuando
-// el perfil pide `tracker: azure-devops`; el preflight condicional del orquestador lo exige.
+// azure-devops-adapter.mjs — adapter de Azure DevOps, acotado a ENTREGAR LA EVIDENCIA E2E.
+// Implementa el contrato TrackerAdapter (explore-only) sobre un cliente REST con transporte
+// INYECTABLE, para poder probarlo offline. CERO literales: org/proyecto/PAT vienen de `env`;
+// campos y tags vienen del perfil (azure.*). Solo se usa cuando el perfil pide
+// `tracker: azure-devops`; el preflight condicional del orquestador lo exige.
 //
-// publishEvidence implementa la política DUAL: resumen en la Discussion del WI padre +
-// reporte local (md/html) como artefacto para CI/diff.
-//
-// El render HTML + parse vive en ./ado-html.mjs; la evidencia/planificación por HU en
-// ./ado-requirements.mjs. Este archivo es la fachada del contrato (F1).
+// publishEvidence implementa la política DUAL: resumen en la Discussion del WI + reporte local
+// (md/html) como artefacto + adjuntos (capturas de la exploración) en el Task hijo (tc-match).
+// El render HTML + parse vive en ./ado-html.mjs.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -16,11 +14,7 @@ import { TrackerAdapter } from "../../../core/tracker-adapter/tracker-adapter.mj
 import { createClient } from "./ado-rest.mjs";
 import { resolveTaskId } from "./tc-match.mjs";
 import { writeLocalReport } from "../../../runtime/evidence/local-sink.mjs";
-import { parseAc, renderSummary, renderTrace } from "./ado-html.mjs";
-import {
-  publishRequirementEvidence as reqEvidence,
-  publishTestPlan as testPlanPub,
-} from "./ado-requirements.mjs";
+import { parseAc, renderSummary } from "./ado-html.mjs";
 
 const REQUIRED = ["AZURE_ORG_URL", "AZURE_PROJECT_NAME", "AZURE_PAT", "USER_REAL_EMAIL"];
 const MODE = "azure-devops";
@@ -62,6 +56,7 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     }
   }
 
+  // Lee una HU/Feature (para saber a qué work item se adjunta la evidencia).
   async getWorkItem(id) {
     const res = await this.client.getWorkItem(id);
     if (res.status === 404) return null;
@@ -78,36 +73,6 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     };
   }
 
-  async resolveRequirements(ref) {
-    const wi = await this.getWorkItem(ref);
-    return (wi && wi.acceptance_criteria) || [];
-  }
-
-  // Lista los hijos jerárquicos de un work item (p.ej. las HUs de un Feature).
-  async listChildren(id) {
-    const res = await this.client.getWorkItemRelations(id);
-    if (res.status === 404) return [];
-    if (res.status !== 200) throw new Error(`azure-devops.listChildren(${id}): ADO ${res.status}`);
-    const relations = (res.json && res.json.relations) || [];
-    const childIds = relations
-      .filter((r) => r && r.rel === "System.LinkTypes.Hierarchy-Forward")
-      .map((r) => String(r.url || "").split("/").pop())
-      .filter(Boolean);
-    const children = [];
-    for (const cid of childIds) {
-      const wi = await this.getWorkItem(cid);
-      if (wi) {
-        children.push({
-          id: wi.id,
-          title: wi.title,
-          state: wi.state,
-          type: (wi.raw && wi.raw["System.WorkItemType"]) || "",
-        });
-      }
-    }
-    return children;
-  }
-
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const parentId = (target && target.work_item_id) || (payload && payload.work_item_id) || null;
@@ -120,20 +85,19 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
       workItemId: parentId || "local",
       featureId: (target && target.feature_id) ?? (payload && payload.feature_id),
       developer: (target && target.developer) ?? (payload && payload.developer),
-      plan: payload && payload.plan,
       results,
     });
 
-    // 2) Resumen en la Discussion del WI padre.
+    // 2) Resumen en la Discussion del WI.
     let comment = null;
     if (parentId) {
-      const res = await this.client.addComment(parentId, renderSummary({ sup: this._supervisionPrefix(), results, plan: payload && payload.plan }));
+      const res = await this.client.addComment(parentId, renderSummary({ sup: this._supervisionPrefix(), results }));
       comment = res.status >= 200 && res.status < 300
         ? { ok: true, id: (res.json && res.json.id) ?? null }
         : { ok: false, status: res.status };
     }
 
-    // 3) Adjuntos png/webm por TC → Task (resueltos por tc-match).
+    // 3) Adjuntos png/webm por caso → Task (resueltos por tc-match).
     const attachments = await this._attachEvidence(results, parentId);
 
     return {
@@ -146,7 +110,7 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     };
   }
 
-  // Sube cada `files[]` de evidencia y lo enlaza al Task-TC resuelto por tc-match.
+  // Sube cada `files[]` de evidencia y lo enlaza al Task resuelto por tc-match.
   // Degrada con aviso: sin Task asociado o archivo faltante → se registra, no aborta.
   async _attachEvidence(results, parentId) {
     const summary = { uploaded: 0, linked: [], unmatched: [], skipped: [] };
@@ -199,93 +163,7 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     return summary;
   }
 
-  async createDefect(defect = {}) {
-    const wi = this._wi();
-    const type = wi.bug_work_item_type || "Bug";
-    const ops = [
-      { op: "add", path: "/fields/System.Title", value: defect.title || "(sin título)" },
-      { op: "add", path: "/fields/System.Description", value: defect.description || "" },
-    ];
-    if (wi.defect_tag) ops.push({ op: "add", path: "/fields/System.Tags", value: wi.defect_tag });
-    if (defect.parent_id) {
-      ops.push({
-        op: "add",
-        path: "/relations/-",
-        value: { rel: "System.LinkTypes.Hierarchy-Reverse", url: this.client.workItemUrl(defect.parent_id) },
-      });
-    }
-    const res = await this.client.createWorkItem(type, ops);
-    if (res.status >= 200 && res.status < 300) return String(res.json && res.json.id);
-    throw new Error(`azure-devops.createDefect: ADO ${res.status}`);
-  }
-
-  async updateCycle(id, fields = {}) {
-    const map = this._fields();
-    const ops = Object.entries(fields).map(([k, v]) => ({
-      op: "add",
-      path: `/fields/${map[k] || k}`, // acepta clave lógica (test_start_date) o ref directa (Custom.*)
-      value: v,
-    }));
-    if (!ops.length) return { ok: true, noop: true };
-    const res = await this.client.patchWorkItem(id, ops);
-    return { ok: res.status >= 200 && res.status < 300, status: res.status };
-  }
-
-  async closeArtifact(id, result = {}) {
-    const wi = this._wi();
-    const state =
-      result.type === "bug"
-        ? result.passed
-          ? wi.bug_qa_verified_state
-          : wi.bug_dev_resolved_state
-        : result.passed
-          ? wi.test_case_pass_state
-          : wi.test_case_fail_state;
-    if (!state) return { ok: false, reason: "sin estado destino configurado en el perfil" };
-    const res = await this.client.patchWorkItem(id, [{ op: "add", path: "/fields/System.State", value: state }]);
-    return { ok: res.status >= 200 && res.status < 300, state, status: res.status };
-  }
-
-  // Reactiva la HU con novedad y deja la TRAZABILIDAD del Bug en su Discussion.
-  // El estado destino sale del perfil (azure.work_item.on_defect_reactivate_state, p.ej.
-  // "Active"); NUNCA Closed — eso es exclusivo del PO. Si el perfil no lo define, no toca
-  // el estado pero igual deja el comentario de trazabilidad (degrada con aviso).
-  async reactivateRequirement(id, info = {}) {
-    const wi = this._wi();
-    const out = { ok: true, mode: MODE, id: String(id) };
-
-    const state = wi.on_defect_reactivate_state;
-    if (state) {
-      const res = await this.client.patchWorkItem(id, [{ op: "add", path: "/fields/System.State", value: state }]);
-      out.state = state;
-      out.stateOk = res.status >= 200 && res.status < 300;
-      if (!out.stateOk) out.stateStatus = res.status;
-    } else {
-      out.stateSkipped = "sin azure.work_item.on_defect_reactivate_state en el perfil";
-    }
-
-    const res = await this.client.addComment(id, renderTrace({ sup: this._supervisionPrefix(), client: this.client, wi, info }));
-    out.commentOk = res.status >= 200 && res.status < 300;
-    out.commentId = (res.json && res.json.id) ?? null;
-    if (!out.commentOk) out.commentStatus = res.status;
-
-    out.ok = out.stateOk !== false && out.commentOk;
-    return out;
-  }
-
-  // Evidencia/planificación POR HU (delega en ./ado-requirements.mjs).
-  publishRequirementEvidence(requirementId, info = {}) {
-    return reqEvidence(this, requirementId, info);
-  }
-  // Plan de Pruebas del Feature (delega en ./ado-requirements.mjs).
-  publishTestPlan(featureId, info = {}) {
-    return testPlanPub(this, featureId, info);
-  }
-
   // ── helpers internos ────────────────────────────────────────────────────────
-  _wi() {
-    return (this.profile.azure && this.profile.azure.work_item) || {};
-  }
   _fields() {
     return (this.profile.azure && this.profile.azure.fields) || {};
   }
@@ -293,7 +171,7 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     return this._fields()[key] || fallback;
   }
 
-  // Bloque de supervisión (reusado por el resumen y la trazabilidad). Vacío si no aplica.
+  // Bloque de supervisión (reusado por el resumen). Vacío si no aplica.
   _supervisionPrefix() {
     const sup = this.profile.supervision;
     if (!sup || !sup.enabled) return "";

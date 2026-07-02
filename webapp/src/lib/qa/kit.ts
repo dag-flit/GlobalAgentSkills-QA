@@ -7,11 +7,7 @@ import { kitModule } from "@/lib/paths";
 const ALLOWED = new Set<string>([
   "core/tracker-adapter/index.mjs",
   "runtime/orchestrator.mjs",
-  "runtime/runners/_runner-core.mjs",
   "runtime/profile/resolve-profile.mjs",
-  "runtime/detect/qa-detect.mjs",
-  "runtime/generate/feature-writer.mjs",
-  "runtime/generate/template-applier.mjs",
 ]);
 
 /**

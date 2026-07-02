@@ -16,9 +16,6 @@ export async function POST(req: Request) {
   const parsed = await parseJson(req, runInputSchema, "plain");
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
-  if (body.mode !== "explore" && !body.repoRoot) {
-    return NextResponse.json({ error: "Falta 'repoRoot' (detecta el proyecto primero)." }, { status: 400 });
-  }
   return withTenantScope(async () => {
     const record = await startRun(body);
     return NextResponse.json({ id: record.id, record });

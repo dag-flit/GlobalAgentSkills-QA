@@ -1,63 +1,25 @@
 ---
 name: qa-orchestrator
-description: >
-  Orquesta el ciclo QA local-first: preflight CONDICIONAL → qa-detect → runners de
-  capas → evidence-sink. Habla solo con el tracker-adapter; nunca con un tracker
-  concreto. Con `tracker: local` arranca directo, sin red ni PAT.
-runtime: runtime/orchestrator.mjs
+description: Orquesta el ciclo de exploración de una URL viva (pruebas E2E) y entrega la evidencia al tracker (local o Azure DevOps).
 ---
 
 # qa-orchestrator
 
-Punto de entrada del ciclo. Decide qué correr y en qué orden, sin acoplarse a ningún
-tracker. La lógica vive en `runtime/orchestrator.mjs` (`runQaCycle`).
+Encadena el ciclo de una corrida de **exploración de URL** (`runtime/orchestrator.mjs` →
+`runQaCycle`), acotado a un solo propósito: probar una app **corriendo** (no el código fuente).
 
-## Inicio — preflight CONDICIONAL
+Flujo:
 
-El preflight de tracker **solo corre si el tracker requiere red**
-(`adapter.capabilities().network === true`):
+1. **Resolver perfil** (`runtime/profile/resolve-profile.mjs`): `default ← preset del tracker ←
+   overlay de la organización`. Trackers soportados: `local` (reporte en disco, sin red) y
+   `azure-devops` (destino de la evidencia E2E).
+2. **Preflight condicional**: solo si el tracker requiere red (`azure-devops`). Con `local`
+   arranca directo, sin PAT.
+3. **Explorar la URL** (`runtime/runners/explore.mjs`): abre la app con Playwright (launcher
+   **inyectable**), visita la(s) URL(s) y emite un `EvidenceObject` por corrida (status HTTP +
+   errores de consola + captura por página). Sin `appUrl` no se explora nada.
+4. **Entregar la evidencia** (`publishEvidence` del adapter): en `local` deja un reporte md+html
+   en `qa-evidence/`; en `azure-devops` comenta el resumen en la HU y adjunta las capturas.
 
-- `tracker: local` → `network: false` → **arranca directo**, sin preflight, sin PAT.
-- `tracker: azure-devops | github | jira` → `network: true` → corre `adapter.preflight()`
-  primero; si **FALLA**, el ciclo se **detiene** (`stopped: "preflight"`) **antes** de
-  ejecutar cualquier runner. Esto desbloquea las pruebas locales (B2 del doc de arquitectura).
-
-El gating es por **capability**, no por el literal `"local"`: cualquier tracker sin red
-arranca directo; cualquiera con red exige preflight.
-
-## Flujo
-
-1. **Resolver perfil** (`resolveProfile`) y **seleccionar adapter** (`getAdapter`).
-2. **Preflight condicional** (ver arriba).
-3. **Detectar** capas con `qa-detect`; `resolveEnabledLayers` aplica el override del perfil.
-4. **Ejecutar runners** de las capas habilitadas (hoy: `static`; resto se porta en F1/F3).
-   Una capa habilitada sin runner, o una omitida por detección, va al reporte como `skip`
-   con su razón (degrada con aviso, nunca aborta — principio 5).
-5. **Publicar** los `EvidenceObject` al `evidence-sink` vía `adapter.publishEvidence`
-   (comentario en la HU con lo ejecutado, en cada corrida).
-6. **Manejar novedades**: agrupar las fallas por HU; por cada HU con fallas →
-   `adapter.createDefect` (Bug enlazado a esa HU) + `adapter.reactivateRequirement` (reactiva la
-   HU al estado de novedad del perfil + comentario de trazabilidad). Gated por
-   `capabilities().states` (local no dispara). Degrada con aviso (`summary.novelties[]`).
-
-## Salida (resumen del ciclo)
-
-```js
-{
-  ok: true,
-  stopped: null,            // "preflight" si un tracker remoto no estaba operativo
-  tracker: "local",
-  preflight: null,          // null = no se requirió (arrancó directo)
-  detection: { ... },       // salida de qa-detect
-  results: [ /* EvidenceObject[] */ ],
-  report: { dir, mdPath, htmlPath },
-  novelties: null            // null = no aplica (sin estados); [] = sin fallas;
-                             // [{ work_item_id, bugId, reactivation }] = HUs con novedad
-}
-```
-
-## Invariantes
-
-- **Local-first.** Ningún paso de red es obligatorio; con `local` el ciclo corre completo.
-- **Solo tracker-adapter.** El orquestador nunca llama a ADO/GitHub/Jira directo.
-- **Degrada con aviso.** Capas sin herramienta/runner se reportan como `skip`, no abortan.
+El launcher del navegador y el transporte HTTP del tracker son **inyectables** → todo es
+probable offline (ver `runtime/smoke-test.mjs`).

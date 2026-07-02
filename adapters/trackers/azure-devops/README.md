@@ -1,47 +1,36 @@
-# adapter azure-devops (F2)
+# adapter azure-devops
 
-Implementa el contrato `tracker-adapter` sobre la REST de Azure DevOps. Se selecciona
-cuando el perfil pide `tracker: azure-devops` (p.ej. `profile: flit`). El orquestador exige
-preflight OK antes de correr runners (preflight condicional, gated por `capabilities().network`).
+Implementa el contrato `tracker-adapter` (explore-only) sobre la REST de Azure DevOps. Se
+selecciona cuando el perfil pide `tracker: azure-devops` (p.ej. `profile: flit`). El orquestador
+exige preflight OK antes de entregar la evidencia (preflight condicional, gated por
+`capabilities().network`). Es el destino por el que las **evidencias E2E llegan a ADO**.
 
 ## Archivos
 
-- `azure-devops-adapter.mjs` — implementación del contrato (los 8 métodos + `capabilities`).
+- `azure-devops-adapter.mjs` — implementación del contrato (preflight, getWorkItem, publishEvidence, adjuntos).
 - `ado-rest.mjs` — cliente REST mínimo: ÚNICO lugar que conoce rutas/auth de ADO.
-- `tc-match.mjs` — resuelve el Task hijo de cada `tc_id` (annotation / mapping_file / env_map / WIQL).
+- `ado-html.mjs` — parse de la HU (AC) + render del resumen de la corrida (HTML).
+- `tc-match.mjs` — resuelve el Task hijo al que se adjunta cada captura (annotation / mapping_file / env_map / WIQL).
 
 ## Variables (`env`)
 
 `AZURE_ORG_URL`, `AZURE_PROJECT_NAME`, `AZURE_PAT`, `USER_REAL_EMAIL`. Nada se cablea:
-estados, campos (`Custom.*`), tags y patrones de título vienen del **perfil** (`azure.*`),
-no del código.
+campos (`Custom.*`), tags y patrones de título vienen del **perfil** (`azure.*`), no del código.
 
 ## Transporte inyectable (offline-testable)
 
 El cliente REST recibe un transporte `http(req) -> {status,json,text}`. Por defecto usa
 `fetch`; en tests se inyecta uno falso (`getAdapter({ ..., http })` o `{ adoClient }`), así
-el adapter se prueba sin red (ver caso 11 del smoke test).
+el adapter se prueba sin red (ver `runtime/smoke/explore-suite.mjs`).
 
 ## Métodos
 
 | Método | ADO |
 |--------|-----|
 | `preflight()` | GET del proyecto: valida PAT + acceso (200 ok; 401/203 PAT inválido; 404 proyecto) |
-| `getWorkItem(id)` | GET work item; mapea `System.Title/State` y normaliza AC (HTML → líneas) |
-| `resolveRequirements(ref)` | AC del campo `acceptance_criteria` del perfil |
-| `publishEvidence(target, payload)` | **dual**: resumen en Discussion del WI padre + reporte local md/html + adjuntos png/webm por TC→Task |
-| `createDefect(defect)` | crea `Bug` con `defect_tag` y enlace `Hierarchy-Reverse` al padre |
-| `updateCycle(id, fields)` | PATCH; mapea claves lógicas (`test_start_date`…) → refs `Custom.*` del perfil |
-| `closeArtifact(id, result)` | PATCH `System.State` al estado pass/fail del perfil (Task-TC o Bug) |
-| `reactivateRequirement(id, info)` | PATCH `System.State` ← `on_defect_reactivate_state` (`Active`, nunca Closed) + comentario de trazabilidad con enlace al Bug (`workItemWebUrl`) |
-
-## Novedades (Bug + reactivación + trazabilidad)
-
-El orquestador invoca `reactivateRequirement` por cada HU con fallas, tras crear el Bug
-(`createDefect`, enlazado a esa HU). Reactiva la HU al estado de novedad del perfil
-(`azure.work_item.on_defect_reactivate_state`) y deja un comentario en la **misma HU** con el
-enlace clicable al Bug y los hallazgos. Si el perfil no define el estado, solo comenta (degrada
-con aviso). El comentario reusa el bloque de supervisión (`_supervisionPrefix`).
+| `capabilities()` | attachments/custom_fields/comments/states/network = sí |
+| `getWorkItem(id)` | GET work item; mapea `System.Title/State` y normaliza AC (para saber a qué HU se adjunta) |
+| `publishEvidence(target, payload)` | **dual**: resumen en la Discussion del work item + reporte local md/html + **adjuntos** (capturas) por caso → Task |
 
 ## Adjuntos (tc-match)
 

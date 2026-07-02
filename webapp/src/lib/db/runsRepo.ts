@@ -17,9 +17,6 @@ function rowToRun(r: any): RunRecord {
     title: r.title,
     repoRoot: r.repo_root ?? undefined,
     appUrl: r.app_url ?? undefined,
-    featureId: r.feature_id ?? undefined,
-    huIds: r.hu_ids ?? undefined,
-    layers: r.layers ?? undefined,
     summary: r.summary ?? undefined,
     error: r.error ?? undefined,
   };
@@ -32,17 +29,15 @@ export async function upsertRun(r: RunRecord): Promise<void> {
     c.query(
       `INSERT INTO runs
          (id,created_at,started_at,finished_at,status,mode,tracker,title,
-          repo_root,app_url,feature_id,hu_ids,layers,summary,error,version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,0)
+          repo_root,app_url,summary,error,version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0)
        ON CONFLICT (id) DO UPDATE SET
          created_at=$2,started_at=$3,finished_at=$4,status=$5,mode=$6,tracker=$7,title=$8,
-         repo_root=$9,app_url=$10,feature_id=$11,hu_ids=$12,layers=$13,summary=$14,error=$15,
+         repo_root=$9,app_url=$10,summary=$11,error=$12,
          version = runs.version + 1`,
       [
         r.id, r.createdAt, r.startedAt ?? null, r.finishedAt ?? null, r.status, r.mode,
-        r.tracker, r.title, r.repoRoot ?? null, r.appUrl ?? null, r.featureId ?? null,
-        r.huIds ? JSON.stringify(r.huIds) : null, r.layers ? JSON.stringify(r.layers) : null,
-        J(r.summary), r.error ?? null,
+        r.tracker, r.title, r.repoRoot ?? null, r.appUrl ?? null, J(r.summary), r.error ?? null,
       ],
     ),
   );

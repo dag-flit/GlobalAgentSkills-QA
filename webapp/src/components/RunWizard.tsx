@@ -1,16 +1,14 @@
 "use client";
 
 import { TrackerStep } from "@/components/TrackerStep";
-import { FeatureStep } from "@/components/FeatureStep";
-import { ReviewStep } from "@/components/ReviewStep";
 import { MODES } from "@/components/run-wizard/types";
 import { useRunWizard } from "@/components/run-wizard/useRunWizard";
 import { Stepper } from "@/components/run-wizard/Stepper";
-import { SourceStep } from "@/components/run-wizard/SourceStep";
-import { DetectStep } from "@/components/run-wizard/DetectStep";
 import { UrlStep } from "@/components/run-wizard/UrlStep";
 import { RunSummary } from "@/components/run-wizard/RunSummary";
 
+// Asistente de ejecución: el kit quedó acotado a pruebas E2E sobre una URL viva (modo
+// "Explorar una URL"). El paso a paso es Tracker → URL → Ejecutar.
 export function RunWizard() {
   const w = useRunWizard();
   const { mode, key } = w;
@@ -22,7 +20,7 @@ export function RunWizard() {
         <div>
           <h1 className="text-2xl font-bold text-white">Asistente de ejecución</h1>
           <p className="text-sm text-muted mt-1">
-            ¿Qué quieres probar? Elige el modo y te pediré solo lo necesario para ese flujo.
+            Elige el modo y te pediré solo lo necesario para ese flujo.
           </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -71,38 +69,6 @@ export function RunWizard() {
         />
       )}
 
-      {key === "feature" && (
-        <FeatureStep
-          tracker={w.tracker}
-          onBack={w.back}
-          onContinue={(f, selected) => {
-            w.setFeatureId(f);
-            w.setHus(selected);
-            w.next();
-          }}
-        />
-      )}
-
-      {key === "review" && (
-        <ReviewStep
-          huIds={w.hus.map((h) => h.id)}
-          featureId={w.featureId}
-          repoRoot={w.repoRoot}
-          unitTool={
-            w.detection?.layers?.unit?.tool || w.detection?.layers?.unit?.targets?.[0]?.tool || null
-          }
-          onBack={w.back}
-          onContinue={(keys, gen, tcs) => {
-            w.setApprovedTcKeys(keys);
-            w.setGenerate(gen);
-            w.setTemplateCases(tcs);
-            w.next();
-          }}
-        />
-      )}
-
-      {key === "source" && <SourceStep w={w} />}
-      {key === "detect" && <DetectStep w={w} />}
       {key === "url" && <UrlStep w={w} />}
       {key === "run" && <RunSummary w={w} />}
     </div>

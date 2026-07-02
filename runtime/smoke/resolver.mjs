@@ -19,9 +19,9 @@ export async function run(ctx) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qa-repo-"));
   const { profile: pDefault, chain: cDefault } = resolveProfile({ repoRoot: tmp });
   assert.strictEqual(pDefault.tracker, "local");
-  assert.strictEqual(pDefault.testing.layers_enabled, "auto");
+  assert.strictEqual(pDefault.evidence.output_dir, "qa-evidence");
   assert.deepStrictEqual(cDefault, ["default"]);
-  ok("resolver: repo sin config -> tracker=local, layers=auto");
+  ok("resolver: repo sin config -> tracker=local, evidencia local");
 
   // 3. resolver: proyecto pide perfil flit -> cadena default<-azure-devops<-flit
   const projDir = path.join(tmp, ".qa");

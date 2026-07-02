@@ -1,7 +1,7 @@
 import { Field } from "@/components/ui";
 import type { RunWizardCtl } from "./useRunWizard";
 
-/** Paso «URL»: baseURL para E2E (modo código) o URL viva a explorar (modo explore). */
+/** Paso «URL»: URL viva a explorar (smoke + capturas). */
 export function UrlStep({ w }: { w: RunWizardCtl }) {
   return (
     <div className="space-y-4">
@@ -9,9 +9,7 @@ export function UrlStep({ w }: { w: RunWizardCtl }) {
         <div>
           <h2 className="font-semibold">URL de la app</h2>
           <p className="text-sm text-muted mt-1">
-            {w.mode === "code"
-              ? "Opcional: los E2E del repo se ejecutarán apuntando a esta URL (baseURL de la app corriendo). Puedes dejarla vacía si los tests ya traen su baseURL."
-              : "Exploraré esta URL viva (smoke + capturas), sin necesitar el código."}
+            Exploraré esta URL viva (smoke + capturas), sin necesitar el código.
           </p>
         </div>
         <Field label="URL" hint="ej. https://qa.miapp.com">
@@ -27,7 +25,7 @@ export function UrlStep({ w }: { w: RunWizardCtl }) {
         <button className="btn-ghost" onClick={w.back}>
           ← Atrás
         </button>
-        <button className="btn-primary" onClick={w.next} disabled={w.mode === "explore" && !w.appUrl.trim()}>
+        <button className="btn-primary" onClick={w.next} disabled={!w.appUrl.trim()}>
           Continuar →
         </button>
       </div>

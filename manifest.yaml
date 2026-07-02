@@ -1,33 +1,20 @@
-# Inventario REAL del qa-kit global — fuente de verdad para los instaladores.
-# Sin drift: lista solo lo que existe en el repo (corrige D2 del documento de arquitectura).
-version: "1.0.0-f5"
-description: "Roadmap completo: local-first, 4 trackers (local/ADO/github/jira), 6 capas, multi-delivery"
-status: "complete"   # F0 andamiaje · F1 local-first · F2 ADO · F3 capas · F4 delivery · F5 github+jira.
+# Inventario REAL del qa-kit — fuente de verdad para los instaladores.
+# Sin drift: lista solo lo que existe en el repo.
+version: "2.0.0-explore"
+description: "Kit acotado a EXPLORACIÓN de una URL viva (pruebas E2E). Trackers: local + azure-devops."
+status: "explore-only"   # Se retiró el pipeline de 'QA del código' (capas/BDD/generación) y los trackers jira/github.
 
 core:
   tracker_adapter:
     - core/tracker-adapter/CONTRACT.md
     - core/tracker-adapter/tracker-adapter.mjs
-    - core/tracker-adapter/index.mjs
+    - core/tracker-adapter/index.mjs           # factory: solo local + azure-devops
   agents:
     qa-orchestrator:
-      - core/agents/qa-orchestrator/AGENT.md      # F1-T3: preflight condicional + ciclo (runtime/orchestrator)
-    # executor, generator, explorer, healer: se portan más adelante en F1
+      - core/agents/qa-orchestrator/AGENT.md    # ciclo de exploración de URL → sink
   skills:
-    qa-detect:
-      - core/skills/qa-detect/SKILL.md            # F1-T1: detección de capas/stack (runtime/detect)
-    static-analysis-gate:
-      - core/skills/static-analysis-gate/SKILL.md # F1-T2: runner static → sink (runtime/runners)
-    unit-test-runner:
-      - core/skills/unit-test-runner/SKILL.md     # F1-T4: runner unit → sink (D1 cerrada)
-    e2e-runner:
-      - core/skills/e2e-runner/SKILL.md           # F1-T4: runner e2e → sink (ex playwright-runner)
-    db-test-runner:
-      - core/skills/db-test-runner/SKILL.md       # F3: runner db (driver auto, conexión env)
-    security-test-runner:
-      - core/skills/security-test-runner/SKILL.md # F3: runner security (target_profile)
-    api-test-runner:
-      - core/skills/api-test-runner/SKILL.md       # F3: runner api (postman/newman)
+    url-explore:
+      - core/skills/url-explore/SKILL.md        # explora una URL viva (Playwright): status/consola/captura
   templates:
     local:
       - templates/local/README.md
@@ -38,28 +25,18 @@ adapters:
       - adapters/trackers/local/local-adapter.mjs
       - adapters/trackers/local/README.md
     azure-devops:
-      - adapters/trackers/azure-devops/azure-devops-adapter.mjs   # F2: contrato real (transporte inyectable)
-      - adapters/trackers/azure-devops/ado-rest.mjs               # F2: cliente REST (rutas/auth)
-      - adapters/trackers/azure-devops/tc-match.mjs               # F2.2: tc_id → Task hijo (adjuntos)
+      - adapters/trackers/azure-devops/azure-devops-adapter.mjs   # contrato explore-only (preflight/getWorkItem/publishEvidence/adjuntos)
+      - adapters/trackers/azure-devops/ado-rest.mjs               # cliente REST (rutas/auth)
+      - adapters/trackers/azure-devops/ado-html.mjs               # parse de la HU + render del resumen
+      - adapters/trackers/azure-devops/tc-match.mjs               # captura → Task hijo (adjuntos)
       - adapters/trackers/azure-devops/README.md
-    github:
-      - adapters/trackers/github/github-adapter.mjs               # F5: contrato sobre GitHub Issues
-      - adapters/trackers/github/github-rest.mjs
-      - adapters/trackers/github/README.md
-    jira:
-      - adapters/trackers/jira/jira-adapter.mjs                   # F5: contrato sobre Jira Cloud v3
-      - adapters/trackers/jira/jira-rest.mjs
-      - adapters/trackers/jira/README.md
   shared:
-    - adapters/_shared/parse-ac.mjs                               # AC desde texto/markdown
     - adapters/_shared/http-retry.mjs                             # transporte HTTP default con reintento ante fallos de red transitorios
 
 profiles:
   - profiles/default.yaml
   presets:
     - profiles/presets/azure-devops.yaml
-    - profiles/presets/github.yaml
-    - profiles/presets/jira.yaml
   overlays:
     - profiles/overlays/flit.yaml
 
@@ -67,47 +44,25 @@ runtime:
   profile:
     - runtime/profile/yaml-lite.mjs
     - runtime/profile/resolve-profile.mjs
-  detect:
-    - runtime/detect/qa-detect.mjs
   runners:
-    - runtime/runners/_runner-core.mjs    # lógica común (resolveBin/exec/runLayer)
-    - runtime/runners/parse-cases.mjs     # extrae TC individuales del reporter JSON por herramienta
-    - runtime/runners/static-analysis.mjs
-    - runtime/runners/unit.mjs
-    - runtime/runners/e2e.mjs
-    - runtime/runners/db.mjs
-    - runtime/runners/security.mjs
-    - runtime/runners/api.mjs
-    - runtime/runners/bdd.mjs              # Ruta B (B1): ejecuta .feature (Cucumber.js) — el AC ES el test
-    - runtime/runners/explore.mjs         # capa opcional: explora una URL viva (gated por appUrl)
-  generate:
-    - runtime/generate/skeleton-generator.mjs  # generador determinista de tests desde criterios (Fase A)
-    - runtime/generate/feature-writer.mjs      # Ruta B (B1): AC → .feature (Gherkin ejecutable)
-    - runtime/generate/template-applier.mjs    # Ruta B (B3.5): catálogo de plantillas + aplicador
-  bdd_templates:                               # Ruta B (B3.5): plantillas parametrizadas (casos adicionales)
-    - templates/bdd/api-health.feature.tmpl
-    - templates/bdd/smoke-crud.feature.tmpl
-    - templates/bdd/form-validation.feature.tmpl
-  bdd_steps:                                   # Ruta B (B2): librería de step-definitions reutilizable
-    - bdd/steps/world.mjs                      #   World (estado/baseURL/hooks) — Playwright perezoso
-    - bdd/steps/web.steps.mjs                  #   UI (Playwright)
-    - bdd/steps/api.steps.mjs                  #   HTTP (fetch)
-    - bdd/steps/db.steps.mjs                   #   SQL (pg, conexión desde env)
-    - bdd/steps/README.md                      #   cómo extender en cada proyecto
-  orchestrator: runtime/orchestrator.mjs
-  cli: runtime/cli.mjs                   # F4: entrypoint del kit (runQaCycle)
-  delivery_build: runtime/delivery/build.mjs  # F4: empaqueta core/ a cada target
+    - runtime/runners/explore.mjs         # única capa: explora una URL viva (gated por appUrl)
+  orchestrator: runtime/orchestrator.mjs  # backbone slim: resolve-profile → adapter → explore → publishEvidence
+  cli: runtime/cli.mjs                    # entrypoint: node runtime/cli.mjs --url <https://app>
+  delivery_build: runtime/delivery/build.mjs  # empaqueta core/ a cada target
   evidence:
     - runtime/evidence/local-sink.mjs
-  smoke_test: runtime/smoke-test.mjs
+  smoke_test: runtime/smoke-test.mjs      # 14 casos (resolver + explore-suite), offline
 
-delivery:        # F4 — targets generados desde core/ por runtime/delivery/build.mjs
+delivery:        # targets generados desde core/ por runtime/delivery/build.mjs
   generator: runtime/delivery/build.mjs
   targets: [plain, claude-code, cursor]   # salida en dist/<target>/ (no versionada)
   docs:
     - delivery/cursor/README.md
     - delivery/claude-code/README.md
     - delivery/plain/README.md
+
+webapp:          # UX web multitenant (Next.js, :4312) — el producto laboral
+  note: "Servicio multitenant (Postgres+RLS, auth, cifrado). Modo único: Explorar URL. Ver docs/MULTITENANT.md."
 
 packs:           # opcionales, NO instalados por defecto
   dev-side:

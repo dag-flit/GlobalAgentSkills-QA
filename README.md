@@ -1,98 +1,67 @@
-# qa-kit — QA local-first, sin sesgo
+# qa-kit — Explorar una URL viva (pruebas E2E)
 
-Kit de agentes/skills de QA **portable**. Cualquier repo corre
-`static · unit · e2e · db · security · api` y deja un reporte local, **sin PAT, sin Cursor
-y sin configurar nada**. El tracker es un plug-in opcional: `local` (default), `azure-devops`,
-`github` o `jira` — se cambia con una línea de perfil; ninguna skill se entera.
+Kit de QA **acotado a un solo propósito**: explorar una app **ya corriendo** en una URL y dejar
+evidencia (status HTTP + errores de consola + captura por página). Se maneja desde una **webapp
+multitenant** (`webapp/`, Next.js). El destino de la evidencia es **local** (reporte en disco) o
+**Azure DevOps** (comentario + capturas adjuntas en la HU).
 
-> **Principio:** lo **local siempre funciona** sin red. El tracker remoto se enciende con un
-> overlay mínimo. Ningún runner habla con un tracker: todos emiten evidencia normalizada a un
-> *sink*, y el *sink* decide el destino.
+> **Sesgo intencional:** este es el repo **laboral**, acotado a la compañía (Azure/FLIT). La versión
+> portable/robusta (multi-stack, multi-tracker, "QA del código") vive en el repo personal.
+> El pipeline de "QA del código" y los trackers Jira/GitHub se **retiraron** (viven en el historial de git).
 
-Estado: **roadmap F0–F5 completo** + interfaz web (`webapp/`, ver abajo). Smoke test **27/27**.
-Node 18+ (cross-platform, `.mjs`).
+Node 18+ (cross-platform, `.mjs`). Smoke test **14/14**.
 
-## Inicio rápido (sin instalar nada)
+## Inicio rápido
 
 ```bash
-# correr el ciclo QA sobre un repo (detecta capas y ejecuta lo que el repo permita)
-node runtime/cli.mjs /ruta/al/repo
+# explorar una URL viva (deja el reporte en qa-evidence/)
+node runtime/cli.mjs --url https://tu-app.com [-w <HU>] [-f <FT>] [-d "<dev>"]
 
-# verificar el plumbing del kit
-node runtime/smoke-test.mjs        # → 25/25 OK
+# verificar el plumbing del kit (offline)
+node runtime/smoke-test.mjs        # → 14/14 OK
 ```
 
-El CLI deja el reporte en `<repo>/qa-evidence/<fecha>/WI-<id>/report.{md,html}` y sale con
-código `0` (sin fallos) · `1` (con fallos) · `2` (preflight de tracker) · `3` (error).
+El CLI deja el reporte en `<repo>/qa-evidence/<fecha>/FT-<feature>__<dev>/report.{md,html}` y sale
+con código `0` (sin fallos) · `1` (con fallos) · `2` (preflight de tracker) · `3` (error).
 
-## Qué detecta y corre
+## Qué hace
 
-`qa-detect` enciende las capas según el repo; lo que no se pueda ejecutar se omite con aviso
-(`skip`), nunca rompe el ciclo. `security` es **zero-config**: se intenta en todo repo.
+| Capa | Runner |
+|------|--------|
+| `explore` | abre la URL en un navegador (Playwright): status HTTP + errores de consola + captura por página. Corre **solo** si se proporciona una URL (`--url`/`appUrl`); sin URL no aparece. Sin Playwright → skip accionable. |
 
-| Señal en el repo | Capa | Runner |
-|------------------|------|--------|
-| eslint / tsconfig / ruff / mypy | `static` | linter / type-checker |
-| vitest / jest / pytest / *.csproj | `unit` | runner de tests existentes |
-| playwright / cypress | `e2e` | suite end-to-end |
-| colección Postman / openapi·swagger | `api` | newman (postman) · `redocly lint` (validación de contrato OpenAPI, offline) |
-| pgtap / prisma / migrations | `db` | checks de BD (conexión desde `env`) |
-| *(siempre)* | `security` | semgrep `auto` / bandit — **zero-config**; skip si el escáner no está instalado |
-| *URL viva (opcional, NO se detecta del repo)* | `explore` | abre la URL en un navegador (Playwright): HTTP + errores de consola + captura. Corre **solo** si se proporciona una URL (`appUrl`); sin URL no aparece |
+El launcher del navegador es **inyectable** → todo es probable offline.
 
-## Trackers (opcional)
+## Trackers
 
-Por defecto `tracker: local` (sin red). Para publicar en un tracker, crea
-`.qa/qa-project.profile.yaml` con `profile: <preset>` y exporta las variables de entorno:
+Por defecto `tracker: local` (sin red). Para publicar la evidencia en Azure DevOps, crea
+`.qa/qa-project.profile.yaml` con `profile: azure-devops` (o `flit`) y exporta:
 
 | Tracker | `profile:` | Variables `env` |
 |---------|-----------|-----------------|
+| Local (default) | — | (ninguna, sin red) |
 | Azure DevOps | `azure-devops` (o `flit`) | `AZURE_ORG_URL`, `AZURE_PROJECT_NAME`, `AZURE_PAT`, `USER_REAL_EMAIL` |
-| GitHub Issues | `github` | `GITHUB_TOKEN`, `GITHUB_REPOSITORY` |
-| Jira Cloud | `jira` | `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_TOKEN`, `JIRA_PROJECT_KEY` |
 
 Resolución de perfil (deep-merge):
 
 ```
-default.yaml  ←  presets/<tracker>.yaml  ←  overlays/<org>.yaml  ←  qa-project.profile.yaml (repo)
+default.yaml  ←  presets/azure-devops.yaml  ←  overlays/flit.yaml  ←  qa-project.profile.yaml (repo)
 ```
 
-## Novedades (Bug + reactivación + trazabilidad)
+El adapter de Azure entrega la evidencia en **modo dual**: comentario-resumen en la Discussion del
+work item **+** reporte local **+** las **capturas adjuntas** al Task hijo (resuelto por `tc-match`).
 
-Con un tracker remoto y `-w <HU>`, **cada corrida deja constancia de lo ejecutado** (resumen +
-detalle de TC en la HU). Además, si hay **fallas**, el ciclo maneja la novedad
-**automáticamente**, agrupando las fallas por la HU a la que pertenecen:
+## Interfaz web (multitenant)
 
-1. **Crea un Bug enlazado a esa HU** (título `[QA] Novedad en HU <id>` + capas/casos fallidos).
-2. **Reactiva la HU** al estado de novedad del perfil (ADO `Active`; reabre el issue en GitHub;
-   transición `reactivate` en Jira) — nunca la cierra.
-3. **Deja la trazabilidad** del Bug en un comentario de la **misma HU** (enlace + hallazgos).
-
-**Trazabilidad por-HU (convención `[HU-###]`):** las novedades se agrupan **por caso**. Si una
-prueba declara su HU dueña etiquetándola en el título (p.ej. `describe("[HU-103] Checkout", …)`),
-su falla registra el Bug en **esa HU**, no en el Feature paraguas. Lo no etiquetado y las capas
-transversales (lint/seguridad) caen a la HU del ciclo `-w`. La prueba sigue cubriendo el flujo
-completo; la etiqueta solo declara el *dueño*, no el *alcance*.
-
-Aplica solo a trackers con estados (ADO/GitHub/Jira); `local` no dispara nada. Sin `-w`, un
-tracker remoto degrada a **solo reporte local + aviso** (no intenta comentar sobre una HU
-inexistente). El estado de reactivación se configura en el preset
-(`azure.work_item.on_defect_reactivate_state`, `jira.transitions.reactivate`).
-
-## Interfaz web (Quality Ops Framework)
-
-`webapp/` es una UI (Next.js) para usar el kit **a clics**, pensada para gente no técnica:
-conexión a BD (con túnel SSH), elegir tracker y Feature→HUs, detectar capas, **revisar y generar
-pruebas por criterio** (con IA opcional), **publicar el Plan del Feature + TC por criterio** en el
-tracker, ejecutar con **log en vivo** y ver la evidencia por HU (reporte + capturas). No reimplementa
-nada: llama a `runQaCycle`. La generación con IA (Google Gemini gratis / Anthropic) es opcional —
-sin ella se usan esqueletos deterministas.
+`webapp/` es la UI (Next.js) para usar el kit **a clics**: un único flujo `Tracker → URL → Ejecutar`.
+Es un servicio **multitenant** (Postgres + RLS, auth propia, secretos cifrados). No reimplementa nada:
+llama a `runQaCycle`.
 
 ```bash
-cd webapp && npm install && npm run dev      # http://localhost:4312
+cd webapp && npm install && npm run dev      # http://localhost:4312 (exige login)
 ```
 
-Detalles, modos y dónde quedan las evidencias: **[webapp/README.md](webapp/README.md)**.
+Detalle y reglas de extensión: **[docs/MULTITENANT.md](docs/MULTITENANT.md)**.
 
 ## Empaquetado multi-target
 
@@ -100,27 +69,24 @@ El mismo `core/` se **genera** para tres runtimes:
 
 ```bash
 node runtime/delivery/build.mjs dist            # plain + claude-code + cursor en dist/
-node runtime/delivery/build.mjs dist -t plain   # solo un target
-node dist/plain/bin/qa.mjs /ruta/al/repo        # el paquete generado corre standalone
+node dist/plain/bin/qa.mjs --url https://app    # el paquete generado corre standalone
 ```
 
 ## Estructura
 
 ```
-core/tracker-adapter/   contrato único (CONTRACT.md + base Node + factory)
-core/skills/  core/agents/   docs portables de skills (runners) y del orquestador
-adapters/trackers/      local · azure-devops · github · jira    (cliente REST inyectable)
-profiles/               default.yaml · presets/* · overlays/flit.yaml
-runtime/                detect · runners · evidence (sink) · profile · orchestrator · cli
+core/tracker-adapter/   contrato único (CONTRACT.md + base Node + factory local+azure)
+core/skills/url-explore/  core/agents/qa-orchestrator/   docs de la skill y del orquestador
+adapters/trackers/      local (default) · azure-devops   (cliente REST inyectable)
+adapters/_shared/       http-retry (transporte con reintento)
+profiles/               default.yaml · presets/azure-devops.yaml · overlays/flit.yaml
+runtime/                runners/explore · evidence (sink) · profile · orchestrator · cli
 delivery/               docs por target (salida real en dist/)
-docs/                   arquitectura + guías de uso/extensión
+docs/                   MULTITENANT.md (vigente)
 manifest.yaml           inventario real, sin drift
 ```
 
 ## Documentación
 
-- **[docs/GUIA-USO.md](docs/GUIA-USO.md)** — cómo correr el kit, perfiles, capas, evidencia.
-- **[docs/GUIA-AGENTES-SKILLS.md](docs/GUIA-AGENTES-SKILLS.md)** — catálogo de agentes/skills/archivos.
-- **[docs/GUIA-EXTENSION.md](docs/GUIA-EXTENSION.md)** — añadir un runner, un tracker o un overlay.
-- **[docs/qa-kit-arquitectura-global.md](docs/qa-kit-arquitectura-global.md)** — diseño completo.
+- **[docs/MULTITENANT.md](docs/MULTITENANT.md)** — la webapp como servicio multitenant (Postgres+RLS, auth, cifrado) y reglas para extenderla.
 - **[CLAUDE.md](CLAUDE.md)** — memoria del proyecto e invariantes (para Claude Code).

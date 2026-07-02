@@ -1,4 +1,4 @@
-import type { LogLevel, RunRecord } from "@/lib/types";
+import type { LogLevel } from "@/lib/types";
 
 // Constantes y utilidades del detalle de corrida (RunDetail). Extraídas para repartir el
 // componente en archivos bajo el límite de líneas.
@@ -14,14 +14,8 @@ export const LEVEL_COLOR: Record<LogLevel, string> = {
   system: "text-muted",
 };
 
-// Descripción en lenguaje claro de cada capa (para que técnicos y no técnicos entiendan igual).
+// Descripción en lenguaje claro de la capa de exploración.
 export const LAYER_INFO: Record<string, { label: string; desc: string }> = {
-  static: { label: "Análisis estático", desc: "Revisa tipos y errores del código sin ejecutar la app (tsc, eslint, ruff, mypy)." },
-  unit: { label: "Pruebas unitarias", desc: "Ejecuta los tests del proyecto (vitest, jest, pytest, dotnet test)." },
-  api: { label: "Contrato de API", desc: "Valida la especificación OpenAPI o una colección Postman." },
-  e2e: { label: "Pruebas E2E", desc: "Corre los flujos de punta a punta en un navegador (Playwright/Cypress)." },
-  db: { label: "Base de datos", desc: "Ejecuta migraciones o tests de datos (pgtap, prisma)." },
-  security: { label: "Seguridad", desc: "Escanea el código en busca de vulnerabilidades (semgrep, bandit)." },
   explore: { label: "Exploración de URL", desc: "Abre la app en un navegador: revisa estado HTTP, errores de consola y guarda una captura." },
 };
 
@@ -48,27 +42,3 @@ export function statusSentence(r: any): string {
 }
 
 export const artifactUrl = (p: string) => `/api/artifacts?path=${encodeURIComponent(p)}`;
-
-function huOf(name: string): string | null {
-  const m = String(name || "").match(/\bHU[-\s]?(\d+)\b/i);
-  return m ? m[1] : null;
-}
-
-/** Cobertura de HUs: ¿cada HU seleccionada tiene al menos una prueba etiquetada [HU-###]? */
-export function computeCoverage(record: RunRecord | null, results: any[]) {
-  const selectedHus = (record?.huIds || []).map(String);
-  const showCoverage = record?.mode === "code" && selectedHus.length > 0 && record?.status !== "running";
-  const coverageCount: Record<string, number> = {};
-  let totalCases = 0;
-  for (const r of results) {
-    for (const c of Array.isArray(r.cases) ? r.cases : []) {
-      totalCases += 1;
-      const h = huOf(c.name);
-      if (h) coverageCount[h] = (coverageCount[h] || 0) + 1;
-    }
-  }
-  const coveredSet = new Set(Object.keys(coverageCount));
-  const gaps = selectedHus.filter((id) => !coveredSet.has(id));
-  const extra = [...coveredSet].filter((h) => !selectedHus.includes(h));
-  return { selectedHus, showCoverage, coverageCount, totalCases, gaps, extra };
-}
