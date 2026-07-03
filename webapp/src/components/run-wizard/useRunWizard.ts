@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAction } from "@/components/ActionFeedback";
 import type { TrackerName } from "@/lib/types";
@@ -23,6 +23,16 @@ export function useRunWizard() {
   const [flow, setFlow] = useState<FlowStep[]>([]); // guion de pasos (opcional)
   const [vars, setVars] = useState<Record<string, string>>({}); // credenciales del guion (${VAR})
   const [acs, setAcs] = useState<DeclaredAc[]>([]); // AC declarados de la HU (los trae AcPanel)
+  // ¿El Asistente IA (Ollama) está activo? Se configura en Ajustes (por tenant). Solo INFORMATIVO
+  // en el asistente: si está activo y la HU/Feature no tiene guion guardado, el guion se deduce con
+  // IA leyendo la pantalla real; si no, con el generador determinista. Fuente única: Ajustes.
+  const [aiEnabled, setAiEnabled] = useState(false);
+  useEffect(() => {
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((c) => setAiEnabled(!!c?.ai?.enabled))
+      .catch(() => {});
+  }, []);
 
   const steps = mode ? buildSteps() : [];
   const safeIdx = Math.min(idx, Math.max(0, steps.length - 1));
@@ -176,6 +186,7 @@ export function useRunWizard() {
     mode, setMode, idx, launching, launchError,
     tracker, setTracker, appUrl, setAppUrl,
     workItem, setWorkItem, flow, setFlow, vars, setVars, acs, setAcs,
+    aiEnabled,
     steps, safeIdx, key, back, next, chooseMode, launch,
     saveFlowToHu, loadFlowFromHu, importFlowJson, exportFlowJson,
   };

@@ -95,6 +95,28 @@ export async function run(ctx) {
   fs.rmSync(repoAtt, { recursive: true, force: true });
   ok("adjuntos azure: la captura de exploración se sube y se enlaza al Task hijo (mapping_file)");
 
+  // B2. adjuntos SIN Task hijo que matchee (caso E2E: tc_id = nº de la HU) → la captura se adjunta
+  //     DIRECTO a la HU (fallback parent_work_item). Antes se perdía en `unmatched`.
+  const repoAtt2 = fs.mkdtempSync(path.join(os.tmpdir(), "qa-att2-"));
+  const shot2 = path.join(repoAtt2, "explore-1.png");
+  fs.writeFileSync(shot2, "PNGDATA");
+  const fakeAtt2 = makeFakeAdo([
+    [(r) => r.method === "POST" && r.url.includes("/wit/attachments"), () => ({ status: 201, json: { id: "att9", url: "https://dev.azure.com/acme/_apis/wit/attachments/att9" } })],
+    [(r) => r.method === "POST" && r.url.includes("/wit/wiql"), () => ({ status: 200, json: { workItems: [] } })], // ningún Task hijo con ese título
+    [(r) => r.method === "PATCH" && r.url.includes("/wit/workitems/123"), () => ({ status: 200, json: { id: 123 } })],
+    [(r) => r.method === "POST" && r.url.includes("/workItems/123/comments"), () => ({ status: 201, json: { id: 2 } })],
+  ]);
+  const adoAtt2 = getAdapter({ profile: pFlit, env: creds, repoRoot: repoAtt2, http: fakeAtt2.http });
+  const pubAtt2 = await adoAtt2.publishEvidence(
+    { work_item_id: "123" },
+    { results: [{ layer: "explore", tc_id: "123", status: "fail", narrative: "HTTP 500", files: [shot2] }] }
+  );
+  assert.strictEqual(pubAtt2.attachments.uploaded, 1);
+  assert.strictEqual(pubAtt2.attachments.linked[0].taskId, "123"); // adjuntada a la propia HU
+  assert.strictEqual(pubAtt2.attachments.linked[0].strategy, "parent_work_item");
+  fs.rmSync(repoAtt2, { recursive: true, force: true });
+  ok("adjuntos azure (fallback): sin Task hijo que matchee, la captura se adjunta DIRECTO a la HU");
+
   // C. runner explore: launcher inyectable (offline); pass/fail por URL; skip sin Playwright; gating sin URL.
   const repoExp = fs.mkdtempSync(path.join(os.tmpdir(), "qa-exp-"));
   const expEv = await runExplore({ repoRoot: repoExp, appUrl: "https://app.test/", paths: ["https://app.test/bad"], launchBrowser: fakeLaunch });

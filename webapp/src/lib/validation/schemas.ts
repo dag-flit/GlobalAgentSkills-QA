@@ -71,9 +71,18 @@ export const trackerConfigSchema = z
     }
   });
 
+// Config de IA (asistente de guion). Endpoint acotado a http(s) para no apuntar a esquemas raros;
+// modelo libre (lo elige el usuario). Sin secretos (Ollama local).
+export const aiConfigSchema = z.object({
+  enabled: z.boolean(),
+  endpoint: z.string().refine((v) => v === "" || /^https?:\/\//i.test(v), "El endpoint debe ser http(s)://…"),
+  model: z.string(),
+});
+
 export const appConfigSchema = z.object({
   databases: z.array(dbConnectionSchema),
   tracker: trackerConfigSchema,
+  ai: aiConfigSchema.optional(), // se conserva la config de IA si el request no la trae (config.ts)
 });
 
 // Un paso del guion E2E: la operación + campos (todos strings; el motor los normaliza).

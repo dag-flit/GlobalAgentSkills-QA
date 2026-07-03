@@ -40,6 +40,18 @@ export function RunSummary({ w }: { w: RunWizardCtl }) {
             ? "Abriré un navegador (Playwright), iré a la URL y ejecutaré el flujo paso a paso, con una captura por paso."
             : "Abriré un navegador (Playwright) para explorar la URL: revisa el estado HTTP, errores de consola y guarda una captura."}
         </div>
+
+        {/* Autogeneración del guion desde los AC (WI Azure sin pasos manuales). Informa si usará IA
+            (Ollama, se configura en Ajustes) o el generador determinista. */}
+        {w.tracker === "azure-devops" && w.workItem.trim() && stepCount === 0 && (
+          <div className={`text-sm rounded-lg px-3 py-2 border ${w.aiEnabled ? "border-accent/40 bg-accent/10 text-accent" : "border-border bg-panel2/40 text-muted"}`}>
+            {w.aiEnabled ? (
+              <>🤖 <b>Asistente IA activo.</b> Si la HU/Feature no tiene guion guardado, deduciré el guion de sus criterios de aceptación leyendo la pantalla real (Ollama local). Si el modelo no está disponible, uso el generador determinista.</>
+            ) : (
+              <>Sin guion guardado, deduciré el guion de los criterios de aceptación con el generador <b>determinista</b>. Para mejores localizadores, activá el <b>Asistente IA</b> en Ajustes.</>
+            )}
+          </div>
+        )}
         {w.launchError && (
           <div className="text-sm rounded-lg px-3 py-2 border border-red-700 bg-red-900/30 text-red-300">
             {w.launchError}

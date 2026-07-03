@@ -9,6 +9,7 @@ import { saveRun } from "@/lib/runStore";
 import { currentTenantId, runInTenant } from "@/lib/db/tenantContext";
 import { isStopRequested, clearStop } from "@/lib/procRegistry";
 import { runFeatureFanout } from "./fanout";
+import { autogenFlow, hasActionableSteps } from "./autogen";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
 
 export interface RunInput {
@@ -138,19 +139,44 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
 
     // Con pasos → GUION (flujo E2E): la URL viaja como primer paso, no como appUrl. El WI real
     // (no "local") comenta la evidencia y traza el caso (tcId) para el attach en ADO.
-    const useFlow = Array.isArray(input.steps) && input.steps.length > 0;
+    const manualFlow = Array.isArray(input.steps) && input.steps.length > 0;
     const workItemId = input.workItemId?.trim() || "local";
+    // ¿La corrida trae credenciales? → el guion autogenerado antepone el login automático.
+    const hasCreds = !!(input.vars && input.vars.QA_USER && input.vars.QA_PASS);
+
+    // Guion AUTOGENERADO para la HU sola (sin guion manual): se deduce de sus AC (determinista).
+    let autoFlow: Array<Record<string, any>> | null = null;
+    let autoDeclaredAcs: string[] = [];
 
     // ¿Fan-out de Feature? Solo azure con WI real: si el WI destino es un Feature, se recorre cada
-    // HU hija y se corre su guion GUARDADO (el de la HU), publicando evidencia en cada una.
+    // HU hija y se corre su guion GUARDADO o, si no hay, uno AUTOGENERADO desde sus AC.
     let fanout: any = null;
     if (tracker === "azure-devops" && workItemId !== "local") {
       try {
         const { getAdapter } = await importKit("core/tracker-adapter/index.mjs");
         const adapter = getAdapter({ profile, env, repoRoot });
         const wi = await adapter.getWorkItem(workItemId);
+
+        // RECON (solo si la IA está activa y hay con qué navegar): captura UNA vez el DOM de la app
+        // —autenticado si hay credenciales— para que el planner deduzca localizadores REALES. Se
+        // comparte entre el fan-out y la HU sola. Best-effort: si falla, la IA usa solo los AC.
+        const aiOn = !!(cfg.ai && cfg.ai.enabled && cfg.ai.model);
+        let reconDom = "";
+        const willAutogen = wi?.type === "Feature" || (wi && !manualFlow && input.appUrl);
+        if (aiOn && input.appUrl && launchBrowser && willAutogen) {
+          try {
+            const { captureDom } = await importKit("runtime/generate/recon.mjs");
+            emitEvent(id, "info", "IA activa → recon: abriendo la app para leer sus campos/botones reales…");
+            const rc = await captureDom({ appUrl: input.appUrl, login: hasCreds, env, vars: input.vars || {}, launchBrowser });
+            reconDom = rc.dom || "";
+            emitEvent(id, rc.ok ? "info" : "stderr", rc.ok ? `Recon OK (${reconDom.length} caracteres de pantalla leídos).` : `Recon no disponible: ${rc.message}. La IA usará solo los AC.`);
+          } catch (e: any) {
+            emitEvent(id, "stderr", `Recon falló: ${describeError(e)}. La IA usará solo los AC.`);
+          }
+        }
+
         if (wi?.type === "Feature") {
-          emitEvent(id, "system", `WI ${workItemId} es un Feature → fan-out por HU hija (guion guardado de cada una).`);
+          emitEvent(id, "system", `WI ${workItemId} es un Feature → fan-out por HU hija (guion guardado o autogenerado de cada una).`);
           fanout = await runFeatureFanout(workItemId, {
             runQaCycle,
             getChildren: (fid: string) => adapter.getChildren(fid),
@@ -161,6 +187,10 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
                 .map((a: any) => (typeof a === "string" ? a : a?.title))
                 .filter((t: any) => t && String(t).trim() !== "");
             },
+            // Autogenera el guion de una HU hija desde sus AC cuando no tiene guion guardado.
+            // Usa la IA (Ollama) si está encendida en Ajustes; si no, el generador determinista.
+            // El `reconDom` (pantalla real) alimenta al planner IA para localizadores reales.
+            autogen: (cid: string) => autogenFlow(adapter, cid, input.appUrl || "", hasCreds, cfg.ai, reconDom),
             profile,
             env,
             repoRoot,
@@ -168,11 +198,29 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
             vars: input.vars || {},
             emit: (lvl: string, msg: string) => emitEvent(id, lvl as any, msg),
           });
+        } else if (wi && !manualFlow && input.appUrl) {
+          // HU sola sin guion manual → autogenerar desde sus AC (autonomía sin copiar/pegar).
+          const g = await autogenFlow(adapter, workItemId, input.appUrl, hasCreds, cfg.ai, reconDom);
+          if (hasActionableSteps(g)) {
+            autoFlow = g.flow;
+            autoDeclaredAcs = (wi.acceptance_criteria || [])
+              .map((a: any) => (typeof a === "string" ? a : a?.title))
+              .filter((t: any) => t && String(t).trim() !== "");
+            emitEvent(id, "info", `WI ${workItemId}: guion AUTOGENERADO (${g.origin === "ia" ? "IA local" : "determinista"}) desde sus AC (${g.flow.length} paso(s)).`);
+            for (const n of g.notes || []) emitEvent(id, "stderr", `  · ${n}`);
+          } else {
+            emitEvent(id, "stderr", `No se pudo autogenerar para ${workItemId}: ${g.reason || "AC no aptos para E2E"}. Sigo con lo indicado.`);
+          }
         }
       } catch (e: any) {
-        emitEvent(id, "stderr", `No se pudo evaluar el fan-out de Feature: ${describeError(e)}. Sigo como corrida única.`);
+        emitEvent(id, "stderr", `No se pudo evaluar el fan-out/autogeneración: ${describeError(e)}. Sigo como corrida única.`);
       }
     }
+
+    // Guion efectivo de la corrida única: el manual tiene prioridad; si no, el autogenerado.
+    const flowToRun = manualFlow ? input.steps! : autoFlow;
+    const useFlow = Array.isArray(flowToRun) && flowToRun.length > 0;
+    const declaredAcsToRun = input.declaredAcs && input.declaredAcs.length ? input.declaredAcs : autoDeclaredAcs;
 
     let summary: any;
     if (fanout) {
@@ -181,17 +229,17 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
       if (!fanout.anyRun) emitEvent(id, "error", "Ninguna HU hija tenía guion guardado.");
       emitEvent(id, "result", `Fan-out terminado: ${record.status} · ${fanout.hus.length} HU(s).`);
     } else {
-      emitEvent(id, "info", useFlow ? `Ejecutando flujo de ${input.steps!.length} paso(s)…` : `Explorando ${input.appUrl}…`);
+      emitEvent(id, "info", useFlow ? `Ejecutando flujo de ${flowToRun!.length} paso(s)…` : `Explorando ${input.appUrl}…`);
       summary = await runQaCycle({
         repoRoot,
         env,
         profile,
         workItemId,
         appUrl: useFlow ? undefined : input.appUrl,
-        flow: useFlow ? input.steps : undefined,
+        flow: useFlow ? flowToRun : undefined,
         vars: input.vars || {},
         tcId: workItemId !== "local" ? workItemId : undefined,
-        declaredAcs: input.declaredAcs || [],
+        declaredAcs: declaredAcsToRun,
         explore: true,
         launchBrowser,
       });

@@ -8,6 +8,10 @@ const ALLOWED = new Set<string>([
   "core/tracker-adapter/index.mjs",
   "runtime/orchestrator.mjs",
   "runtime/profile/resolve-profile.mjs",
+  "runtime/generate/ac-to-flow.mjs", // generador determinista AC→guion (autogen.ts)
+  "runtime/generate/flow-planner.mjs", // planner IA (Ollama) con fallback determinista (autogen.ts)
+  "runtime/generate/recon.mjs", // recon: captura el DOM de la app para el planner IA (runner.ts)
+  "adapters/_shared/http-retry.mjs", // transporte HTTP endurecido para el planner (autogen.ts)
 ]);
 
 /**

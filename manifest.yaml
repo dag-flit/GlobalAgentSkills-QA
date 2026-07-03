@@ -48,13 +48,18 @@ runtime:
     - runtime/runners/explore.mjs         # única capa: URL-smoke (appUrl) o GUION E2E (flow)
     - runtime/runners/explore-steps.mjs   # registro de PASOS del guion (núcleo) + interpolación ${VAR}
     - runtime/runners/explore-flow.mjs    # ejecutor del guion: pasos en orden sobre una sesión
+  generate:
+    - runtime/generate/ac-to-flow.mjs     # generador determinista (SIN IA): AC Gherkin → guion de pasos
+    - runtime/generate/flow-planner.mjs   # planner con IA local (Ollama) + fallback determinista; http inyectable
+    - runtime/generate/flow-sanitize.mjs  # saneo estricto de la salida del modelo contra el registro STEPS
+    - runtime/generate/recon.mjs          # recon: abre la app, login y captura el DOM (campos/botones) para el planner IA
   orchestrator: runtime/orchestrator.mjs  # backbone slim: resolve-profile → adapter → explore → publishEvidence
   cli: runtime/cli.mjs                    # entrypoint: --url <https://app> (URL-smoke) | --flow <archivo> (guion E2E)
   delivery_build: runtime/delivery/build.mjs  # empaqueta core/ a cada target
   evidence:
     - runtime/evidence/local-sink.mjs     # reporte md+html autocontenido (capturas embebidas como data-URI)
     - runtime/evidence/ac-coverage.mjs    # matriz de cobertura de AC (puro): case.ac × declaredAcs → cubierto/fallo/sin cubrir
-  smoke_test: runtime/smoke-test.mjs      # 19 casos (resolver + explore-suite), offline
+  smoke_test: runtime/smoke-test.mjs      # 25 casos (resolver + explore-suite + generate-suite + planner-suite: planner+recon), offline
 
 delivery:        # targets generados desde core/ por runtime/delivery/build.mjs
   generator: runtime/delivery/build.mjs
@@ -65,7 +70,7 @@ delivery:        # targets generados desde core/ por runtime/delivery/build.mjs
     - delivery/plain/README.md
 
 webapp:          # UX web multitenant (Next.js, :4312) — el producto laboral
-  note: "Servicio multitenant (Postgres+RLS, auth, cifrado). Explorar URL + GUION E2E (constructor visual, import/export JSON, guion por HU, fan-out de Feature, panel de AC + cobertura). Ver docs/MULTITENANT.md."
+  note: "Servicio multitenant (Postgres+RLS, auth, cifrado). Explorar URL + GUION E2E (constructor visual, import/export JSON, guion por HU, fan-out de Feature, panel de AC + cobertura + AUTOGENERACIÓN del guion desde los AC, sin IA). Ver docs/MULTITENANT.md."
 
 packs:           # opcionales, NO instalados por defecto
   dev-side:

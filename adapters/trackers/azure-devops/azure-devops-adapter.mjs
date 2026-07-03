@@ -135,6 +135,10 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
       const files = Array.isArray(r.files) ? r.files : [];
       if (!files.length) continue;
 
+      // Resuelve el Task hijo (convención FLIT). Si NINGUNA estrategia matchea, se adjunta DIRECTO
+      // a la HU/WI padre para que la evidencia SIEMPRE quede visible en el work item. Antes, en E2E
+      // el tc_id es el nº de la propia HU y casi nunca existe un Task hijo con ese título → las
+      // capturas caían en `unmatched` y no se subían. Ahora el destino es el Task si lo hay, o la HU.
       const m = await resolveTaskId({
         evidence: r,
         parentId,
@@ -143,7 +147,10 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
         repoRoot: this.repoRoot,
         client: this.client,
       });
-      if (!m.taskId) {
+      const targetId = m.taskId || parentId;
+      const strategy = m.taskId ? m.strategy : "parent_work_item";
+      if (!targetId) {
+        // Sin Task y sin HU padre (no debería pasar con azure) → se registra, no se pierde silencioso.
         summary.unmatched.push({ tc_id: r.tc_id ?? null, reason: m.warning });
         continue;
       }
@@ -160,7 +167,7 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
           summary.skipped.push({ file: f, reason: `upload ${up.status}` });
           continue;
         }
-        const rel = await this.client.patchWorkItem(m.taskId, [
+        const rel = await this.client.patchWorkItem(targetId, [
           {
             op: "add",
             path: "/relations/-",
@@ -169,7 +176,7 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
         ]);
         if (rel.status >= 200 && rel.status < 300) {
           summary.uploaded++;
-          summary.linked.push({ tc_id: r.tc_id ?? null, taskId: m.taskId, file: path.basename(abs), strategy: m.strategy });
+          summary.linked.push({ tc_id: r.tc_id ?? null, taskId: targetId, file: path.basename(abs), strategy });
         } else {
           summary.skipped.push({ file: f, reason: `link ${rel.status}` });
         }

@@ -29,6 +29,7 @@ export function useDbConnections() {
             selected: "local",
             azure: { orgUrl: "", project: "", pat: "", userEmail: "" },
           },
+          ai: { enabled: false, endpoint: "http://localhost:11434", model: "" },
         }),
       );
   }, []);

@@ -98,6 +98,14 @@ export interface TrackerConfig {
   azure: AzureCfg;
 }
 
+// Config de IA (asistente de guion). OFF por defecto; el núcleo NUNCA depende de IA. Ollama es
+// LOCAL (los datos no salen); el modelo lo elige/escribe el usuario (sin sesgo). Sin secretos.
+export interface AiConfig {
+  enabled: boolean; // usar IA (Ollama) para generar el guion desde los AC
+  endpoint: string; // p.ej. http://localhost:11434
+  model: string; // p.ej. llama3.1, qwen2.5, mistral — lo elige el usuario
+}
+
 // ---------- Configuración persistente (data/config.json) ----------
 
 export interface AppConfig {
@@ -105,6 +113,8 @@ export interface AppConfig {
   databases: DbConnection[];
   /** Configuración del tracker (dónde se reportan los resultados). */
   tracker: TrackerConfig;
+  /** Config de IA (asistente de guion). OFF por defecto. */
+  ai: AiConfig;
 }
 
 export const SECRET_MASK = "••••••••";

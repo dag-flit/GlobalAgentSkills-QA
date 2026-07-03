@@ -49,6 +49,11 @@ export function RunDetail({ id }: { id: string }) {
                   {h.status === "passed" ? "✅" : h.status === "failed" ? "❌" : "⏭"}
                 </span>{" "}
                 HU {h.id}{h.title ? ` — ${h.title}` : ""} <span className="text-muted">({h.status})</span>
+                {h.origen && (
+                  <span className={`badge text-[10px] ml-1 ${/IA/.test(h.origen) ? "bg-accent/20 text-accent" : "bg-panel2 text-muted"}`}>
+                    {/IA/.test(h.origen) ? "🤖 " : ""}guion {h.origen}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

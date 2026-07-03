@@ -156,6 +156,53 @@ async function stepCaptura({ page, args, env, vars, evidenceDir, index }) {
   return { ok: true };
 }
 
+// ── Login automático (heurístico y GENÉRICO, sin sesgo de app) ─────────────────
+// Devuelve el PRIMER localizador candidato que existe en la página (count>0). Determinista.
+async function firstPresent(page, makers) {
+  for (const mk of makers) {
+    try {
+      const loc = mk();
+      if (loc && (await loc.count()) > 0) return typeof loc.first === "function" ? loc.first() : loc;
+    } catch {
+      /* candidato inválido → siguiente */
+    }
+  }
+  return null;
+}
+
+// Inicia sesión sin depender de una app concreta: usuario por etiqueta/heurística (usuario/correo/
+// email/user), clave por input[type=password] (señal fiable), enviar por botón submit o con texto
+// de acceso. Credenciales SIEMPRE por ${QA_USER}/${QA_PASS} (interpoladas de vars/env; nunca en el
+// guion). Se inyecta al inicio del guion autogenerado cuando la corrida trae credenciales, para
+// navegar autenticado. Si no encuentra un campo, falla con mensaje accionable (no adivina a ciegas).
+async function stepLogin({ page, args, env, vars, timeout }) {
+  const user = interpolate(args.usuario ?? "${QA_USER}", { env, vars });
+  const pass = interpolate(args.clave ?? "${QA_PASS}", { env, vars });
+  if (!user || !pass) return { ok: false, message: "login sin credenciales (define ${QA_USER}/${QA_PASS} en la corrida)" };
+
+  const userLoc = await firstPresent(page, [
+    () => page.getByLabel(/usuario|correo|e-?mail|user/i),
+    () => page.locator('input[type="email"]'),
+    () => page.locator('input[name*="user" i], input[id*="user" i], input[name*="email" i]'),
+    () => page.locator('input[type="text"]'),
+  ]);
+  if (!userLoc) return { ok: false, message: "login: no se encontró el campo de usuario" };
+  await userLoc.fill(user);
+
+  const passLoc = await firstPresent(page, [() => page.locator('input[type="password"]')]);
+  if (!passLoc) return { ok: false, message: "login: no se encontró el campo de contraseña" };
+  await passLoc.fill(pass);
+
+  const btn = await firstPresent(page, [
+    () => page.getByRole("button", { name: /iniciar|ingres|entrar|acceder|log\s?in|sign\s?in/i }),
+    () => page.locator('button[type="submit"], input[type="submit"]'),
+    () => page.getByRole("button"),
+  ]);
+  if (!btn) return { ok: false, message: "login: no se encontró el botón de acceso" };
+  await btn.click({ timeout });
+  return { ok: true };
+}
+
 // ── Entrada avanzada ──────────────────────────────────────────────────────────
 async function stepSeleccionar({ page, args, env, vars }) {
   const loc = resolveLocator(page, args, { env, vars });
@@ -240,6 +287,7 @@ async function stepVerificarMarcado({ page, args, env, vars }) {
 /** Registro nombre→handler. Crecer aquí (por categorías) en las tandas siguientes. */
 export const STEPS = {
   ir_a: stepIrA,
+  login: stepLogin,
   escribir: stepEscribir,
   clic: stepClic,
   tecla: stepTecla,
