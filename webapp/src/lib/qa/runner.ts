@@ -8,11 +8,16 @@ import { emitEvent, endRun } from "@/lib/events";
 import { saveRun } from "@/lib/runStore";
 import { currentTenantId, runInTenant } from "@/lib/db/tenantContext";
 import { isStopRequested, clearStop } from "@/lib/procRegistry";
+import { runFeatureFanout } from "./fanout";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
 
 export interface RunInput {
   mode: RunMode;
   appUrl?: string;
+  workItemId?: string;
+  steps?: Array<Record<string, string>>;
+  vars?: Record<string, string>;
+  declaredAcs?: string[]; // AC declarados de la HU → matriz de cobertura en el reporte
 }
 
 /**
@@ -38,7 +43,8 @@ function runId(): string {
 }
 
 function titleFor(input: RunInput): string {
-  return `Explorar → ${input.appUrl || "?"}`;
+  const flow = Array.isArray(input.steps) && input.steps.length > 0;
+  return `Explorar${flow ? " (flujo)" : ""} → ${input.appUrl || "?"}`;
 }
 
 /** Construye el perfil efectivo (default ← preset del tracker) sin tocar el repo. */
@@ -83,6 +89,7 @@ export async function startRun(input: RunInput): Promise<RunRecord> {
     tracker,
     title: titleFor(input),
     appUrl: input.appUrl,
+    workItemId: input.workItemId?.trim() || undefined,
   };
   await saveRun(record); // la fila del run debe existir antes de emitir eventos (FK run_events)
   // La corrida es fire-and-forget tras responder: re-abre el contexto de tenant con un
@@ -129,27 +136,76 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
       return;
     }
 
-    emitEvent(id, "info", `Explorando ${input.appUrl}…`);
-    const summary = await runQaCycle({
-      repoRoot,
-      env,
-      profile,
-      workItemId: "local",
-      appUrl: input.appUrl,
-      explore: true,
-      launchBrowser,
-    });
+    // Con pasos → GUION (flujo E2E): la URL viaja como primer paso, no como appUrl. El WI real
+    // (no "local") comenta la evidencia y traza el caso (tcId) para el attach en ADO.
+    const useFlow = Array.isArray(input.steps) && input.steps.length > 0;
+    const workItemId = input.workItemId?.trim() || "local";
 
-    for (const w of summary.warnings || []) emitEvent(id, "stderr", `⚠ ${w}`);
+    // ¿Fan-out de Feature? Solo azure con WI real: si el WI destino es un Feature, se recorre cada
+    // HU hija y se corre su guion GUARDADO (el de la HU), publicando evidencia en cada una.
+    let fanout: any = null;
+    if (tracker === "azure-devops" && workItemId !== "local") {
+      try {
+        const { getAdapter } = await importKit("core/tracker-adapter/index.mjs");
+        const adapter = getAdapter({ profile, env, repoRoot });
+        const wi = await adapter.getWorkItem(workItemId);
+        if (wi?.type === "Feature") {
+          emitEvent(id, "system", `WI ${workItemId} es un Feature → fan-out por HU hija (guion guardado de cada una).`);
+          fanout = await runFeatureFanout(workItemId, {
+            runQaCycle,
+            getChildren: (fid: string) => adapter.getChildren(fid),
+            // AC declarados de CADA HU hija → su matriz de cobertura (detecta "sin cubrir").
+            getDeclaredAcs: async (cid: string) => {
+              const child = await adapter.getWorkItem(cid).catch(() => null);
+              return (child?.acceptance_criteria || [])
+                .map((a: any) => (typeof a === "string" ? a : a?.title))
+                .filter((t: any) => t && String(t).trim() !== "");
+            },
+            profile,
+            env,
+            repoRoot,
+            launchBrowser,
+            vars: input.vars || {},
+            emit: (lvl: string, msg: string) => emitEvent(id, lvl as any, msg),
+          });
+        }
+      } catch (e: any) {
+        emitEvent(id, "stderr", `No se pudo evaluar el fan-out de Feature: ${describeError(e)}. Sigo como corrida única.`);
+      }
+    }
 
-    const fails = (summary.results || []).filter((r: any) => r.status === "fail").length;
-    record.status = summary.stopped ? "error" : fails ? "failed" : "passed";
+    let summary: any;
+    if (fanout) {
+      summary = fanout;
+      record.status = !fanout.anyRun ? "error" : fanout.anyFail ? "failed" : "passed";
+      if (!fanout.anyRun) emitEvent(id, "error", "Ninguna HU hija tenía guion guardado.");
+      emitEvent(id, "result", `Fan-out terminado: ${record.status} · ${fanout.hus.length} HU(s).`);
+    } else {
+      emitEvent(id, "info", useFlow ? `Ejecutando flujo de ${input.steps!.length} paso(s)…` : `Explorando ${input.appUrl}…`);
+      summary = await runQaCycle({
+        repoRoot,
+        env,
+        profile,
+        workItemId,
+        appUrl: useFlow ? undefined : input.appUrl,
+        flow: useFlow ? input.steps : undefined,
+        vars: input.vars || {},
+        tcId: workItemId !== "local" ? workItemId : undefined,
+        declaredAcs: input.declaredAcs || [],
+        explore: true,
+        launchBrowser,
+      });
+      for (const w of summary.warnings || []) emitEvent(id, "stderr", `⚠ ${w}`);
+      const fails = (summary.results || []).filter((r: any) => r.status === "fail").length;
+      record.status = summary.stopped ? "error" : fails ? "failed" : "passed";
+      emitEvent(id, "result", `Ciclo terminado: ${record.status} · ${fails} fallo(s).`);
+      const local = summary.report?.local || summary.report;
+      if (local?.htmlPath) emitEvent(id, "info", `Reporte: ${local.htmlPath}`);
+    }
+
     record.summary = summary;
     record.finishedAt = new Date().toISOString();
     await saveRun(record);
-    emitEvent(id, "result", `Ciclo terminado: ${record.status} · ${fails} fallo(s).`);
-    const local = summary.report?.local || summary.report;
-    if (local?.htmlPath) emitEvent(id, "info", `Reporte: ${local.htmlPath}`);
   } catch (e: any) {
     record.status = "error";
     record.error = describeError(e);

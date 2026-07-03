@@ -13,9 +13,13 @@ const TRACKERS: { id: TrackerName; label: string; desc: string; icon: string }[]
 type TestState = { status: "idle" | "testing" | "ok" | "err"; detail?: string };
 
 export function TrackerStep({
+  workItem,
+  onWorkItem,
   onBack,
   onContinue,
 }: {
+  workItem?: string;
+  onWorkItem?: (v: string) => void;
   onBack?: () => void;
   onContinue?: (t: TrackerName) => void;
 }) {
@@ -165,6 +169,23 @@ export function TrackerStep({
             </Field>
             <Field label="Tu email (supervisión)">
               <input className="input" value={t.azure.userEmail} onChange={(e) => patchAzure({ userEmail: e.target.value })} />
+            </Field>
+          </div>
+        )}
+
+        {/* WI destino de la evidencia (por corrida, NO se guarda en la config). Solo Azure. */}
+        {t.selected === "azure-devops" && onWorkItem && (
+          <div className="rounded-lg border border-border bg-panel2/40 p-3 space-y-1">
+            <Field
+              label="WI destino (HU / Feature / Task)"
+              hint="Id del work item donde se comenta la evidencia. Vacío = solo reporte local."
+            >
+              <input
+                className="input font-mono"
+                placeholder="ej. 10118"
+                value={workItem ?? ""}
+                onChange={(e) => onWorkItem(e.target.value)}
+              />
             </Field>
           </div>
         )}

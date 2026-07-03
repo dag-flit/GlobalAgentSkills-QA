@@ -67,10 +67,25 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
       id: String(id),
       title: fields["System.Title"] || `WI ${id}`,
       state: fields["System.State"] || "unknown",
+      type: fields["System.WorkItemType"] || "unknown",
       acceptance_criteria: parseAc(fields[acField] || ""),
       raw: fields,
       stub: false,
     };
+  }
+
+  // HU hijas directas de un Feature (para el fan-out por HU). WIQL por [System.Parent] y luego
+  // se lee cada hija para su título/tipo/estado. Degrada a [] si la consulta no devuelve nada.
+  async getChildren(id) {
+    const wiql = `SELECT [System.Id] FROM WorkItems WHERE [System.Parent] = ${Number(id) || 0}`;
+    const res = await this.client.queryByWiql(wiql);
+    const items = (res.json && res.json.workItems) || [];
+    const out = [];
+    for (const it of items) {
+      const wi = await this.getWorkItem(it.id);
+      if (wi) out.push({ id: wi.id, title: wi.title, type: wi.type, state: wi.state });
+    }
+    return out;
   }
 
   async publishEvidence(target, payload) {

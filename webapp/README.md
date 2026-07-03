@@ -41,10 +41,17 @@ puede corromperse). Si la UI se rompe: detén dev → borra `.next` → reinicia
   con "Probar conexión" real y secretos enmascarados.
 - **Ajustes** (`/settings`): credenciales del tracker (**Local** / **Azure DevOps**) con
   "Probar conexión" (preflight real del adapter).
-- **Ejecutar** (`/`): asistente de un solo flujo — **Explorar una URL**: `Tracker → URL → Ejecutar`.
-  Abre la app viva con Playwright y registra status HTTP + errores de consola + una captura por página.
-- **Ejecución en vivo** (`/runs/[id]`): consola por SSE + resultados claros (qué se exploró,
-  duración, casos por URL con pass/fail), reporte y galería de capturas.
+- **Ejecutar** (`/`): asistente `Tracker → URL → Pasos → Ejecutar`.
+  - **URL-smoke:** abre la app viva con Playwright y registra status HTTP + errores de consola + captura.
+  - **GUION E2E:** **constructor visual** de un flujo de pasos (login → navegar → verificar) para no
+    técnicos (sin YAML), con localizadores amigables, secretos por `${QA_USER}`/`${QA_PASS}` (efímeros),
+    **captura + evidencia por paso**, **Importar/Exportar guion (JSON)** y **guardado del guion por HU**.
+  - **Fan-out de Feature:** si el WI destino es un Feature, corre el guion guardado de **cada HU hija** y
+    publica evidencia por HU.
+  - **Criterios de aceptación:** panel que trae los AC declarados de la HU (o de las HU de un Feature) y
+    desplegable por paso de verificación para etiquetar qué AC prueba → **matriz de cobertura** en el reporte.
+- **Ejecución en vivo** (`/runs/[id]`): consola por SSE + resultados (casos/pasos con pass/fail),
+  tarjeta de **cobertura de AC**, tarjeta de **fan-out**, reporte y galería de capturas.
 
 ## Dónde quedan las evidencias (y por qué NO se suben al repo)
 
@@ -64,7 +71,7 @@ ahí y se embeben en el HTML).
 ## Pruebas
 
 ```bash
-node ../runtime/smoke-test.mjs                 # motor del kit → 14/14
+node ../runtime/smoke-test.mjs                 # motor del kit → 19/19
 node ../scripts/check-line-budget.mjs all      # regla de 400 líneas → 0 violaciones
 npx tsc --noEmit                               # typecheck de la webapp
 ```
@@ -78,13 +85,13 @@ npx tsc --noEmit                               # typecheck de la webapp
 
 ```
 src/middleware.ts   portón de auth (Edge) + cabeceras de seguridad
-src/app/            páginas (login, register, …) + API routes (auth/*, config, db/test, tracker/test, runs/*, artifacts)
-src/components/      AppShell · SessionBadge · AuthCard · run-wizard/* · db-connections/* · run-detail/* · ui
+src/app/            páginas (login, register, …) + API routes (auth/*, config, db/test, tracker/{test,workitem}, flows, runs/*, artifacts)
+src/components/      AppShell · SessionBadge · AuthCard · run-wizard/{StepsStep,AcPanel,FlowImportExport,steps-catalog,…} · db-connections/* · run-detail/* · ui
 src/lib/auth/        password (scrypt) · session · context · cookie · route (withTenantScope)
-src/lib/db/          pool · tx (withTenant) · tenantContext (ALS) · {config,runs,events,session,auth}Repo · secretsMapper
+src/lib/db/          pool · tx (withTenant) · tenantContext (ALS) · {config,runs,events,session,auth,flows}Repo · secretsMapper
 src/lib/security/    secretsCrypto (AES-GCM) · paths (anti-traversal)
 src/lib/validation/  schemas (zod) · parse
-src/lib/qa/          puentes al motor del kit: runner (runQaCycle) · tracker · kit
+src/lib/qa/          puentes al motor del kit: runner (runQaCycle) · fanout (Feature→HU) · tracker · kit
 db/                  migrations/*.sql + migrate.mjs + provision.sql
 scripts/             retention.mjs (retención por tenant)
 data/                local, NO versionado (evidencia por tenant)

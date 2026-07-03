@@ -21,7 +21,11 @@ import { runExplore } from "./runners/explore.mjs";
  * @param {object} [opts.profile]        perfil ya resuelto (si no, se resuelve del repo)
  * @param {string} [opts.workItemId]     HU/Feature destino de la evidencia (o "local")
  * @param {function} [opts.http]         transporte HTTP inyectable para el adapter (tests offline)
- * @param {string} [opts.appUrl]         URL viva a explorar (sin ella, no se explora nada)
+ * @param {string} [opts.appUrl]         URL viva a explorar (modo URL-smoke)
+ * @param {Array} [opts.flow]            guion de pasos (modo flujo E2E); corre con appUrl o con flow
+ * @param {object} [opts.vars]           variables de la corrida para `${VAR}` del guion
+ * @param {string} [opts.tcId]           id del caso/HU para trazar la evidencia del guion (attach ADO)
+ * @param {string[]} [opts.declaredAcs]  AC declarados de la HU (para la matriz de cobertura)
  * @param {function} [opts.launchBrowser] launcher de navegador inyectable (offline-testable)
  * @returns {Promise<object>} resumen del ciclo
  */
@@ -34,7 +38,11 @@ export async function runQaCycle({
   developer,
   http,
   appUrl,
-  explore = true,   // compat: la exploración corre si hay appUrl
+  flow,
+  vars = {},
+  tcId,
+  declaredAcs = [],
+  explore = true,   // compat: la exploración corre si hay appUrl o un guion
   launchBrowser,
 } = {}) {
   const resolvedProfile = profile || resolveProfile({ repoRoot }).profile;
@@ -50,10 +58,11 @@ export async function runQaCycle({
     }
   }
 
-  // ── Exploración de la URL viva (única capa del kit) ─────────────────────────
+  // ── Exploración de la URL viva / guion E2E (única capa del kit) ──────────────
   const results = [];
-  if (explore && appUrl) {
-    const explored = await runExplore({ repoRoot, env, appUrl, launchBrowser });
+  const hasFlow = Array.isArray(flow) && flow.length > 0;
+  if (explore && (appUrl || hasFlow)) {
+    const explored = await runExplore({ repoRoot, env, appUrl, flow, vars, tcId, declaredAcs, launchBrowser });
     results.push(...explored);
   }
 

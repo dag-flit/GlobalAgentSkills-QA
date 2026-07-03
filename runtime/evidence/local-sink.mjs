@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { renderCoverageMd, renderCoverageHtml } from "./ac-coverage.mjs";
 
 function todayStamp(tz) {
   // tz reservado para F1 (locale.timezone); por ahora fecha ISO local
@@ -27,8 +28,10 @@ function caseCounts(cases) {
   const c = (s) => cases.filter((x) => x.status === s).length;
   return `✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}`;
 }
-// Render HTML del detalle de TC (un bloque <details> por capa/herramienta).
-function casesHtml(results) {
+// Render HTML del detalle paso a paso. Embebe la captura de CADA paso (línea de tiempo del
+// flujo) usando el mapa src→rel; los `src` embebidos se marcan en `embedded` para no repetirlos
+// luego en la galería del pie.
+function casesHtml(results, byFile = {}, embedded = new Set()) {
   const withCases = results.filter((r) => Array.isArray(r.cases) && r.cases.length);
   if (!withCases.length) return "";
   const blocks = withCases
@@ -43,15 +46,21 @@ function casesHtml(results) {
                   String(tc.message).split(/\r?\n/).slice(0, 3).join("\n")
                 )}</div>`
               : "";
-          return `<li>${ic} ${esc(tc.name)}${d}${msg}</li>`;
+          const uri = tc.file && byFile[tc.file];
+          let img = "";
+          if (uri) {
+            embedded.add(tc.file);
+            img = `<div style="margin:.3rem 0 .7rem 1.4rem"><img src="${uri}" alt="${esc(tc.name)}" loading="lazy" style="max-width:560px;width:100%;border:1px solid #ccc;border-radius:6px"></div>`;
+          }
+          return `<li style="margin:.35rem 0">${ic} ${esc(tc.name)}${d}${msg}${img}</li>`;
         })
         .join("");
       return `<details open style="margin:.5rem 0"><summary><b>${esc(r.layer)} — ${esc(
         r.metrics?.tool ?? ""
-      )}</b>${caseWhere(r)} · ${caseCounts(r.cases)}</summary><ul style="margin:.4rem 0">${items}</ul></details>`;
+      )}</b>${caseWhere(r)} · ${caseCounts(r.cases)}</summary><ul style="margin:.4rem 0;list-style:none;padding-left:.4rem">${items}</ul></details>`;
     })
     .join("");
-  return `<h2>Detalle de pruebas (TC ejecutados)</h2>${blocks}`;
+  return `<h2>Detalle del flujo (paso a paso)</h2>${blocks}`;
 }
 
 // Línea "qué se ejecutó": comando exacto + duración + código de salida, desde las métricas.
@@ -63,9 +72,16 @@ function execLine(r) {
   return parts.join(" · ");
 }
 
-// Copia las capturas (png/jpg) de los resultados a <dir>/capturas/ y devuelve sus refs relativas.
-// Así la carpeta de evidencia queda AUTOCONTENIDA (reporte + imágenes juntos, portable y
-// adjuntable). Best-effort: si un archivo no existe o no se puede copiar, se omite sin romper.
+// data-URI de una imagen (png/jpg) → el HTML embebe la captura y NO depende de rutas externas.
+// Así el reporte funciona servido por un proxy, abierto del disco o adjunto por correo.
+function dataUri(buf, file) {
+  const mime = /\.jpe?g$/i.test(file) ? "image/jpeg" : "image/png";
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
+// Copia las capturas (png/jpg) de los resultados a <dir>/capturas/ (para tener los archivos
+// sueltos) Y calcula su data-URI (para embeberlas en el HTML, que queda AUTOCONTENIDO).
+// Best-effort: si un archivo no existe o no se puede leer, se omite sin romper.
 function collectShots(results, dir) {
   const out = [];
   const capDir = path.join(dir, "capturas");
@@ -79,9 +95,10 @@ function collectShots(results, dir) {
           fs.mkdirSync(capDir, { recursive: true });
           made = true;
         }
+        const buf = fs.readFileSync(f);
         const baseName = `${slug(r.layer)}-${path.basename(f)}`;
-        fs.copyFileSync(f, path.join(capDir, baseName));
-        out.push({ layer: r.layer, rel: `capturas/${baseName}`, name: path.basename(f) });
+        fs.writeFileSync(path.join(capDir, baseName), buf);
+        out.push({ layer: r.layer, rel: `capturas/${baseName}`, name: path.basename(f), src: f, data: dataUri(buf, f) });
       } catch {
         /* best-effort */
       }
@@ -182,6 +199,15 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   const fail = results.filter((r) => r.status === "fail").length;
   const skip = results.filter((r) => r.status === "skip").length;
 
+  // Veredicto a nivel de PASO (cases): el flujo se mide por pasos, no por capas.
+  const allCases = results.flatMap((r) => (Array.isArray(r.cases) ? r.cases : []));
+  const stepPass = allCases.filter((c) => c.status === "pass").length;
+  const stepFail = allCases.filter((c) => c.status === "fail").length;
+  const failed = fail > 0 || stepFail > 0;
+  const verdictTxt = failed
+    ? `❌ FALLÓ — ${stepFail} de ${allCases.length} paso(s) con problemas`
+    : `✅ PASÓ${allCases.length ? ` — ${stepPass}/${allCases.length} paso(s) ok` : ""}`;
+
   // ---- Markdown ----
   const md = [];
   md.push(`# Reporte QA local`);
@@ -195,8 +221,12 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
     md.push(trace.join("  ·  "));
   }
   md.push("");
+  md.push(`**Veredicto:** ${verdictTxt}`);
+  md.push("");
   md.push(`**Resumen:** ${total} total · ✅ ${pass} pass · ❌ ${fail} fail · ⏭ ${skip} skip`);
   md.push("");
+  // Cobertura de criterios de aceptación (matriz AC ↔ pasos) — cuando el guion la declara.
+  for (const r of results) if (r.coverage) for (const line of renderCoverageMd(r.coverage)) md.push(line);
   // Plan de pruebas del Feature (paridad con la Task del tracker) — antes de la tabla de capas.
   for (const line of planMd(plan, results)) md.push(line);
   md.push("| Capa | TC | Resultado | Notas |");
@@ -266,23 +296,43 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
       )}</td><td>${note}</td></tr>`;
     })
     .join("\n");
-  const shotsHtml = shots.length
-    ? `<h2>Capturas</h2>${shots
+  // Detalle paso a paso con la captura embebida en cada paso; marca las capturas ya mostradas
+  // para no repetirlas en la galería del pie.
+  // Se embebe la captura como data-URI (HTML autocontenido) en vez de una ruta relativa que un
+  // proxy no podría resolver. Los `src` embebidos se marcan para no repetirlos en la galería.
+  const byData = Object.fromEntries(shots.map((s) => [s.src, s.data]));
+  const embedded = new Set();
+  const casesBlock = casesHtml(results, byData, embedded);
+  const galleryShots = shots.filter((s) => !embedded.has(s.src));
+
+  const verdictColor = failed
+    ? "border:1px solid #f5c6cb;background:#fdecea;color:#b00020"
+    : "border:1px solid #b6e0c2;background:#e7f6ec;color:#0a7a34";
+  const verdictHtml = `<div style="${verdictColor};padding:10px 14px;border-radius:8px;font-weight:600;margin:.6rem 0">${esc(verdictTxt)}</div>`;
+
+  const shotsHtml = galleryShots.length
+    ? `<h2>Otras capturas</h2>${galleryShots
         .map(
           (s) =>
-            `<figure style="margin:.6rem 0"><img src="${s.rel}" alt="${esc(s.layer)}" style="max-width:100%;border:1px solid #ccc;border-radius:6px"><figcaption style="color:#666;font-size:.85em">${esc(
+            `<figure style="margin:.6rem 0"><img src="${s.data}" alt="${esc(s.layer)}" style="max-width:100%;border:1px solid #ccc;border-radius:6px"><figcaption style="color:#666;font-size:.85em">${esc(
               s.layer
             )} — ${esc(s.name)}</figcaption></figure>`
         )
         .join("")}`
     : "";
+  const wiHtml =
+    workItemId && workItemId !== "local" ? `<p><b>WI destino:</b> ${esc(workItemId)}</p>` : "";
+  const coverageBlock = results.filter((r) => r.coverage).map((r) => renderCoverageHtml(r.coverage)).join("");
   const html = `<!doctype html><meta charset="utf-8">
 <title>Reporte QA local</title>
 <body style="font-family:system-ui,Arial,sans-serif;max-width:900px;margin:2rem auto;color:#222">
 <h1>Reporte QA local</h1>
 <p><b>Fecha:</b> ${stamp} · <b>Proyecto:</b> ${esc(profile.project?.name ?? "auto")} · <b>Tracker:</b> local</p>
+${wiHtml}
 ${featureId || developer ? `<p>${[featureId ? `<b>Feature (FT):</b> ${esc(featureId)}` : null, developer ? `<b>Desarrollador:</b> ${esc(developer)}` : null].filter(Boolean).join(" · ")}</p>` : ""}
+${verdictHtml}
 <p><b>Resumen:</b> ${total} total · ✅ ${pass} pass · ❌ ${fail} fail · ⏭ ${skip} skip</p>
+${coverageBlock}
 ${planHtml(plan, results)}
 <table style="border-collapse:collapse;width:100%">
 <thead><tr>${["Capa", "TC", "Resultado", "Notas"]
@@ -290,7 +340,7 @@ ${planHtml(plan, results)}
     .join("")}</tr></thead>
 <tbody>${rows.replace(/<td>/g, '<td style="border:1px solid #ccc;padding:6px 8px">')}</tbody>
 </table>
-${casesHtml(results)}
+${casesBlock}
 ${shotsHtml}
 </body>`;
   const htmlPath = path.join(dir, "report.html");

@@ -40,6 +40,7 @@ export interface RunRecord {
   // inputs
   repoRoot?: string; // carpeta de evidencia de la corrida (capturas)
   appUrl?: string;
+  workItemId?: string; // WI destino de la evidencia (Azure); ausente/"local" = solo reporte local
   // outputs
   summary?: any; // resumen de runQaCycle
   error?: string;

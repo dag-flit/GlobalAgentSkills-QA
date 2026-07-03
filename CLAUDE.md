@@ -34,9 +34,65 @@ personal** (`damadogar/quality-assurance-suite`), no aquí.
   commentFindings, evidencia por HU) — eran residuo del pipeline eliminado.
 - **CLI (`runtime/cli.mjs`):** `node runtime/cli.mjs --url <https://app> [-w <HU>] [-f <FT>] [-d "<dev>"]`.
 - **Webapp:** modo único "Explorar una URL" (`Tracker → URL → Ejecutar`). Tracker: Local o Azure.
-- **Smoke:** `node runtime/smoke-test.mjs` → **14/14** (resolver: perfil/factory/sink; explore-suite:
-  adapter azure + adjuntos, runner explore, `runQaCycle` local+azure, guarda sin `-w`, retry HTTP,
+- **Smoke:** `node runtime/smoke-test.mjs` → **19/19** (resolver; explore-suite: adapter azure +
+  adjuntos + `getChildren`, runner explore, guion de pasos + localizadores, entrada avanzada +
+  verificaciones ricas, cobertura de AC, `runQaCycle` local+azure+flow, guarda sin `-w`, retry HTTP,
   guardrail de líneas). Todo offline (launcher y transporte HTTP inyectables).
+
+### Modo GUION E2E (flujo de pasos) — en construcción (Fase 4 en progreso)
+
+Sobre el kit explore-only se agregó un **modo GUION**: además del URL-smoke, se puede correr un **flujo
+de pasos** (login → navegar → verificar) sobre una misma sesión, con **captura + evidencia por paso**.
+Se maneja desde la webapp con un **constructor visual para no técnicos** (sin YAML). Detalle y estado en
+la memoria [[e2e-flujo-guion]].
+- **Motor:** `runtime/runners/explore-steps.mjs` (registro de PASOS + `resolveLocator` + `${VAR}`) y
+  `explore-flow.mjs` (ejecutor: orden, fail-fast, captura por paso vinculada al caso). `explore.mjs`
+  bifurca: con `flow` → guion; si no → URL-smoke (compat). Orquestador y CLI aceptan `--flow`.
+- **Catálogo (20 pasos)** por grupos: Navegación / Entrada / Espera / Verificación / Evidencia.
+- **Localizadores amigables** (`por`: etiqueta/placeholder/texto/boton/css): se apunta por lo visible,
+  no por CSS. **Secretos** por `${QA_USER}`/`${QA_PASS}` (efímeros, nunca en el guion).
+- **Reporte auto-contenido:** el `local-sink` embebe las capturas como **data-URI** (no rutas relativas)
+  + veredicto + timeline paso a paso.
+- **F4.1 hecho:** contrato + adapters con `getWorkItem().type` y `getChildren(id)` (Azure por WIQL;
+  local `[]`) — base del fan-out de Feature.
+- **F4.2 hecho:** persistencia de guiones por HU. Migración `db/migrations/0005_flows.sql` (tabla `flows`
+  con `tenant_id` + FORCE RLS + policy, patrón 0003) **ya aplicada**; `lib/db/flowsRepo.ts` (get/saveFlow
+  por `withTenant`) + API `api/flows` (GET/PUT, `flowSaveSchema` zod). Los guiones NO guardan credenciales.
+- **F4.3 hecho:** guardar/cargar guion en la HU desde el constructor (`useRunWizard` + `StepsStep`); el
+  guion guardado es auto-contenido (el `ir_a` de la URL es el primer paso). Requiere WI destino (Azure).
+- **F4.4 hecho:** fan-out de Feature en la webapp (`lib/qa/fanout.ts` + `runner.ts`): si el WI destino es
+  Feature → recorre `getChildren`, corre el guion guardado (`getFlow`) de cada HU vía `runQaCycle` y
+  publica evidencia por HU; HU sin guion se salta con aviso. `RunDetail` muestra la tarjeta de fan-out.
+- **F4.5 hecho:** campo **Importar/Exportar guion (JSON)** en el constructor
+  (`run-wizard/FlowImportExport.tsx` + `useRunWizard.importFlowJson/exportFlowJson`). Pegar un guion
+  en JSON lo carga de una vez en el constructor (separa el `ir_a` inicial → URL + pasos, valida cada
+  `op` contra el catálogo, NUNCA ejecuta el texto); Exportar serializa lo armado. Sirve para pegar un
+  guion producido fuera (p.ej. una exploración de Claude) sin escribir paso a paso. No importa
+  credenciales (viajan como `${QA_USER}`/`${QA_PASS}`).
+- **Fase 4 COMPLETA** (motor + persistencia + UI + import/export). **Falta:** validación end-to-end del
+  usuario con un Feature+HU reales en ADO.
+
+### Enfoque A — cobertura de criterios de aceptación (AC) por HU — en progreso
+
+Objetivo: **validar los AC de cada HU dentro del E2E** SIN revivir el pipeline purgado (nada de generar
+tests desde el requerimiento ni IA). Es **aditivo y determinista**: se mapea la evidencia del guion a los
+AC declarados de la HU. NO altera el guion actual ni el fan-out.
+- **A.1 hecho (mostrar los AC):** el adapter azure ya devuelve `acceptance_criteria: [{title, detail}]`
+  (`getWorkItem` → `parseAc`). Se agregó ruta de lectura `webapp/src/app/api/tracker/workitem/route.ts`
+  (GET `?wid`, solo Azure, usa la config guardada del tenant — el PAT nunca viaja al navegador) y la
+  tarjeta `run-wizard/AcPanel.tsx` (carga a demanda, solo lectura) enganchada en `StepsStep`. Muestra los
+  criterios declarados para tenerlos a la vista al armar el guion. **Feature-aware:** si el WI es un
+  Feature, la ruta detecta las HU hijas (`getChildren`) y trae los AC de cada una (`getWorkItem` por hija);
+  el panel las lista con sus criterios (mismo criterio que el fan-out). WI simple → sus propios AC.
+- **A.2 hecho (matriz de cobertura):** cada paso de verificación puede declarar qué AC prueba (`ac`).
+  Motor: `runtime/evidence/ac-coverage.mjs` (puro: cruza `case.ac` con `declaredAcs` → cubierto/fallo/sin
+  cubrir); `explore-flow` adjunta `ac` al caso, `explore.runFlowMode` adjunta `coverage` al EvidenceObject,
+  `orchestrator`/`runExplore` aceptan `declaredAcs`. Reporte: `local-sink` (sección md+html) y `ado-html`
+  (línea + lista en el comentario del WI). Webapp: `steps-catalog.provesAc` + `cleanStep` incluye `ac`;
+  `StepsStep` muestra un desplegable "¿Qué AC prueba?" en verificaciones (poblado por `w.acs`, que setea
+  `AcPanel` al cargar una HU); `useRunWizard` envía `declaredAcs`; `runner`/`fanout` los pasan (fan-out:
+  AC declarados POR HU vía `getWorkItem`); `RunDetail` muestra la tarjeta de cobertura. Smoke **19/19**.
+  Es MAPEO determinista (NO genera pruebas ni usa IA). **Enfoque A COMPLETO** (mostrar AC + matriz).
 
 ### Cómo se hizo el giro (4 fases, todas HECHAS)
 
@@ -63,7 +119,7 @@ personal** (`damadogar/quality-assurance-suite`), no aquí.
 5. **Ejecución/transporte inyectables** (launcher de navegador + HTTP) → todo offline-testable.
 6. **Ningún archivo de código supera 400 líneas** (`.mjs/.ts/.tsx`). Guardrail:
    `node scripts/check-line-budget.mjs [all|engine|webapp]`. La `ALLOWLIST` está vacía: NO repueblar.
-7. **El smoke queda verde.** Tras cada cambio: `node runtime/smoke-test.mjs` (14/14). Si agregas
+7. **El smoke queda verde.** Tras cada cambio: `node runtime/smoke-test.mjs` (19/19). Si agregas
    capacidades, agrega su caso.
 8. **Webapp multitenant — aislamiento por tenant (detalle en `docs/MULTITENANT.md`).** La webapp es
    un servicio multitenant (Postgres + RLS forzada, auth propia, secretos cifrados AES-256-GCM); el
@@ -73,7 +129,7 @@ personal** (`damadogar/quality-assurance-suite`), no aquí.
    - **Secretos SOLO por `secretsCrypto`/`secretsMapper`; inputs SOLO por zod** (`lib/validation`).
    - **Tabla nueva con datos del tenant** → migración forward-only con `tenant_id` +
      `FORCE ROW LEVEL SECURITY` + policy (copiar `webapp/db/migrations/0003_rls.sql`).
-   - Gate al cerrar: `npx tsc --noEmit` + `check-line-budget all` + smoke 14/14.
+   - Gate al cerrar: `npx tsc --noEmit` + `check-line-budget all` + smoke 19/19.
 
 ## Correcciones / endurecimientos posteriores — registro
 
@@ -84,6 +140,19 @@ personal** (`damadogar/quality-assurance-suite`), no aquí.
 *(Las correcciones del antiguo pipeline de código —guardrail de tracker, TC BDD, detección
 auto-contaminación, novedades en dos niveles— quedaron en el historial junto con el código que las
 contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
+
+- **Reporte con imagen rota (404) → reporte auto-contenido.** El `report.html` embebía las capturas con
+  ruta relativa (`capturas/x.png`); servido por `/api/artifacts?path=…`, el navegador la resolvía a
+  `/api/capturas/x.png` → 404. Fix: `local-sink` embebe las capturas como **data-URI** (base64) dentro
+  del HTML → funciona por proxy, del disco y adjunto por correo. No debilita nada.
+- **Fallback silencioso a URL-smoke → wizard endurecido.** Un paso a medio llenar se descartaba en
+  silencio y la corrida caía a URL-smoke (el usuario creía correr un flujo). Fix: `StepsStep` marca el
+  paso incompleto y **no deja continuar** hasta completarlo o quitarlo.
+- **Desplegable de AC ausente en los pasos → carga automática + aviso.** El desplegable "¿Qué AC prueba?"
+  solo aparecía si `w.acs` estaba poblado, y `AcPanel` cargaba **a demanda** (había que tocar "Ver
+  criterios"): el usuario no lo veía. Fix: `AcPanel` **auto-carga** los AC al entrar con una HU Azure
+  (`useEffect`, con el early-return DESPUÉS de los hooks para no violar las reglas de React) y `StepsStep`
+  muestra un **aviso** en verificaciones cuando no hay AC (cargá el panel / la HU no tiene AC declarados).
 
 ## Mapa del repo
 
@@ -100,7 +169,7 @@ runtime/orchestrator.mjs  runQaCycle slim (perfil → adapter → explore → si
 runtime/evidence/       sink local (md+html)
 runtime/cli.mjs         entrypoint (--url)
 runtime/delivery/build.mjs  empaqueta core/ a plain/claude-code/cursor
-runtime/smoke-test.mjs  prueba el plumbing offline (14/14)
+runtime/smoke-test.mjs  prueba el plumbing offline (19/19)
 webapp/                 UX web multitenant (Next.js, :4312) — el producto
 docs/                   guías (MULTITENANT vigente; el resto es histórico del pipeline retirado)
 manifest.yaml           inventario real, sin drift
@@ -114,7 +183,7 @@ Repo sin perfil → `tracker: local`. `profile: flit` → hereda `flit ← azure
 ## Comandos
 
 ```bash
-node runtime/smoke-test.mjs        # verificar plumbing del motor (debe dar 14/14 OK)
+node runtime/smoke-test.mjs        # verificar plumbing del motor (debe dar 18/18 OK)
 node scripts/check-line-budget.mjs [all|engine|webapp]   # guardrail de 400 líneas (exit 1 si viola)
 node runtime/cli.mjs --url <https://app> [-w <HU>] [-f <FT>] [-d "<dev>"]   # explorar una URL
 node runtime/delivery/build.mjs dist   # generar los targets de entrega en dist/

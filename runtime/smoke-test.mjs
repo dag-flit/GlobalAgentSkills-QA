@@ -11,7 +11,7 @@ import { makeCtx } from "./smoke/_harness.mjs";
 import * as resolver from "./smoke/resolver.mjs";
 import * as explore from "./smoke/explore-suite.mjs";
 
-const EXPECTED = 14;
+const EXPECTED = 19;
 
 console.log("== smoke test (kit acotado a exploración E2E) ==\n");
 

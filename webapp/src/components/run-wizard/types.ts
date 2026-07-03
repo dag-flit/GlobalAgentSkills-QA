@@ -16,6 +16,7 @@ export function buildSteps(): { key: string; label: string }[] {
   return [
     { key: "tracker", label: "Tracker" },
     { key: "url", label: "URL" },
+    { key: "pasos", label: "Pasos" },
     { key: "run", label: "Ejecutar" },
   ];
 }

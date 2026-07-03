@@ -3,20 +3,23 @@
 // fallos (0 sin fallos, 1 con fallos, 2 preflight de tracker, 3 error). Es el ejecutable
 // que usan los tres targets de entrega (plain/claude-code/cursor) vía bin/qa.mjs.
 //
-//   node runtime/cli.mjs --url <https://app> [--work-item <id>] [--repo <dir>]
-//                        [--feature <FT>] [--developer "<nombre>"]
+//   node runtime/cli.mjs (--url <https://app> | --flow <archivo>) [--work-item <id>]
+//                        [--repo <dir>] [--feature <FT>] [--developer "<nombre>"]
 //
-// --url/-u es la app viva a explorar (sin ella no hay nada que probar). --feature/-f y
-// --developer/-d se anexan a la subcarpeta de evidencia (qa-evidence/<fecha>/FT-<feature>__<dev>)
-// para trazar corridas de distintos devs. El tracker (local o azure-devops) sale del perfil.
+// --url/-u es la app viva a explorar (modo URL-smoke). --flow/-F es un GUION de pasos (modo
+// flujo E2E: login → navegar → verificar) en JSON o YAML; los `${VAR}` del guion se resuelven
+// contra el entorno (p.ej. QA_USER/QA_PASS). --feature/-f y --developer/-d se anexan a la
+// subcarpeta de evidencia. El tracker (local o azure-devops) sale del perfil.
 
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runQaCycle } from "./orchestrator.mjs";
+import { parseYaml } from "./profile/yaml-lite.mjs";
 
 const ICONS = { pass: "✅", fail: "❌", skip: "⏭" };
 
 function parseArgs(argv) {
-  const out = { repoRoot: undefined, workItem: "local", feature: undefined, developer: undefined, url: undefined };
+  const out = { repoRoot: undefined, workItem: "local", feature: undefined, developer: undefined, url: undefined, flow: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--work-item" || a === "-w") out.workItem = argv[++i];
@@ -24,9 +27,19 @@ function parseArgs(argv) {
     else if (a === "--feature" || a === "-f") out.feature = argv[++i];
     else if (a === "--developer" || a === "-d") out.developer = argv[++i];
     else if (a === "--url" || a === "-u") out.url = argv[++i];
+    else if (a === "--flow" || a === "-F") out.flow = argv[++i];
     else if (!a.startsWith("-")) out.repoRoot = a;
   }
   return out;
+}
+
+// Carga un guion desde archivo. Acepta un array de pasos, o un objeto { url?, steps, vars? }.
+// .json → JSON nativo; .yaml/.yml → yaml-lite (lista de flow-maps inline).
+function loadFlow(file) {
+  const text = fs.readFileSync(file, "utf8");
+  const data = /\.ya?ml$/i.test(file) ? parseYaml(text) : JSON.parse(text);
+  if (Array.isArray(data)) return { steps: data, url: undefined, vars: {} };
+  return { steps: data.steps || data.pasos || [], url: data.url || data.appUrl, vars: data.vars || {} };
 }
 
 function reportPath(summary) {
@@ -41,17 +54,36 @@ function reportPath(summary) {
  */
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
-  if (!args.url) {
-    console.error("✗ Falta --url <https://app>: indica la URL viva a explorar.");
+
+  let flowSpec = null;
+  if (args.flow) {
+    try {
+      flowSpec = loadFlow(args.flow);
+    } catch (e) {
+      console.error(`✗ No se pudo leer el guion '${args.flow}': ${e.message}`);
+      return 3;
+    }
+  }
+  const appUrl = args.url || (flowSpec && flowSpec.url);
+  const steps = flowSpec && flowSpec.steps;
+  const hasFlow = Array.isArray(steps) && steps.length > 0;
+  if (!appUrl && !hasFlow) {
+    console.error("✗ Falta --url <https://app> o --flow <archivo>: indica qué explorar.");
     return 3;
   }
+  // El WI real (no "local") traza la evidencia del guion para el attach en ADO.
+  const tcId = args.workItem && args.workItem !== "local" ? args.workItem : undefined;
+
   const summary = await runQaCycle({
     repoRoot: args.repoRoot || process.cwd(),
     env: process.env,
     workItemId: args.workItem,
     featureId: args.feature,
     developer: args.developer,
-    appUrl: args.url,
+    appUrl,
+    flow: steps,
+    vars: (flowSpec && flowSpec.vars) || {},
+    tcId,
   });
 
   if (summary.stopped === "preflight") {

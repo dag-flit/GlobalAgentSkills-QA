@@ -10,6 +10,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { runFlow } from "./explore-flow.mjs";
+import { computeCoverage } from "../evidence/ac-coverage.mjs";
 
 async function resolveLaunch(injected) {
   if (injected) return injected;
@@ -26,9 +28,13 @@ async function resolveLaunch(injected) {
 /**
  * @param {object} opts
  * @param {string} [opts.repoRoot]
- * @param {object} [opts.env]            EXPLORE_TIMEOUT_MS opcional
- * @param {string} [opts.appUrl]         URL viva a explorar (gate: sin esto → [])
- * @param {string[]} [opts.paths]        rutas adicionales relativas/absolutas a visitar
+ * @param {object} [opts.env]            EXPLORE_TIMEOUT_MS opcional; y `${VAR}` para el guion
+ * @param {string} [opts.appUrl]         URL viva a explorar (modo URL-smoke)
+ * @param {string[]} [opts.paths]        rutas adicionales a visitar (modo URL-smoke)
+ * @param {Array} [opts.flow]            GUION de pasos (modo flujo E2E); gate: sin appUrl ni flow → []
+ * @param {object} [opts.vars]           variables de la corrida para `${VAR}` del guion
+ * @param {string} [opts.tcId]           id del caso/HU para trazar la evidencia (attach en ADO)
+ * @param {string[]} [opts.declaredAcs]  AC declarados de la HU (para la matriz de cobertura)
  * @param {function} [opts.launchBrowser] launcher inyectable () -> browser (API tipo Playwright)
  * @returns {Promise<import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]>}
  */
@@ -37,9 +43,14 @@ export async function runExplore({
   env = {},
   appUrl,
   paths = [],
+  flow,
+  vars = {},
+  tcId,
+  declaredAcs = [],
   launchBrowser,
 } = {}) {
-  if (!appUrl) return []; // gated: sin URL, la capa no participa del ciclo
+  const hasFlow = Array.isArray(flow) && flow.length > 0;
+  if (!appUrl && !hasFlow) return []; // gated: sin URL ni guion, la capa no participa del ciclo
 
   const launch = await resolveLaunch(launchBrowser);
   if (!launch) {
@@ -48,13 +59,18 @@ export async function runExplore({
         layer: "explore",
         status: "skip",
         narrative:
-          "exploración de URL omitida: Playwright no está disponible (instálalo o inyecta launchBrowser).",
+          "exploración omitida: Playwright no está disponible (instálalo o inyecta launchBrowser).",
         metrics: { tool: "playwright" },
       },
     ];
   }
 
   const timeout = Number(env.EXPLORE_TIMEOUT_MS) || 30000;
+
+  // ── Modo GUION (E2E de un flujo): pasos en orden sobre una misma sesión ───────
+  if (hasFlow) {
+    return runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs, timeout, launch });
+  }
   const targets = [appUrl, ...(Array.isArray(paths) ? paths : [])].filter(Boolean);
   const evidenceDir = path.join(repoRoot, "qa-evidence", ".explore");
   try {
@@ -132,6 +148,51 @@ export async function runExplore({
       files,
       narrative: `exploración de ${cases.length} URL(s): ${cases.length - failed} ok, ${failed} con problemas`,
       metrics: { tool: "playwright", urls: cases.length },
+      cases,
+    },
+  ];
+}
+
+// Modo GUION: abre una sesión, corre los pasos (explore-flow) y normaliza el EvidenceObject
+// (un caso por paso, capturas juntas). Mismo contrato que el modo URL-smoke → sink/adapter igual.
+async function runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs = [], timeout, launch }) {
+  const evidenceDir = path.join(repoRoot, "qa-evidence", ".explore");
+  try {
+    fs.mkdirSync(evidenceDir, { recursive: true });
+  } catch {
+    /* noop */
+  }
+
+  let browser;
+  let cases = [];
+  let files = [];
+  let consoleErrors = [];
+  try {
+    browser = await launch();
+    const page = await browser.newPage();
+    ({ cases, files, consoleErrors } = await runFlow({ page, steps: flow, evidenceDir, env, vars, timeout }));
+    if (typeof page.close === "function") await page.close();
+  } finally {
+    try {
+      if (browser && typeof browser.close === "function") await browser.close();
+    } catch {
+      /* noop */
+    }
+  }
+
+  const failed = cases.filter((c) => c.status === "fail").length;
+  const consoleNote = consoleErrors.length ? ` · ${consoleErrors.length} error(es) de consola` : "";
+  // Matriz de cobertura de AC: cruza los pasos que declaran `ac` con los AC declarados de la HU.
+  const coverage = computeCoverage(cases, declaredAcs);
+  return [
+    {
+      layer: "explore",
+      ...(tcId ? { tc_id: tcId } : {}),
+      status: failed ? "fail" : "pass",
+      files,
+      narrative: `flujo de ${cases.length} paso(s): ${cases.length - failed} ok, ${failed} con problemas${consoleNote}`,
+      metrics: { tool: "playwright", steps: cases.length, consoleErrors: consoleErrors.length },
+      ...(coverage ? { coverage } : {}),
       cases,
     },
   ];

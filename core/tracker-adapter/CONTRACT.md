@@ -10,8 +10,14 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 |--------|----------|-------------------|
 | `preflight()` | Valida que el tracker puede operar | Siempre `{ok:true}`, sin red |
 | `capabilities()` | Qué soporta el tracker | ver abajo |
-| `getWorkItem(id)` | Devuelve la HU/Feature destino de la evidencia | Lee `.qa/work-items/{id}.md` o devuelve un stub |
+| `getWorkItem(id)` | Devuelve la HU/Feature destino (incluye `type`: "Feature"/"User Story") | Lee `.qa/work-items/{id}.md` o devuelve un stub |
+| `getChildren(id)` | HU **hijas** de un Feature (para el fan-out por HU) | `[]` (local no tiene jerarquía) |
 | `publishEvidence(target, payload)` | Entrega la evidencia normalizada | Reporte `md`+`html` en `qa-evidence/` |
+
+> **Fan-out de Feature:** cuando el WI destino es un **Feature**, la webapp lee sus **HU hijas** con
+> `getChildren(id)` y corre el guion guardado de cada HU, publicando evidencia en cada una. `getWorkItem`
+> expone `type` para decidir HU (corrida única) vs Feature (fan-out). `azure-devops` resuelve las hijas por
+> WIQL (`[System.Parent] = <feature>`); `local` devuelve `[]`.
 
 ### `publishEvidence(target, payload)` — entrega de la evidencia
 
@@ -46,13 +52,22 @@ El runner no sabe de ningún tracker. Emite:
   files: ["explore-1.png"],// capturas locales (opcional)
   narrative: "…",          // texto legible (opcional)
   metrics: { tool: "playwright", urls: 3 },
-  cases: [                 // un caso por URL visitada
+  cases: [                 // un caso por URL visitada (o por PASO en modo GUION)
     { name: "https://app/", status: "pass", duration: 45, message: null },
     { name: "https://app/x", status: "fail", duration: 88, message: "HTTP 500" },
+    // en modo GUION, un caso de verificación puede declarar qué criterio prueba:
+    { name: "6. verificar_texto Bienvenido", status: "pass", ac: "AC1 ve el saludo" },
   ],
+  // opcional (modo GUION): matriz de cobertura AC ↔ pasos, calculada por runtime/evidence/ac-coverage.mjs
+  coverage: { passed: 1, failed: 0, uncovered: 1, rows: [{ ac: "AC1…", status: "pass", steps: [] }] },
   work_item_id: "123"      // opcional
 }
 ```
+
+> **Cobertura de AC (modo GUION):** un caso puede llevar `ac` (qué criterio de aceptación prueba, solo
+> en verificaciones). El runner cruza esos `ac` con los `declaredAcs` de la HU y adjunta `coverage` al
+> EvidenceObject. El sink lo renderiza (`local` = sección "Cobertura de criterios de aceptación";
+> `dual` = línea + lista en el comentario del WI). Es MAPEO determinista evidencia↔criterio, sin IA.
 
 El `sink` (definido por `evidence.sink` en el perfil) decide el destino:
 - `local` → render md/html en el repo.

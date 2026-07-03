@@ -76,10 +76,28 @@ export const appConfigSchema = z.object({
   tracker: trackerConfigSchema,
 });
 
-// Input de una corrida: modo único "explore" + la URL viva a explorar.
+// Un paso del guion E2E: la operación + campos (todos strings; el motor los normaliza).
+// `.catchall(z.string())` acepta los campos variables por operación (en/valor/texto/url/…)
+// y rechaza cualquier valor no-string en la frontera.
+const flowStepSchema = z.object({ op: z.string().min(1) }).catchall(z.string());
+
+// Input de una corrida: modo "explore". Con `steps` corre un GUION (flujo E2E); sin él, es el
+// smoke de la URL. `workItemId` es el WI destino de la evidencia (Azure); `vars` son las
+// variables/credenciales para `${VAR}` del guion (efímeras, no se persisten).
 export const runInputSchema = z.object({
   mode: z.literal("explore"),
   appUrl: z.string().optional(),
+  workItemId: z.string().optional(),
+  steps: z.array(flowStepSchema).optional(),
+  vars: z.record(z.string(), z.string()).optional(),
+  // AC declarados de la HU (títulos) → matriz de cobertura en el reporte. Efímeros por corrida.
+  declaredAcs: z.array(z.string()).optional(),
+});
+
+// Guardar el guion de una HU (persistencia por work item). Sin credenciales: solo la estructura.
+export const flowSaveSchema = z.object({
+  wid: z.string().min(1),
+  steps: z.array(flowStepSchema),
 });
 
 export const dbTestSchema = z

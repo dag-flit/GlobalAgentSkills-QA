@@ -9,16 +9,19 @@ multitenant** (`webapp/`, Next.js). El destino de la evidencia es **local** (rep
 > portable/robusta (multi-stack, multi-tracker, "QA del código") vive en el repo personal.
 > El pipeline de "QA del código" y los trackers Jira/GitHub se **retiraron** (viven en el historial de git).
 
-Node 18+ (cross-platform, `.mjs`). Smoke test **14/14**.
+Node 18+ (cross-platform, `.mjs`). Smoke test **19/19**.
 
 ## Inicio rápido
 
 ```bash
-# explorar una URL viva (deja el reporte en qa-evidence/)
+# explorar una URL viva (URL-smoke: deja el reporte en qa-evidence/)
 node runtime/cli.mjs --url https://tu-app.com [-w <HU>] [-f <FT>] [-d "<dev>"]
 
+# correr un GUION E2E (flujo de pasos: login → navegar → verificar)
+node runtime/cli.mjs --flow guion.json [-w <HU>]
+
 # verificar el plumbing del kit (offline)
-node runtime/smoke-test.mjs        # → 14/14 OK
+node runtime/smoke-test.mjs        # → 19/19 OK
 ```
 
 El CLI deja el reporte en `<repo>/qa-evidence/<fecha>/FT-<feature>__<dev>/report.{md,html}` y sale
@@ -26,11 +29,18 @@ con código `0` (sin fallos) · `1` (con fallos) · `2` (preflight de tracker) �
 
 ## Qué hace
 
-| Capa | Runner |
+| Modo | Runner |
 |------|--------|
-| `explore` | abre la URL en un navegador (Playwright): status HTTP + errores de consola + captura por página. Corre **solo** si se proporciona una URL (`--url`/`appUrl`); sin URL no aparece. Sin Playwright → skip accionable. |
+| **URL-smoke** | abre la URL en un navegador (Playwright): status HTTP + errores de consola + captura por página. Corre si se pasa `--url`/`appUrl`. |
+| **GUION E2E** | corre un **flujo de pasos** en orden sobre una misma sesión (login → navegar → verificar) con **captura + evidencia por paso**. Se pasa `--flow`/`flow`. Localizadores amigables (etiqueta/placeholder/texto/botón/css), secretos por `${QA_USER}`/`${QA_PASS}` (efímeros, nunca en el guion). |
 
-El launcher del navegador es **inyectable** → todo es probable offline.
+Sin URL ni guion, la capa no participa. Sin Playwright → skip accionable. El launcher del navegador es
+**inyectable** → todo es probable offline.
+
+**Cobertura de criterios de aceptación (AC):** en modo GUION, cada paso de verificación puede declarar
+qué AC prueba (`ac`). El runner cruza esos `ac` con los AC declarados de la HU (leídos de Azure) y arma
+una **matriz de cobertura** (cubierto ✅ / con fallo ❌ / sin cubrir ⚠) en el reporte y en el comentario
+del work item. Es MAPEO determinista evidencia↔criterio (sin IA, sin generación de pruebas).
 
 ## Trackers
 
@@ -53,9 +63,11 @@ work item **+** reporte local **+** las **capturas adjuntas** al Task hijo (resu
 
 ## Interfaz web (multitenant)
 
-`webapp/` es la UI (Next.js) para usar el kit **a clics**: un único flujo `Tracker → URL → Ejecutar`.
-Es un servicio **multitenant** (Postgres + RLS, auth propia, secretos cifrados). No reimplementa nada:
-llama a `runQaCycle`.
+`webapp/` es la UI (Next.js) para usar el kit **a clics**: flujo `Tracker → URL → Pasos → Ejecutar`.
+Incluye un **constructor visual de guiones** para no técnicos (sin YAML), Importar/Exportar guion (JSON),
+guardado del guion **por HU** + **fan-out de Feature**, panel de **criterios de aceptación** y **matriz
+de cobertura de AC**. Es un servicio **multitenant** (Postgres + RLS, auth propia, secretos cifrados).
+No reimplementa nada: llama a `runQaCycle`.
 
 ```bash
 cd webapp && npm install && npm run dev      # http://localhost:4312 (exige login)
@@ -80,7 +92,7 @@ core/skills/url-explore/  core/agents/qa-orchestrator/   docs de la skill y del 
 adapters/trackers/      local (default) · azure-devops   (cliente REST inyectable)
 adapters/_shared/       http-retry (transporte con reintento)
 profiles/               default.yaml · presets/azure-devops.yaml · overlays/flit.yaml
-runtime/                runners/explore · evidence (sink) · profile · orchestrator · cli
+runtime/                runners/{explore · explore-steps · explore-flow} · evidence/{local-sink · ac-coverage} · profile · orchestrator · cli
 delivery/               docs por target (salida real en dist/)
 docs/                   MULTITENANT.md (vigente)
 manifest.yaml           inventario real, sin drift

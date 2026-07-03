@@ -38,6 +38,58 @@ export function RunDetail({ id }: { id: string }) {
       </div>
 
       {record && <RunMeta record={record} />}
+
+      {summary?.fanout && (
+        <div className="card space-y-2">
+          <h2 className="font-semibold text-sm">Fan-out del Feature {summary.feature}</h2>
+          <ul className="text-sm space-y-1">
+            {(summary.hus || []).map((h: any) => (
+              <li key={h.id}>
+                <span className={h.status === "passed" ? "text-green-300" : h.status === "failed" ? "text-red-300" : "text-muted"}>
+                  {h.status === "passed" ? "✅" : h.status === "failed" ? "❌" : "⏭"}
+                </span>{" "}
+                HU {h.id}{h.title ? ` — ${h.title}` : ""} <span className="text-muted">({h.status})</span>
+              </li>
+            ))}
+          </ul>
+          {Array.isArray(summary.warnings) && summary.warnings.length > 0 && (
+            <div className="text-[11px] text-warn">{summary.warnings.length} aviso(s): HU sin guion guardado se saltaron.</div>
+          )}
+        </div>
+      )}
+
+      {results.some((r) => r.coverage) && (
+        <div className="card space-y-2">
+          <h2 className="font-semibold text-sm">Cobertura de criterios de aceptación</h2>
+          {results
+            .filter((r) => r.coverage)
+            .map((r, idx) => {
+              const cov = r.coverage;
+              return (
+                <div key={idx} className="space-y-1">
+                  {r.hu_id && <div className="text-xs text-muted">HU {r.hu_id}</div>}
+                  <div className="text-xs text-muted">
+                    ✅ {cov.passed} cubierto(s) · ❌ {cov.failed} con fallo · ⚠ {cov.uncovered} sin cubrir
+                  </div>
+                  <ul className="text-sm space-y-0.5">
+                    {cov.rows.map((row: any, k: number) => (
+                      <li key={k}>
+                        <span className={row.status === "pass" ? "text-green-300" : row.status === "fail" ? "text-red-300" : "text-warn"}>
+                          {row.status === "pass" ? "✅" : row.status === "fail" ? "❌" : "⚠"}
+                        </span>{" "}
+                        {row.ac}{" "}
+                        <span className="text-muted">
+                          ({row.status === "pass" ? "cubierto" : row.status === "fail" ? "con fallo" : "sin cubrir"})
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+        </div>
+      )}
+
       <RunConsole events={events} autoscroll={autoscroll} setAutoscroll={setAutoscroll} logRef={logRef} />
       <RunResults results={results} report={report} shots={shots} />
       {record?.error && <div className="card text-sm text-red-300">Error: {record.error}</div>}

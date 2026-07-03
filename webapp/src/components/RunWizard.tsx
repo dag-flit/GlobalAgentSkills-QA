@@ -5,6 +5,7 @@ import { MODES } from "@/components/run-wizard/types";
 import { useRunWizard } from "@/components/run-wizard/useRunWizard";
 import { Stepper } from "@/components/run-wizard/Stepper";
 import { UrlStep } from "@/components/run-wizard/UrlStep";
+import { StepsStep } from "@/components/run-wizard/StepsStep";
 import { RunSummary } from "@/components/run-wizard/RunSummary";
 
 // Asistente de ejecución: el kit quedó acotado a pruebas E2E sobre una URL viva (modo
@@ -61,6 +62,8 @@ export function RunWizard() {
 
       {key === "tracker" && (
         <TrackerStep
+          workItem={w.workItem}
+          onWorkItem={w.setWorkItem}
           onBack={w.back}
           onContinue={(t) => {
             w.setTracker(t);
@@ -70,6 +73,7 @@ export function RunWizard() {
       )}
 
       {key === "url" && <UrlStep w={w} />}
+      {key === "pasos" && <StepsStep w={w} />}
       {key === "run" && <RunSummary w={w} />}
     </div>
   );

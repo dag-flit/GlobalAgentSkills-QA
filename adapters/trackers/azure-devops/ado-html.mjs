@@ -90,6 +90,20 @@ export function casesHtml(results) {
   return `<p><strong>Detalle (casos ejecutados)</strong></p>${blocks}`;
 }
 
+// Cobertura de criterios de aceptación (AC) para el comentario del WI. Compacta: una línea de
+// conteo + lista con ícono por criterio. Vacío si ningún resultado trae `coverage`.
+function coverageHtml(results) {
+  const cov = results.map((r) => r.coverage).find(Boolean);
+  if (!cov || !cov.rows.length) return "";
+  const ic = { pass: "✅", fail: "❌", uncovered: "⚠" };
+  const lb = { pass: "cubierto", fail: "con fallo", uncovered: "sin cubrir" };
+  const items = cov.rows.map((r) => `<li>${ic[r.status]} <strong>${esc(r.ac)}</strong> — ${lb[r.status]}</li>`).join("");
+  return (
+    `<p><strong>Cobertura de AC</strong> — ✅ ${cov.passed} cubierto(s) · ❌ ${cov.failed} con fallo · ⚠ ${cov.uncovered} sin cubrir</p>` +
+    `<ul>${items}</ul>`
+  );
+}
+
 export function renderSummary({ sup, results }) {
   const count = (s) => results.filter((r) => r.status === s).length;
   const rows = results
@@ -102,6 +116,7 @@ export function renderSummary({ sup, results }) {
     .join("");
   return (
     `${sup}<p><strong>Resumen QA</strong> — ✅ ${count("pass")} · ❌ ${count("fail")} · ⏭ ${count("skip")}</p>` +
+    coverageHtml(results) +
     `<table><thead><tr><th>Capa</th><th>TC</th><th>Resultado</th><th>Notas</th></tr></thead><tbody>${rows}</tbody></table>` +
     casesHtml(results)
   );

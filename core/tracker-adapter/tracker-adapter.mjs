@@ -17,8 +17,17 @@
  * @property {string} id
  * @property {string} [title]
  * @property {string} [state]
+ * @property {string} [type]    tipo del work item (p.ej. "Feature", "User Story") — para el fan-out
  * @property {string[]} [acceptance_criteria]
  * @property {boolean} [stub]   true si es un placeholder local (no vino de un tracker real)
+ */
+
+/**
+ * @typedef {Object} ChildItem
+ * @property {string} id
+ * @property {string} [title]
+ * @property {string} [type]
+ * @property {string} [state]
  */
 
 /**
@@ -59,6 +68,14 @@ export class TrackerAdapter {
   /** @param {string} id @returns {Promise<WorkItem|null>} */
   async getWorkItem(id) {
     throw new Error("getWorkItem() no implementado");
+  }
+
+  /**
+   * HU hijas de un Feature (para el fan-out por HU). Default: sin jerarquía → `[]`.
+   * @param {string} id @returns {Promise<ChildItem[]>}
+   */
+  async getChildren(id) {
+    return [];
   }
 
   /** Entrega la evidencia normalizada al destino del tracker (o al sink local). */

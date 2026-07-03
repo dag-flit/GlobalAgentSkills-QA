@@ -1,7 +1,7 @@
 # Inventario REAL del qa-kit — fuente de verdad para los instaladores.
 # Sin drift: lista solo lo que existe en el repo.
-version: "2.0.0-explore"
-description: "Kit acotado a EXPLORACIÓN de una URL viva (pruebas E2E). Trackers: local + azure-devops."
+version: "2.1.0-explore-guion"
+description: "Kit acotado a EXPLORACIÓN de una URL viva (pruebas E2E): URL-smoke + GUION de pasos + cobertura de AC. Trackers: local + azure-devops."
 status: "explore-only"   # Se retiró el pipeline de 'QA del código' (capas/BDD/generación) y los trackers jira/github.
 
 core:
@@ -45,13 +45,16 @@ runtime:
     - runtime/profile/yaml-lite.mjs
     - runtime/profile/resolve-profile.mjs
   runners:
-    - runtime/runners/explore.mjs         # única capa: explora una URL viva (gated por appUrl)
+    - runtime/runners/explore.mjs         # única capa: URL-smoke (appUrl) o GUION E2E (flow)
+    - runtime/runners/explore-steps.mjs   # registro de PASOS del guion (núcleo) + interpolación ${VAR}
+    - runtime/runners/explore-flow.mjs    # ejecutor del guion: pasos en orden sobre una sesión
   orchestrator: runtime/orchestrator.mjs  # backbone slim: resolve-profile → adapter → explore → publishEvidence
-  cli: runtime/cli.mjs                    # entrypoint: node runtime/cli.mjs --url <https://app>
+  cli: runtime/cli.mjs                    # entrypoint: --url <https://app> (URL-smoke) | --flow <archivo> (guion E2E)
   delivery_build: runtime/delivery/build.mjs  # empaqueta core/ a cada target
   evidence:
-    - runtime/evidence/local-sink.mjs
-  smoke_test: runtime/smoke-test.mjs      # 14 casos (resolver + explore-suite), offline
+    - runtime/evidence/local-sink.mjs     # reporte md+html autocontenido (capturas embebidas como data-URI)
+    - runtime/evidence/ac-coverage.mjs    # matriz de cobertura de AC (puro): case.ac × declaredAcs → cubierto/fallo/sin cubrir
+  smoke_test: runtime/smoke-test.mjs      # 19 casos (resolver + explore-suite), offline
 
 delivery:        # targets generados desde core/ por runtime/delivery/build.mjs
   generator: runtime/delivery/build.mjs
@@ -62,7 +65,7 @@ delivery:        # targets generados desde core/ por runtime/delivery/build.mjs
     - delivery/plain/README.md
 
 webapp:          # UX web multitenant (Next.js, :4312) — el producto laboral
-  note: "Servicio multitenant (Postgres+RLS, auth, cifrado). Modo único: Explorar URL. Ver docs/MULTITENANT.md."
+  note: "Servicio multitenant (Postgres+RLS, auth, cifrado). Explorar URL + GUION E2E (constructor visual, import/export JSON, guion por HU, fan-out de Feature, panel de AC + cobertura). Ver docs/MULTITENANT.md."
 
 packs:           # opcionales, NO instalados por defecto
   dev-side:
