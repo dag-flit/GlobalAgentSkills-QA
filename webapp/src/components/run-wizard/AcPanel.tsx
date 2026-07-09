@@ -89,8 +89,8 @@ export function AcPanel({ w }: { w: RunWizardCtl }) {
         </button>
       </div>
       <p className="text-[11px] text-muted">
-        Trae los criterios declarados en Azure para tenerlos a la vista mientras se arma el guion.
-        Si el WI es un Feature, además lista sus HU hijas con los criterios de cada una. Es solo lectura.
+        Trae los criterios declarados en Azure para tenerlos a la vista. Si el WI es un Feature,
+        además lista sus HU hijas con los criterios de cada una. Es solo lectura.
       </p>
 
       {err && <p className="text-[11px] text-red-300">{err}</p>}
@@ -103,12 +103,15 @@ export function AcPanel({ w }: { w: RunWizardCtl }) {
           </div>
 
           {/* HU simple: sus propios criterios */}
-          {!isFeature &&
-            (wi.acceptance_criteria.length ? (
-              <AcList items={wi.acceptance_criteria} />
-            ) : (
-              <p className="text-[11px] text-warn">Esta HU no tiene criterios de aceptación declarados en Azure.</p>
-            ))}
+          {!isFeature && (
+            <div className="space-y-2">
+              {wi.acceptance_criteria.length ? (
+                <AcList items={wi.acceptance_criteria} />
+              ) : (
+                <p className="text-[11px] text-warn">Esta HU no tiene criterios de aceptación declarados en Azure.</p>
+              )}
+            </div>
+          )}
 
           {/* Feature: criterios propios (si tuviera) + cada HU hija con sus criterios */}
           {isFeature && (

@@ -1,6 +1,6 @@
 import { readConfig, writeConfig } from "./db/configRepo";
 import { currentTenantId } from "./db/tenantContext";
-import type { AppConfig, AiConfig, DbConnection } from "./types";
+import type { AppConfig, DbConnection } from "./types";
 import { SECRET_MASK } from "./types";
 
 // ---------- Defaults ----------
@@ -44,16 +44,10 @@ export function defaultTrackerConfig(): AppConfig["tracker"] {
   };
 }
 
-export function defaultAiConfig(): AiConfig {
-  // OFF por defecto; endpoint local de Ollama; sin modelo (lo elige el usuario).
-  return { enabled: false, endpoint: "http://localhost:11434", model: "" };
-}
-
 export function defaultConfig(): AppConfig {
   return {
     databases: [defaultDbConnection()],
     tracker: defaultTrackerConfig(),
-    ai: defaultAiConfig(),
   };
 }
 
@@ -91,13 +85,12 @@ export async function loadConfig(): Promise<AppConfig> {
   const tid = currentTenantId();
   const hit = cache.get(tid);
   if (hit) return hit;
-  const { databases, tracker, ai } = await readConfig();
+  const { databases, tracker } = await readConfig();
   const def = defaultConfig();
   // normaliza cada conexión (rellena `ssh` y campos nuevos en filas viejas).
   const dbs = databases.length ? databases.map(normalizeDb) : def.databases;
   const trk = tracker ? deepMerge(defaultTrackerConfig(), tracker) : def.tracker;
-  const aiCfg = ai ? deepMerge(defaultAiConfig(), ai) : def.ai;
-  const cfg: AppConfig = { databases: dbs, tracker: trk, ai: aiCfg };
+  const cfg: AppConfig = { databases: dbs, tracker: trk };
   // Primer acceso del tenant (sin filas aún): siémbrale los defaults.
   if (!databases.length || !tracker) await writeConfig(cfg);
   cache.set(tid, cfg);
@@ -146,7 +139,7 @@ export function redactConfig(cfg: AppConfig): AppConfig {
  */
 export function applySecretPreserving(
   current: AppConfig,
-  incoming: Omit<AppConfig, "ai"> & { ai?: AiConfig },
+  incoming: AppConfig,
 ): AppConfig {
   const keep = (inVal: string, curVal: string) => (inVal === SECRET_MASK ? curVal : inVal);
   const merged: AppConfig = JSON.parse(JSON.stringify(incoming));
@@ -170,10 +163,6 @@ export function applySecretPreserving(
     ...inT,
     azure: { ...inT.azure, pat: keep(inT.azure.pat, curT.azure.pat) },
   };
-
-  // IA: sin secretos → passthrough. Si el request no trae `ai` (p.ej. al guardar solo el tracker),
-  // se conserva el actual para no resetear el asistente al guardar otra sección.
-  merged.ai = incoming.ai ?? current.ai ?? defaultAiConfig();
 
   return merged;
 }

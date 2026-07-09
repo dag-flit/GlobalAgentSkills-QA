@@ -1,4 +1,6 @@
-import { LAYER_INFO, STATUS_TXT, statusSentence, artifactUrl } from "./helpers";
+import { LAYER_INFO, STATUS_TXT, layerNarrative, artifactUrl } from "./helpers";
+import { CaseList } from "./CaseList";
+import { explainLayerFailure } from "./failureExplain";
 
 /** Tarjeta de resultados: estado, casos, reporte y capturas de la exploración. */
 export function RunResults({
@@ -45,12 +47,26 @@ export function RunResults({
                 )}
               </div>
 
-              {info.desc && <p className="text-[11px] text-muted">{info.desc}</p>}
-              <p className="text-sm">{statusSentence(r)}</p>
+              {(() => {
+                const n = layerNarrative(r);
+                return (
+                  <>
+                    {n.what && (
+                      <p className="text-[11px] text-muted">
+                        <span className="font-medium text-gray-300">Qué hace:</span> {n.what}
+                      </p>
+                    )}
+                    <p className="text-sm">
+                      <span className="text-[11px] text-muted">Resultado: </span>
+                      {n.result}
+                    </p>
+                  </>
+                );
+              })()}
 
               {r.metrics?.command && (
                 <div className="text-[11px]">
-                  <span className="text-muted">Qué se ejecutó: </span>
+                  <span className="font-medium text-gray-300">Comando: </span>
                   <code className="break-all text-gray-200">{r.metrics.command}</code>
                 </div>
               )}
@@ -61,8 +77,13 @@ export function RunResults({
                 {cases.length > 0 && (
                   <span>
                     casos: {cases.length} · <span className="text-green-300">✓{p}</span>{" "}
-                    <span className="text-red-300">✗{f}</span> <span className="text-muted">⏭{s}</span>
-                    {s > 0 ? <span className="text-muted"> (saltados/pendientes)</span> : null}
+                    <span className="text-red-300">✗{f}</span>{" "}
+                    <span className={r.layer === "static" ? "text-amber-300" : "text-muted"}>
+                      {r.layer === "static" ? "⚠" : "⏭"}{s}
+                    </span>
+                    {s > 0 ? (
+                      <span className="text-muted"> ({r.layer === "static" ? "advertencias, no bloquean" : "saltados/pendientes"})</span>
+                    ) : null}
                   </span>
                 )}
               </div>
@@ -71,26 +92,54 @@ export function RunResults({
                 <p className="text-[11px] text-warn">Motivo: {r.narrative}</p>
               )}
 
+              {/* Capa con FALLO sin desglose por caso (p.ej. dotnet-test/tsc): misma claridad
+                  🧩/👉 que los casos, a nivel de capa. Si hay casos fallidos, cada uno ya lo trae. */}
+              {r.status === "fail" && f === 0 && (() => {
+                const ex = explainLayerFailure(r);
+                if (!ex) return null;
+                return (
+                  <div className="rounded border border-amber-900/40 bg-amber-950/20 px-2 py-1 space-y-0.5">
+                    <div className="text-[11px] text-amber-100/90">
+                      <span className="font-semibold">🧩 Qué pasó: </span>{ex.plain}
+                    </div>
+                    {ex.action && (
+                      <div className="text-[11px] text-emerald-200/90">
+                        <span className="font-semibold">👉 Qué hacer: </span>{ex.action}
+                      </div>
+                    )}
+                    {r.blame ? (
+                      <div className="text-[11px] text-sky-200/80">
+                        <span className="font-semibold">👤 Último en modificar </span>
+                        <code className="break-all">{r.blame.line ? `${r.blame.file}:${r.blame.line}` : r.blame.file}</code>
+                        {": "}{r.blame.author}{r.blame.date ? ` (${r.blame.date})` : ""}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-muted">
+                        👤 Sin responsable: la herramienta no dejó un archivo/línea en el error, así que no hay a quién atribuirlo automáticamente.
+                      </div>
+                    )}
+                    {r.narrative && (
+                      <details className="mt-0.5">
+                        <summary className="text-[10px] text-muted cursor-pointer">Detalle técnico</summary>
+                        <pre className="mt-1 whitespace-pre-wrap break-words text-[10px] text-red-300/90 bg-black/30 rounded px-2 py-1 border border-red-900/40 max-h-40 overflow-auto">
+                          {String(r.narrative)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                );
+              })()}
+
               {cases.length > 0 && (
-                <details className="mt-1">
+                <details className="mt-1" open={f > 0 || (s > 0 && (r.layer === "static" || r.layer === "security"))}>
                   <summary className="text-xs text-accent cursor-pointer">
-                    Ver {cases.length} caso(s) ejecutado(s)
+                    Ver {cases.length} caso(s){f > 0 ? ` · ${f} en rojo primero` : r.layer === "static" && s > 0 ? ` · ${s} advertencia(s)` : ""}
                   </summary>
                   <p className="text-[10px] text-muted mt-1">
-                    Nombres y mensajes tal cual los emite la herramienta (pueden venir en inglés).
+                    Agrupados por suite, con los fallos primero. Nombres y mensajes tal cual los emite
+                    la herramienta (pueden venir en inglés).
                   </p>
-                  <ul className="mt-1 space-y-0.5">
-                    {cases.map((c: any, j: number) => (
-                      <li key={j} className="text-xs">
-                        <span className={c.status === "pass" ? "text-green-300" : c.status === "fail" ? "text-red-300" : "text-muted"}>
-                          {c.status === "pass" ? "✓" : c.status === "fail" ? "✕" : "•"}
-                        </span>{" "}
-                        {c.name}
-                        {typeof c.duration === "number" ? <span className="text-muted"> ({c.duration} ms)</span> : null}
-                        {c.message ? <span className="text-muted"> — {String(c.message).split(/\r?\n/)[0]}</span> : null}
-                      </li>
-                    ))}
-                  </ul>
+                  <CaseList cases={cases} layer={r.layer} tool={r.metrics?.tool} />
                 </details>
               )}
             </div>

@@ -1,0 +1,282 @@
+// parse-cases.mjs — extrae los TC (test cases) individuales de la salida de cada herramienta.
+// Estrategia: reporter JSON nativo (donde la herramienta lo soporta sin instalar nada) →
+// lista estructurada de casos; si la salida no es el JSON esperado, devuelve `null` y el
+// runner DEGRADA al resumen de texto de siempre (nunca rompe el ciclo).
+//
+// Forma de un caso (TC):  { name, status: "pass"|"fail"|"skip", duration: ms|null, message: string|null }
+// Forma de la entrada:    out = { code, stdout, stderr }   (la que produce el ejecutor del runner)
+//
+// CERO literales de dominio. Cross-platform. Sin dependencias.
+
+import path from "node:path";
+
+// Localiza y parsea el primer objeto/array JSON dentro de un texto (las herramientas a veces
+// intercalan avisos antes/después del JSON). Devuelve null si no hay JSON válido.
+function pickJson(text) {
+  if (!text) return null;
+  const t = String(text);
+  try {
+    return JSON.parse(t);
+  } catch {
+    /* sigue con la extracción acotada */
+  }
+  const a = t.indexOf("{");
+  const b = t.indexOf("[");
+  const start = a === -1 ? b : b === -1 ? a : Math.min(a, b);
+  if (start === -1) return null;
+  const close = t[start] === "{" ? "}" : "]";
+  const end = t.lastIndexOf(close);
+  if (end <= start) return null;
+  try {
+    return JSON.parse(t.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function stripAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+}
+
+// Normaliza un mensaje de error: sin ANSI, recortado, acotado (evita volcar stacks enteros).
+function cleanMsg(s) {
+  if (!s) return null;
+  const t = stripAnsi(String(s)).trim();
+  return t ? t.slice(0, 600) : null;
+}
+
+// Ruta relativa al repo cuando es posible (más legible en la evidencia); si no, la original.
+function rel(repoRoot, p) {
+  if (!p) return "";
+  if (!repoRoot) return String(p);
+  try {
+    const r = path.relative(repoRoot, p);
+    return r && !r.startsWith("..") ? r : String(p);
+  } catch {
+    return String(p);
+  }
+}
+
+function dur(d) {
+  return typeof d === "number" && isFinite(d) ? Math.round(d) : null;
+}
+
+// Resumen compacto de una lista de casos para narrativas/encabezados.
+export function casesSummary(cases) {
+  const c = (s) => cases.filter((x) => x.status === s).length;
+  return `${cases.length} TC · ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}`;
+}
+
+// ── Parsers por herramienta ───────────────────────────────────────────────────
+
+// vitest (`--reporter=json`) y jest (`--json`) comparten el formato Jest:
+// { testResults: [ { assertionResults: [ { ancestorTitles, title, status, duration, failureMessages } ] } ] }
+export function parseJestLike(out, { repoRoot } = {}) {
+  const j = pickJson(out.stdout) || pickJson(out.stderr);
+  if (!j || !Array.isArray(j.testResults)) return null;
+  const cases = [];
+  for (const file of j.testResults) {
+    const ars = Array.isArray(file.assertionResults) ? file.assertionResults : [];
+    let sawFail = false;
+    for (const a of ars) {
+      const name = [...(a.ancestorTitles || []), a.title].filter(Boolean).join(" › ") || a.fullName || "(test)";
+      const status = a.status === "passed" ? "pass" : a.status === "failed" ? "fail" : "skip";
+      if (status === "fail") sawFail = true;
+      cases.push({ name, status, duration: dur(a.duration), message: cleanMsg((a.failureMessages || []).join("\n")) });
+    }
+    // Suite/archivo que FALLÓ sin una aserción fallida concreta (no compiló, `import` roto, o un
+    // error FUERA de los tests): vitest/jest salen ≠0 aunque las aserciones que corrieron pasen.
+    // Se surfacea como un caso de fallo para que la razón NO quede invisible ("falla pero todo pasó").
+    const failedSuite = file.status === "failed" || (typeof file.message === "string" && file.message.trim() !== "" && file.status !== "passed");
+    if (failedSuite && !sawFail) {
+      const fname = rel(repoRoot, file.name || file.testFilePath || "(suite)");
+      cases.push({
+        name: `${fname} › (la suite no se ejecutó / error al cargar)`,
+        status: "fail",
+        duration: null,
+        message: cleanMsg(file.message) || "La suite falló sin una aserción concreta (posible error de compilación o de importación del archivo de test).",
+      });
+    }
+  }
+  return cases;
+}
+
+// playwright (`--reporter=json`): suites anidadas → specs → tests → results.
+export function parsePlaywright(out) {
+  const j = pickJson(out.stdout) || pickJson(out.stderr);
+  if (!j || !Array.isArray(j.suites)) return null;
+  const cases = [];
+  const mapStatus = (s) => (s === "passed" || s === "expected" ? "pass" : s === "skipped" ? "skip" : "fail");
+  const walk = (suites, prefix) => {
+    for (const s of suites || []) {
+      const title = [prefix, s.title].filter(Boolean).join(" › ");
+      for (const spec of s.specs || []) {
+        const name = [title, spec.title].filter(Boolean).join(" › ") || "(spec)";
+        let status = "skip";
+        let duration = null;
+        let message = null;
+        for (const test of spec.tests || []) {
+          const results = test.results || [];
+          const r = results[results.length - 1];
+          if (!r) continue;
+          status = mapStatus(r.status);
+          if (typeof r.duration === "number") duration = dur(r.duration);
+          if (r.error) message = cleanMsg(r.error.message || r.error.stack || "");
+        }
+        cases.push({ name, status, duration, message });
+      }
+      walk(s.suites, title);
+    }
+  };
+  walk(j.suites, "");
+  return cases;
+}
+
+// eslint (`-f json`): [ { filePath, messages: [ { ruleId, message, severity, line, column } ] } ]
+// severity 2 = error (fail), 1 = warning (skip, no bloquea).
+export function parseEslint(out, { repoRoot } = {}) {
+  const j = pickJson(out.stdout);
+  if (!Array.isArray(j)) return null;
+  const cases = [];
+  for (const f of j) {
+    for (const m of f.messages || []) {
+      cases.push({
+        name: `${rel(repoRoot, f.filePath)}:${m.line ?? "?"}:${m.column ?? "?"} ${m.ruleId || ""}`.trim(),
+        status: m.severity === 2 ? "fail" : "skip",
+        duration: null,
+        message: cleanMsg(m.message),
+      });
+    }
+  }
+  return cases;
+}
+
+// ruff (`--output-format=json`): [ { code, message, filename, location: { row } } ]
+export function parseRuff(out, { repoRoot } = {}) {
+  const j = pickJson(out.stdout);
+  if (!Array.isArray(j)) return null;
+  return j.map((d) => ({
+    name: `${rel(repoRoot, d.filename)}:${d.location?.row ?? "?"} ${d.code || ""}`.trim(),
+    status: "fail",
+    duration: null,
+    message: cleanMsg(d.message),
+  }));
+}
+
+// semgrep (`--json`): { results: [ { check_id, path, start: { line }, extra: { message } } ] }
+export function parseSemgrep(out, { repoRoot } = {}) {
+  const j = pickJson(out.stdout);
+  if (!j || !Array.isArray(j.results)) return null;
+  return j.results.map((r) => ({
+    name: `${r.check_id || "rule"} @ ${rel(repoRoot, r.path)}:${r.start?.line ?? "?"}`,
+    status: "fail",
+    duration: null,
+    message: cleanMsg(r.extra?.message || ""),
+  }));
+}
+
+// cucumber.js / BDD (formato JSON clásico): [ { name, uri, elements: [ { type, name, tags,
+//   steps: [ { result: { status, duration(ns), error_message } } ] } ] } ]. Un Scenario = un caso:
+// pasa si todos sus pasos pasan; falla si alguno falla; skip si quedó pendiente/undefined/skipped.
+export function parseCucumber(out) {
+  const j = pickJson(out.stdout) || pickJson(out.stderr);
+  if (!Array.isArray(j)) return null;
+  const cases = [];
+  for (const feat of j) {
+    const fname = feat?.name || feat?.uri || "Feature";
+    for (const el of feat.elements || []) {
+      if (el.type && el.type !== "scenario" && el.type !== "scenario_outline") continue;
+      let status = "pass";
+      let message = null;
+      let durNs = 0;
+      let sawResult = false;
+      for (const s of el.steps || []) {
+        const r = s.result || {};
+        if (typeof r.duration === "number") durNs += r.duration;
+        if (!r.status) continue;
+        sawResult = true;
+        if (r.status === "failed") {
+          status = "fail";
+          if (!message) message = r.error_message || null;
+        } else if (status !== "fail" && ["undefined", "pending", "skipped", "ambiguous"].includes(r.status)) {
+          status = "skip";
+        }
+      }
+      if (!sawResult) status = "skip";
+      cases.push({
+        name: `${fname} › ${el.name || "(scenario)"}`,
+        status,
+        duration: durNs ? Math.round(durNs / 1e6) : null, // cucumber reporta nanosegundos → ms
+        message: cleanMsg(message),
+      });
+    }
+  }
+  return cases;
+}
+
+// dotnet test (salida de CONSOLA — .NET no emite JSON por caso sin un logger extra): extrae
+// (1) errores de COMPILACIÓN ("ruta\Foo.cs(12,34): error CS1002: …") y (2) PRUEBAS FALLIDAS
+// ("  Failed Ns.Clase.Test [15 ms]" + su Error Message / Stack Trace). Cada caso queda con su
+// archivo:línea real → se puede humanizar Y atribuir por git blame. Devuelve null si no hay
+// fallos concretos (exit 0, o salida no reconocida) → el runner degrada al resumen de texto.
+export function parseDotnet(out, { repoRoot } = {}) {
+  const text = stripAnsi(`${out.stdout || ""}\n${out.stderr || ""}`);
+  const cases = [];
+  const seen = new Set();
+  const add = (name, message) => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    cases.push({ name, status: "fail", duration: null, message: cleanMsg(message) });
+  };
+
+  // (1) errores de compilación: "…\Foo.cs(12,34): error CS1002: ; expected [Proj.csproj]"
+  const reCompile = /^(.*?\.(?:cs|vb|fs|csproj|razor))\((\d+),\d+\):\s*error\s+([A-Za-z]+\d+)\s*:\s*(.+?)(?:\s*\[[^\]]*\])?\s*$/gim;
+  let m;
+  while ((m = reCompile.exec(text))) {
+    add(`${rel(repoRoot, m[1])}:${m[2]} ${m[3]} (no compila)`, m[4]);
+  }
+
+  // (2) pruebas fallidas: "  Failed Ns.Clase.Metodo [15 ms]" (inglés) o "  Con error … [4 s]"
+  //     (español). BILINGÜE porque `dotnet test` localiza su salida. NO confunde el resumen final
+  //     ("Failed!  - Failed: N" / "Con error! - Con error: N"): ese no termina en "[dur]".
+  const reFail = /^\s*(?:Failed|Con error|Échec|Reprovado|Fehler|Falha)\s+(.+?)\s*\[[\d.,]+\s*[a-zµ]+\]\s*$/gim;
+  while ((m = reFail.exec(text))) {
+    add(m[1].trim(), dotnetError(text.slice(reFail.lastIndex, reFail.lastIndex + 1400)));
+  }
+  return cases.length ? cases : null;
+}
+
+// Del bloque que sigue a "Failed/Con error <test> [dur]": arma un mensaje conciso = mensaje de error
+// + el primer archivo:línea del stack ("in …\Foo.cs:line 30" / "en …\Foo.cs:línea 30"), NORMALIZADO
+// a "Foo.cs:30" para que la atribución (git blame) lo capte. BILINGÜE (inglés/español).
+function dotnetError(block) {
+  const em = block.match(/(?:Error Message|Mensaje de error)\s*:\s*([\s\S]*?)(?:\r?\n\s*(?:Stack Trace|Seguimiento de la pila|Standard Output|Salida est|Failed |Con error |Passed )|\r?\n\s*\r?\n|$)/i);
+  let msg = em ? em[1].trim().replace(/\s+/g, " ") : block.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || "";
+  const st = block.match(/\b(?:in|en)\s+.*?([\w.\-]+\.(?:cs|vb|fs)):(?:line|línea)\s+(\d+)/i);
+  if (st) msg = `${msg} — ${st[1]}:${st[2]}`.trim();
+  return msg;
+}
+
+// bandit (`-f json`): { results: [ { test_id, issue_text, issue_severity, filename, line_number } ] }
+export function parseBandit(out, { repoRoot } = {}) {
+  const j = pickJson(out.stdout);
+  if (!j || !Array.isArray(j.results)) return null;
+  return j.results.map((r) => ({
+    name: `${r.test_id || "B?"} ${rel(repoRoot, r.filename)}:${r.line_number ?? "?"}`,
+    status: "fail",
+    duration: null,
+    message: cleanMsg(`[${r.issue_severity || ""}] ${r.issue_text || ""}`),
+  }));
+}
+
+export default {
+  casesSummary,
+  parseJestLike,
+  parsePlaywright,
+  parseEslint,
+  parseRuff,
+  parseSemgrep,
+  parseBandit,
+  parseCucumber,
+  parseDotnet,
+};

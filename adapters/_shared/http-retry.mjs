@@ -51,7 +51,7 @@ export async function defaultHttp(req, { retries = 2, baseDelayMs = 300 } = {}) 
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
+      const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body, signal: req.signal });
       const text = await res.text();
       let json = null;
       try {
@@ -62,7 +62,9 @@ export async function defaultHttp(req, { retries = 2, baseDelayMs = 300 } = {}) 
       return { status: res.status, json, text };
     } catch (e) {
       lastErr = e;
-      if (attempt === retries || !isTransientNetworkError(e)) throw e;
+      // Abort (timeout del llamador, p.ej. la IA que se colgó) → NO reintentar: es intencional.
+      const aborted = e && (e.name === "AbortError" || e.code === "ABORT_ERR" || e.cause?.name === "AbortError");
+      if (aborted || attempt === retries || !isTransientNetworkError(e)) throw e;
       await sleep(baseDelayMs * 2 ** attempt); // 300ms, 600ms
     }
   }

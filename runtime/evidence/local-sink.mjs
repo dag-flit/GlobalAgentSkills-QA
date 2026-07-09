@@ -4,6 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { renderCoverageMd, renderCoverageHtml } from "./ac-coverage.mjs";
+import { toolDescription, interpretLayer } from "./layer-explain.mjs";
+import { explainFailure, explainLayerFailure } from "./failure-explain.mjs";
+import { planMd, planHtml } from "./report-plan.mjs";
+import { slug, collectShots } from "./report-shots.mjs";
 
 function todayStamp(tz) {
   // tz reservado para F1 (locale.timezone); por ahora fecha ISO local
@@ -12,11 +16,6 @@ function todayStamp(tz) {
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-}
-
-// Texto de un criterio que puede venir como string (línea) u objeto {title, detail}.
-function critText(c) {
-  return typeof c === "string" ? c : (c && c.title) || "";
 }
 
 // Etiqueta de ubicación del objetivo (monorepo) para el encabezado de detalle de TC.
@@ -38,14 +37,29 @@ function casesHtml(results, byFile = {}, embedded = new Set()) {
     .map((r) => {
       const items = r.cases
         .map((tc) => {
-          const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : "⏭";
+          const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : r.layer === "static" ? "⚠" : "⏭";
           const d = typeof tc.duration === "number" ? ` <small style="color:#888">(${tc.duration} ms)</small>` : "";
+          // Explicación en lenguaje llano (qué pasó / qué hacer) para no técnicos, antes del detalle.
+          const ex = tc.status === "fail" ? explainFailure(tc, { layer: r.layer, tool: r.metrics?.tool }) : null;
+          const blameLine = tc.blame
+            ? `<div style="color:#555;margin-top:2px">👤 <b>Último en modificar</b> <code>${esc(
+                tc.blame.line ? `${tc.blame.file}:${tc.blame.line}` : tc.blame.file
+              )}</code>: ${esc(tc.blame.author)}${tc.blame.date ? ` <small>(${esc(tc.blame.date)})</small>` : ""}</div>`
+            : tc.status === "fail"
+              ? `<div style="color:#888;margin-top:2px">👤 Sin responsable: el error no señala un archivo/línea del repo, no hay a quién atribuirlo automáticamente.</div>`
+              : "";
+          const human =
+            ex || tc.status === "fail"
+              ? `<div style="margin:2px 0 4px 1.4rem;font-size:.9em">${
+                  ex ? `<div><b>🧩 Qué pasó:</b> ${esc(ex.plain)}</div>` : ""
+                }${ex && ex.action ? `<div style="color:#0a5"><b>👉 Qué hacer:</b> ${esc(ex.action)}</div>` : ""}${blameLine}</div>`
+              : "";
           const msg =
             tc.status === "fail" && tc.message
-              ? `<div style="color:#b00020;margin:2px 0 6px 1.4rem;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:.85em">${esc(
+              ? `${human}<div style="color:#b00020;margin:2px 0 6px 1.4rem;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:.8em"><b style="color:#888">Detalle técnico:</b> ${esc(
                   String(tc.message).split(/\r?\n/).slice(0, 3).join("\n")
                 )}</div>`
-              : "";
+              : human;
           const uri = tc.file && byFile[tc.file];
           let img = "";
           if (uri) {
@@ -70,100 +84,6 @@ function execLine(r) {
   if (typeof r.metrics?.ms === "number") parts.push(`${(r.metrics.ms / 1000).toFixed(1)} s`);
   if (typeof r.metrics?.exitCode === "number") parts.push(`exit ${r.metrics.exitCode}`);
   return parts.join(" · ");
-}
-
-// data-URI de una imagen (png/jpg) → el HTML embebe la captura y NO depende de rutas externas.
-// Así el reporte funciona servido por un proxy, abierto del disco o adjunto por correo.
-function dataUri(buf, file) {
-  const mime = /\.jpe?g$/i.test(file) ? "image/jpeg" : "image/png";
-  return `data:${mime};base64,${buf.toString("base64")}`;
-}
-
-// Copia las capturas (png/jpg) de los resultados a <dir>/capturas/ (para tener los archivos
-// sueltos) Y calcula su data-URI (para embeberlas en el HTML, que queda AUTOCONTENIDO).
-// Best-effort: si un archivo no existe o no se puede leer, se omite sin romper.
-function collectShots(results, dir) {
-  const out = [];
-  const capDir = path.join(dir, "capturas");
-  let made = false;
-  for (const r of results) {
-    for (const f of Array.isArray(r.files) ? r.files : []) {
-      if (!/\.(png|jpe?g)$/i.test(f)) continue;
-      try {
-        if (!fs.existsSync(f)) continue;
-        if (!made) {
-          fs.mkdirSync(capDir, { recursive: true });
-          made = true;
-        }
-        const buf = fs.readFileSync(f);
-        const baseName = `${slug(r.layer)}-${path.basename(f)}`;
-        fs.writeFileSync(path.join(capDir, baseName), buf);
-        out.push({ layer: r.layer, rel: `capturas/${baseName}`, name: path.basename(f), src: f, data: dataUri(buf, f) });
-      } catch {
-        /* best-effort */
-      }
-    }
-  }
-  return out;
-}
-
-// Convierte un valor libre (nombre de dev, id) en un segmento de carpeta seguro y portable:
-// quita tildes (ñ→n, á→a), colapsa lo no [A-Za-z0-9._-] en `-`, recorta. Cross-platform.
-function slug(s) {
-  return String(s ?? "")
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-}
-
-// Plan de pruebas del Feature (paridad OFFLINE con la Task "PLAN PRUEBAS FEATURE…" del tracker):
-// objetivo + HUs y sus TC (por criterio) + resultado consolidado. `plan` = { featureId,
-// featureTitle, hus: [{id, title, criteria?, tcs?:[{key,title,status}]}] }.
-function planMd(plan, results) {
-  if (!plan || !Array.isArray(plan.hus) || !plan.hus.length) return [];
-  const c = (s) => results.filter((r) => r.status === s).length;
-  const out = [
-    `## Plan de pruebas del Feature${plan.featureId ? ` #${plan.featureId}` : ""}${plan.featureTitle ? ` — ${plan.featureTitle}` : ""}`,
-    "",
-    `**Alcance:** las HUs y criterios de abajo + la corrida general de capas.`,
-    `**Resultado consolidado:** ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}`,
-    "",
-  ];
-  for (const hu of plan.hus) {
-    out.push(`### HU #${esc(hu.id)}${hu.title ? ` — ${esc(hu.title)}` : ""}`);
-    const tcs = Array.isArray(hu.tcs) ? hu.tcs : [];
-    if (tcs.length) {
-      // sin clave duplicada: el título ya incluye "TC-AC<n> -"
-      for (const tc of tcs) out.push(`- ${esc(tc.title ?? tc.key ?? "")} _(${esc(tc.status ?? "pendiente")})_`);
-    } else if (Array.isArray(hu.criteria) && hu.criteria.length) {
-      for (const cr of hu.criteria) out.push(`- ${esc(critText(cr))}`);
-    } else {
-      out.push(`- _(sin criterios declarados)_`);
-    }
-    out.push("");
-  }
-  return out;
-}
-function planHtml(plan, results) {
-  if (!plan || !Array.isArray(plan.hus) || !plan.hus.length) return "";
-  const c = (s) => results.filter((r) => r.status === s).length;
-  const huBlocks = plan.hus
-    .map((hu) => {
-      const tcs = Array.isArray(hu.tcs) ? hu.tcs : [];
-      const items = tcs.length
-        ? tcs.map((tc) => `<li>${esc(tc.title ?? tc.key ?? "")} <small style="color:#888">(${esc(tc.status ?? "pendiente")})</small></li>`).join("")
-        : (Array.isArray(hu.criteria) ? hu.criteria : []).map((cr) => `<li>${esc(critText(cr))}</li>`).join("") || "<li><i>(sin criterios declarados)</i></li>";
-      return `<p><b>HU #${esc(hu.id)}</b>${hu.title ? ` — ${esc(hu.title)}` : ""}</p><ul>${items}</ul>`;
-    })
-    .join("");
-  return (
-    `<h2>Plan de pruebas del Feature${plan.featureId ? ` #${esc(plan.featureId)}` : ""}${plan.featureTitle ? ` — ${esc(plan.featureTitle)}` : ""}</h2>` +
-    `<p><b>Alcance:</b> las HUs y criterios de abajo + la corrida general de capas.<br>` +
-    `<b>Resultado consolidado:</b> ✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}</p>` +
-    huBlocks
-  );
 }
 
 /**
@@ -199,14 +119,28 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   const fail = results.filter((r) => r.status === "fail").length;
   const skip = results.filter((r) => r.status === "skip").length;
 
-  // Veredicto a nivel de PASO (cases): el flujo se mide por pasos, no por capas.
+  // Veredicto: cuenta casos/pasos fallidos Y capas que fallan SIN desglose por caso (tsc/pytest/
+  // redocly salen ≠0 sin JSON por caso) — así "FALLÓ" nunca queda como "0 con problemas". El término
+  // se adapta al modo: "paso" para exploración E2E, "prueba" para QA del código.
   const allCases = results.flatMap((r) => (Array.isArray(r.cases) ? r.cases : []));
   const stepPass = allCases.filter((c) => c.status === "pass").length;
   const stepFail = allCases.filter((c) => c.status === "fail").length;
   const failed = fail > 0 || stepFail > 0;
-  const verdictTxt = failed
-    ? `❌ FALLÓ — ${stepFail} de ${allCases.length} paso(s) con problemas`
-    : `✅ PASÓ${allCases.length ? ` — ${stepPass}/${allCases.length} paso(s) ok` : ""}`;
+  const unitWord = results.some((r) => r.layer === "explore") ? "paso" : "prueba";
+  const caselessFails = results.filter(
+    (r) => r.status === "fail" && !(Array.isArray(r.cases) && r.cases.some((c) => c.status === "fail")),
+  );
+  let verdictTxt;
+  if (!failed) {
+    verdictTxt = `✅ PASÓ${allCases.length ? ` — ${stepPass}/${allCases.length} ${unitWord}(s) ok` : ""}`;
+  } else {
+    const parts = [];
+    if (stepFail > 0) parts.push(`${stepFail} de ${allCases.length} ${unitWord}(s) con problemas`);
+    if (caselessFails.length) {
+      parts.push(`capa(s) con fallo: ${caselessFails.map((r) => `${r.layer}${r.metrics?.tool ? ` (${r.metrics.tool})` : ""}`).join(", ")}`);
+    }
+    verdictTxt = `❌ FALLÓ — ${parts.join(" · ") || "revisá el detalle"}`;
+  }
 
   // ---- Markdown ----
   const md = [];
@@ -237,6 +171,32 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   }
   md.push("");
 
+  // ---- Capas con FALLO sin desglose por prueba (caseless): misma claridad 🧩/👉 que los TC ----
+  // (dotnet-test/tsc/redocly salen ≠0 sin JSON por caso → no aparecen en el detalle de TC de abajo).
+  const caselessFail = results.filter(
+    (r) => r.status === "fail" && !(Array.isArray(r.cases) && r.cases.some((c) => c.status === "fail")),
+  );
+  if (caselessFail.length) {
+    md.push("## Capas con fallo (sin desglose por prueba)");
+    md.push("");
+    for (const r of caselessFail) {
+      const ex = explainLayerFailure(r);
+      md.push(`### ${esc(r.layer)} — ${esc(r.metrics?.tool ?? "")}${caseWhere(r)}`);
+      if (ex) {
+        md.push(`- 🧩 **Qué pasó:** ${esc(ex.plain)}`);
+        if (ex.action) md.push(`- 👉 **Qué hacer:** ${esc(ex.action)}`);
+      }
+      if (r.blame) {
+        const at = r.blame.line ? `${r.blame.file}:${r.blame.line}` : r.blame.file;
+        md.push(`- 👤 **Último en modificar** \`${esc(at)}\`: ${esc(r.blame.author)}${r.blame.date ? ` _(${esc(r.blame.date)})_` : ""}`);
+      } else {
+        md.push(`- 👤 _Sin responsable: la herramienta no dejó un archivo/línea en el error, no hay a quién atribuirlo automáticamente._`);
+      }
+      if (r.narrative) md.push(`- ⚠ _Detalle técnico:_ ${esc(String(r.narrative).split(/\r?\n/).slice(0, 3).join(" ⏎ "))}`);
+      md.push("");
+    }
+  }
+
   // ---- Detalle por capa: los TC ejecutados por debajo de cada capa ----
   const withCases = results.filter((r) => Array.isArray(r.cases) && r.cases.length);
   if (withCases.length) {
@@ -246,11 +206,26 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
       md.push(`### ${esc(r.layer)} — ${esc(r.metrics?.tool ?? "")}${caseWhere(r)}  ·  ${caseCounts(r.cases)}`);
       md.push("");
       for (const tc of r.cases) {
-        const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : "⏭";
+        // En static, "skip" = advertencia del linter (no un test saltado) → ⚠ para no confundir.
+        const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : r.layer === "static" ? "⚠" : "⏭";
         const d = typeof tc.duration === "number" ? ` _(${tc.duration} ms)_` : "";
         md.push(`- ${ic} ${esc(tc.name)}${d}`);
-        if (tc.status === "fail" && tc.message) {
-          md.push(`  - ⚠ ${esc(String(tc.message).split(/\r?\n/).slice(0, 3).join(" ⏎ "))}`);
+        if (tc.status === "fail") {
+          // Explicación en lenguaje llano (qué pasó / qué hacer) ANTES del detalle técnico.
+          const ex = explainFailure(tc, { layer: r.layer, tool: r.metrics?.tool });
+          if (ex) {
+            md.push(`  - 🧩 **Qué pasó:** ${esc(ex.plain)}`);
+            if (ex.action) md.push(`  - 👉 **Qué hacer:** ${esc(ex.action)}`);
+          }
+          if (tc.blame) {
+            const at = tc.blame.line ? `${tc.blame.file}:${tc.blame.line}` : tc.blame.file;
+            md.push(`  - 👤 **Último en modificar** \`${esc(at)}\`: ${esc(tc.blame.author)}${tc.blame.date ? ` _(${esc(tc.blame.date)})_` : ""}`);
+          } else {
+            md.push(`  - 👤 _Sin responsable: el error no señala un archivo/línea del repo, así que no hay a quién atribuirlo automáticamente._`);
+          }
+          if (tc.message) {
+            md.push(`  - ⚠ _Detalle técnico:_ ${esc(String(tc.message).split(/\r?\n/).slice(0, 3).join(" ⏎ "))}`);
+          }
         }
       }
       md.push("");
@@ -264,6 +239,9 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
     md.push("");
     for (const r of execd) {
       md.push(`- **${esc(r.layer)}** (${esc(r.metrics.tool ?? "")}): \`${esc(r.metrics.command)}\` · ${(r.metrics.ms / 1000).toFixed(1)} s · exit ${r.metrics.exitCode}`);
+      const desc = toolDescription(r.metrics.tool, r.layer);
+      if (desc) md.push(`  - _Qué hace:_ ${esc(desc)}.`);
+      md.push(`  - _Resultado:_ ${esc(interpretLayer(r))}`);
     }
     md.push("");
   }
@@ -288,9 +266,10 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
     .map((r) => {
       const icon = r.status === "pass" ? "✅" : r.status === "fail" ? "❌" : "⏭";
       const ex = execLine(r);
-      const note = `${esc(r.narrative ?? "")}${
-        ex ? `<br><small style="color:#666">Qué se ejecutó: <code>${esc(ex)}</code></small>` : ""
-      }`;
+      const desc = toolDescription(r.metrics?.tool, r.layer);
+      const note = `${esc(interpretLayer(r))}${
+        desc ? `<br><small style="color:#888">Qué hace: ${esc(desc)}.</small>` : ""
+      }${ex ? `<br><small style="color:#666">Comando: <code>${esc(ex)}</code></small>` : ""}`;
       return `<tr><td>${esc(r.layer)}</td><td>${esc(r.tc_id ?? "—")}</td><td>${icon} ${esc(
         r.status
       )}</td><td>${note}</td></tr>`;
@@ -303,6 +282,30 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   const byData = Object.fromEntries(shots.map((s) => [s.src, s.data]));
   const embedded = new Set();
   const casesBlock = casesHtml(results, byData, embedded);
+
+  // Capas con FALLO sin desglose por caso → misma claridad 🧩/👉 a nivel de capa (caseless).
+  const caselessBlock = caselessFail.length
+    ? `<h2>Capas con fallo (sin desglose por prueba)</h2>${caselessFail
+        .map((r) => {
+          const ex = explainLayerFailure(r);
+          const td = r.narrative
+            ? `<div style="color:#b00020;margin-top:2px;font-family:ui-monospace,Consolas,monospace;font-size:.8em"><b style="color:#888">Detalle técnico:</b> ${esc(
+                String(r.narrative).split(/\r?\n/).slice(0, 3).join(" ")
+              )}</div>`
+            : "";
+          const blameB = r.blame
+            ? `<div style="color:#555;margin-top:2px">👤 <b>Último en modificar</b> <code>${esc(
+                r.blame.line ? `${r.blame.file}:${r.blame.line}` : r.blame.file
+              )}</code>: ${esc(r.blame.author)}${r.blame.date ? ` <small>(${esc(r.blame.date)})</small>` : ""}</div>`
+            : `<div style="color:#888;margin-top:2px">👤 Sin responsable: la herramienta no dejó un archivo/línea en el error, no hay a quién atribuirlo automáticamente.</div>`;
+          return `<div style="margin:.5rem 0;padding:.4rem .6rem;border:1px solid #f0c9c9;border-radius:6px;background:#fdf2f2"><b>❌ ${esc(
+            r.layer
+          )} — ${esc(r.metrics?.tool ?? "")}</b>${caseWhere(r)}${
+            ex ? `<div style="margin-top:3px"><b>🧩 Qué pasó:</b> ${esc(ex.plain)}</div>` : ""
+          }${ex && ex.action ? `<div style="color:#0a5"><b>👉 Qué hacer:</b> ${esc(ex.action)}</div>` : ""}${blameB}${td}</div>`;
+        })
+        .join("")}`
+    : "";
   const galleryShots = shots.filter((s) => !embedded.has(s.src));
 
   const verdictColor = failed
@@ -340,6 +343,7 @@ ${planHtml(plan, results)}
     .join("")}</tr></thead>
 <tbody>${rows.replace(/<td>/g, '<td style="border:1px solid #ccc;padding:6px 8px">')}</tbody>
 </table>
+${caselessBlock}
 ${casesBlock}
 ${shotsHtml}
 </body>`;

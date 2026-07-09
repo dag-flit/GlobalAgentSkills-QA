@@ -13,6 +13,12 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 | `getWorkItem(id)` | Devuelve la HU/Feature destino (incluye `type`: "Feature"/"User Story") | Lee `.qa/work-items/{id}.md` o devuelve un stub |
 | `getChildren(id)` | HU **hijas** de un Feature (para el fan-out por HU) | `[]` (local no tiene jerarquía) |
 | `publishEvidence(target, payload)` | Entrega la evidencia normalizada | Reporte `md`+`html` en `qa-evidence/` |
+| `commentWorkItem(id, html)` | Publica un comentario HTML en un WI (p.ej. el **brief PR-driven**) | `{ok:false}` (sin Discussion) |
+
+> **`commentWorkItem(id, html)`** — usado por el flujo **QA guiado por PR** para dejar el brief de
+> validación (qué probar) como comentario en la HU. `azure-devops` lo postea en la Discussion
+> (`addComment`); `local` devuelve `{ok:false, reason}` (no tiene comentarios). No entrega evidencia:
+> es texto/HTML de contexto para el equipo.
 
 > **Fan-out de Feature:** cuando el WI destino es un **Feature**, la webapp lee sus **HU hijas** con
 > `getChildren(id)` y corre el guion guardado de cada HU, publicando evidencia en cada una. `getWorkItem`

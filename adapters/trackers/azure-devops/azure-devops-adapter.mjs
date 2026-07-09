@@ -88,6 +88,15 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     return out;
   }
 
+  // Publica un comentario HTML (p.ej. el brief PR-driven de qué validar) en la Discussion del WI.
+  async commentWorkItem(id, html) {
+    if (!id) return { ok: false, reason: "sin work item destino" };
+    const res = await this.client.addComment(id, this._supervisionPrefix() + String(html || ""));
+    return res.status >= 200 && res.status < 300
+      ? { ok: true, id: (res.json && res.json.id) ?? null }
+      : { ok: false, reason: `ADO ${res.status}` };
+  }
+
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const parentId = (target && target.work_item_id) || (payload && payload.work_item_id) || null;

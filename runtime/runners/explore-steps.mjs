@@ -83,10 +83,28 @@ function resolveLocator(page, args, ctx) {
 }
 
 // ── Handlers del núcleo ───────────────────────────────────────────────────────
+
+/** Pausa breve, offline-safe (no depende de la API de la página; el fake del smoke no la usa). */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Deja "asentar" una app client-rendered (SPA) tras navegar: al evento `load` el HTML llegó pero el
+// framework aún no pintó el DOM (login/dashboard vacíos → capturas en blanco y localizadores que no
+// existen todavía). Espera —best-effort— a que la red quede en reposo para que el cliente termine de
+// renderizar. GUARDADO: si el launcher/fake no expone waitForLoadState, se omite (no rompe offline).
+export async function settleSpa(page, timeout = 30000) {
+  if (!page || typeof page.waitForLoadState !== "function") return;
+  try {
+    await page.waitForLoadState("networkidle", { timeout: Math.min(Math.max(0, timeout), 8000) });
+  } catch {
+    /* networkidle no llegó (app con polling/streaming) → seguimos con lo que haya */
+  }
+}
+
 async function stepIrA({ page, args, env, vars, timeout }) {
   const url = interpolate(args.url || args.ruta || "", { env, vars });
   if (!url) return { ok: false, message: "ir_a sin url" };
   const resp = await page.goto(url, { waitUntil: "load", timeout });
+  await settleSpa(page, timeout); // deja pintar a la SPA antes de capturar / seguir con los pasos
   const status = resp && typeof resp.status === "function" ? resp.status() : (resp && resp.status) || null;
   const ok = status == null || status < 400;
   return { ok, message: status != null ? `HTTP ${status}` : null };
@@ -170,6 +188,21 @@ async function firstPresent(page, makers) {
   return null;
 }
 
+// Como firstPresent, pero ESPERA (hasta `timeout`) a que aparezca el primer candidato, sondeando
+// con reintentos cortos. Necesario en SPAs: al `load` el formulario aún no existe y count() mira el
+// DOM UNA sola vez (devolvía 0 → "no se encontró el campo" en ~30 ms → el login moría y, por
+// fail-fast, tumbaba TODA la corrida). Respeta el orden de prioridad de los makers. No depende de
+// que el fake exponga waitFor (usa count() como firstPresent), así el smoke sigue verde offline.
+async function firstPresentWait(page, makers, timeout = 30000) {
+  const deadline = Date.now() + Math.max(0, timeout);
+  let loc = await firstPresent(page, makers);
+  while (!loc && Date.now() < deadline) {
+    await sleep(250);
+    loc = await firstPresent(page, makers);
+  }
+  return loc;
+}
+
 // Inicia sesión sin depender de una app concreta: usuario por etiqueta/heurística (usuario/correo/
 // email/user), clave por input[type=password] (señal fiable), enviar por botón submit o con texto
 // de acceso. Credenciales SIEMPRE por ${QA_USER}/${QA_PASS} (interpoladas de vars/env; nunca en el
@@ -180,26 +213,43 @@ async function stepLogin({ page, args, env, vars, timeout }) {
   const pass = interpolate(args.clave ?? "${QA_PASS}", { env, vars });
   if (!user || !pass) return { ok: false, message: "login sin credenciales (define ${QA_USER}/${QA_PASS} en la corrida)" };
 
-  const userLoc = await firstPresent(page, [
+  // Espera a que la SPA pinte el formulario (hasta `timeout`) antes de sondear los campos: en apps
+  // client-rendered el <input> no existe al `load`. Sin esta espera el login fallaba en ~30 ms.
+  const userLoc = await firstPresentWait(page, [
     () => page.getByLabel(/usuario|correo|e-?mail|user/i),
     () => page.locator('input[type="email"]'),
     () => page.locator('input[name*="user" i], input[id*="user" i], input[name*="email" i]'),
     () => page.locator('input[type="text"]'),
-  ]);
-  if (!userLoc) return { ok: false, message: "login: no se encontró el campo de usuario" };
+  ], timeout);
+  if (!userLoc)
+    return { ok: false, message: "login: no se encontró el campo de usuario (la página no mostró un formulario tras esperar; ¿es una SPA que no renderizó, o requiere otra URL/paso previo?)" };
   await userLoc.fill(user);
 
-  const passLoc = await firstPresent(page, [() => page.locator('input[type="password"]')]);
+  // Usuario ya presente → los demás campos del mismo formulario deberían estar; espera corta por si
+  // aparecen con leve retraso.
+  const short = Math.min(timeout, 5000);
+  const passLoc = await firstPresentWait(page, [() => page.locator('input[type="password"]')], short);
   if (!passLoc) return { ok: false, message: "login: no se encontró el campo de contraseña" };
   await passLoc.fill(pass);
 
-  const btn = await firstPresent(page, [
+  const btn = await firstPresentWait(page, [
     () => page.getByRole("button", { name: /iniciar|ingres|entrar|acceder|log\s?in|sign\s?in/i }),
     () => page.locator('button[type="submit"], input[type="submit"]'),
     () => page.getByRole("button"),
-  ]);
+  ], short);
   if (!btn) return { ok: false, message: "login: no se encontró el botón de acceso" };
   await btn.click({ timeout });
+
+  // Espera a que el login CIERRE antes de devolver: el formulario desaparece (campo de clave
+  // oculto/desmontado) y/o la SPA navega al dashboard. Sin esto el paso volvía en ~250 ms mientras
+  // seguíamos en la pantalla de login → el recon capturaba el LOGIN (no el dashboard) y la IA
+  // generaba guiones a ciegas; y en la ejecución los pasos siguientes corrían sobre el login.
+  try {
+    await passLoc.waitFor({ state: "hidden", timeout: short });
+  } catch {
+    /* el form no se ocultó (login SPA in-place o credenciales inválidas) → el settle da margen */
+  }
+  await settleSpa(page, timeout);
   return { ok: true };
 }
 

@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { withTenant } from "./tx";
 import { encryptDb, decryptDb, encryptTracker, decryptTracker } from "./secretsMapper";
-import type { AppConfig, AiConfig, DbConnection, TrackerConfig } from "@/lib/types";
+import type { AppConfig, DbConnection, TrackerConfig } from "@/lib/types";
 
 // Repositorio de configuración POR TENANT: databases (una fila por conexión) + tracker (una
 // fila por tenant). Toda lectura/escritura corre en withTenant → RLS aísla por tenant a
@@ -29,19 +29,15 @@ function rowToDb(r: any): DbConnection {
 export async function readConfig(): Promise<{
   databases: DbConnection[];
   tracker: TrackerConfig | null;
-  ai: AiConfig | null;
 }> {
   return withTenant(async (c) => {
     const dbs = await c.query("SELECT * FROM db_connections ORDER BY sort_order, id");
-    const tc = await c.query("SELECT selected, azure, ai FROM tracker_config LIMIT 1");
+    const tc = await c.query("SELECT selected, azure FROM tracker_config LIMIT 1");
     const t = tc.rows[0];
     const tracker = t ? ({ selected: t.selected, azure: t.azure } as TrackerConfig) : null;
-    // ai es jsonb sin secretos → se usa tal cual (loadConfig lo funde con el default).
-    const ai = t && t.ai ? (t.ai as AiConfig) : null;
     return {
       databases: dbs.rows.map(rowToDb).map(decryptDb),
       tracker: tracker ? decryptTracker(tracker) : null,
-      ai,
     };
   });
 }
@@ -65,12 +61,14 @@ async function upsertDb(c: PoolClient, db: DbConnection, order: number): Promise
 export async function writeConfig(cfg: AppConfig): Promise<void> {
   await withTenant(async (c) => {
     const t = encryptTracker(cfg.tracker);
-    const ai = cfg.ai ?? null; // sin secretos → se guarda tal cual (jsonb)
+    // Nota: la columna `ai jsonb` (migración 0006) quedó huérfana al retirar la IA; ya no se
+    // escribe (queda NULL). No se dropea aquí para respetar forward-only; limpiable con una
+    // migración futura si molesta.
     await c.query(
-      `INSERT INTO tracker_config (selected, azure, ai, updated_at)
-       VALUES ($1, $2, $3, now())
-       ON CONFLICT (tenant_id) DO UPDATE SET selected=$1, azure=$2, ai=$3, updated_at=now()`,
-      [t.selected, JSON.stringify(t.azure), ai ? JSON.stringify(ai) : null],
+      `INSERT INTO tracker_config (selected, azure, updated_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT (tenant_id) DO UPDATE SET selected=$1, azure=$2, updated_at=now()`,
+      [t.selected, JSON.stringify(t.azure)],
     );
     const ids = cfg.databases.map((d) => d.id);
     if (ids.length) await c.query("DELETE FROM db_connections WHERE NOT (id = ANY($1))", [ids]);

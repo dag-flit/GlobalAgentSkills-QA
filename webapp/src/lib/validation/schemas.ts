@@ -71,18 +71,9 @@ export const trackerConfigSchema = z
     }
   });
 
-// Config de IA (asistente de guion). Endpoint acotado a http(s) para no apuntar a esquemas raros;
-// modelo libre (lo elige el usuario). Sin secretos (Ollama local).
-export const aiConfigSchema = z.object({
-  enabled: z.boolean(),
-  endpoint: z.string().refine((v) => v === "" || /^https?:\/\//i.test(v), "El endpoint debe ser http(s)://…"),
-  model: z.string(),
-});
-
 export const appConfigSchema = z.object({
   databases: z.array(dbConnectionSchema),
   tracker: trackerConfigSchema,
-  ai: aiConfigSchema.optional(), // se conserva la config de IA si el request no la trae (config.ts)
 });
 
 // Un paso del guion E2E: la operación + campos (todos strings; el motor los normaliza).
@@ -103,10 +94,40 @@ export const runInputSchema = z.object({
   declaredAcs: z.array(z.string()).optional(),
 });
 
+// Input de una corrida de "QA del código" (modo "code"): analiza un repo LOCAL confinado
+// (la ruta se resuelve DENTRO de CODE_QA_BASE_DIR en el server) y corre las capas deterministas
+// static/unit/api/db/security. `sourcePath` es relativa a la base permitida (nunca una ruta libre
+// del server). `layers` es el subconjunto opcional a correr (vacío/ausente = las detectadas).
+// Es un schema NUEVO — `runInputSchema` (explore) queda intacto.
+export const codeRunInputSchema = z.object({
+  mode: z.literal("code"),
+  sourcePath: z.string().min(1),
+  workItemId: z.string().optional(),
+  layers: z.array(z.enum(["static", "unit", "api", "db", "security"])).optional(),
+  featureId: z.string().optional(),
+  developer: z.string().optional(),
+});
+
+// Unión discriminada por `mode`: la ruta /api/runs acepta E2E (explore) o QA de código (code)
+// sin modificar ninguno de los dos schemas base.
+export const anyRunInputSchema = z.discriminatedUnion("mode", [runInputSchema, codeRunInputSchema]);
+
 // Guardar el guion de una HU (persistencia por work item). Sin credenciales: solo la estructura.
 export const flowSaveSchema = z.object({
   wid: z.string().min(1),
   steps: z.array(flowStepSchema),
+});
+
+// Generar el brief de validación PR-driven: solo la URL del PR de GitHub (owner/repo/número salen
+// de ahí). Sin credenciales: el token de GitHub (opcional) vive en el server (GITHUB_TOKEN).
+export const prBriefSchema = z.object({
+  prUrl: z.string().min(1),
+});
+
+// Publicar el brief como comentario en una HU de Azure. `workItemId` = HU destino.
+export const prPublishSchema = z.object({
+  prUrl: z.string().min(1),
+  workItemId: z.string().min(1),
 });
 
 export const dbTestSchema = z

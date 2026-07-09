@@ -26,7 +26,12 @@ export interface RunEvent {
   msg: string;
 }
 
-export type RunMode = "explore";
+// "explore" = pruebas E2E sobre una URL viva; "code" = QA del código (capas estáticas/unit/api/
+// db/security sobre un repo local confinado). Ambos entregan evidencia por el mismo sink.
+export type RunMode = "explore" | "code";
+
+// Capas del modo "QA del código" (subconjunto ejecutable determinista, sin IA).
+export type CodeLayer = "static" | "unit" | "api" | "db" | "security";
 
 export interface RunRecord {
   id: string;
@@ -40,6 +45,7 @@ export interface RunRecord {
   // inputs
   repoRoot?: string; // carpeta de evidencia de la corrida (capturas)
   appUrl?: string;
+  sourcePath?: string; // modo "code": ruta (relativa a CODE_QA_BASE_DIR) del repo analizado
   workItemId?: string; // WI destino de la evidencia (Azure); ausente/"local" = solo reporte local
   // outputs
   summary?: any; // resumen de runQaCycle
@@ -98,14 +104,6 @@ export interface TrackerConfig {
   azure: AzureCfg;
 }
 
-// Config de IA (asistente de guion). OFF por defecto; el núcleo NUNCA depende de IA. Ollama es
-// LOCAL (los datos no salen); el modelo lo elige/escribe el usuario (sin sesgo). Sin secretos.
-export interface AiConfig {
-  enabled: boolean; // usar IA (Ollama) para generar el guion desde los AC
-  endpoint: string; // p.ej. http://localhost:11434
-  model: string; // p.ej. llama3.1, qwen2.5, mistral — lo elige el usuario
-}
-
 // ---------- Configuración persistente (data/config.json) ----------
 
 export interface AppConfig {
@@ -113,8 +111,6 @@ export interface AppConfig {
   databases: DbConnection[];
   /** Configuración del tracker (dónde se reportan los resultados). */
   tracker: TrackerConfig;
-  /** Config de IA (asistente de guion). OFF por defecto. */
-  ai: AiConfig;
 }
 
 export const SECRET_MASK = "••••••••";

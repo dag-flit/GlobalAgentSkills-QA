@@ -10,10 +10,11 @@ import assert from "node:assert";
 import { makeCtx } from "./smoke/_harness.mjs";
 import * as resolver from "./smoke/resolver.mjs";
 import * as explore from "./smoke/explore-suite.mjs";
-import * as generate from "./smoke/generate-suite.mjs";
-import * as planner from "./smoke/planner-suite.mjs";
+import * as fanoutSuite from "./smoke/fanout-suite.mjs";
+import * as prSuite from "./smoke/pr-suite.mjs";
+import * as codeSuite from "./smoke/code-suite.mjs";
 
-const EXPECTED = 25;
+const EXPECTED = 44;
 
 console.log("== smoke test (kit acotado a exploración E2E) ==\n");
 
@@ -21,8 +22,9 @@ const ctx = makeCtx();
 // resolver PRIMERO: fija en ctx los valores compartidos (pDefault/pFlit/tmp/res) que usan los demás.
 await resolver.run(ctx);
 await explore.run(ctx);
-await generate.run(ctx);
-await planner.run(ctx);
+await fanoutSuite.run(ctx);
+await prSuite.run(ctx);
+await codeSuite.run(ctx);
 
 console.log(`\n== ${ctx.state.passed}/${EXPECTED} OK ==`);
 assert.strictEqual(ctx.state.passed, EXPECTED, `se esperaban ${EXPECTED} casos, corrieron ${ctx.state.passed}`);

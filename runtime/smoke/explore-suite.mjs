@@ -1,7 +1,7 @@
-// runtime/smoke/explore-suite.mjs — el kit quedó acotado a EXPLORACIÓN de una URL viva (E2E)
-// con tracker local o azure-devops. Cubre: contrato del adapter azure (destino de la evidencia
-// E2E) + adjuntos, el runner explore, runQaCycle (local + azure, offline), la guarda remoto
-// sin -w, el transporte HTTP con reintento y el guardrail de 400 líneas del motor.
+// runtime/smoke/explore-suite.mjs — el kit quedó acotado a EXPLORACIÓN de una URL viva (E2E) con
+// tracker local o azure-devops. Cubre: contrato del adapter azure (destino de la evidencia E2E) +
+// adjuntos, el runner explore, runQaCycle (local + azure, offline), la guarda remoto sin -w, el
+// login automático (URL+credenciales), el transporte HTTP con reintento y el guardrail de líneas.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +11,7 @@ import { runQaCycle } from "../orchestrator.mjs";
 import { runExplore } from "../runners/explore.mjs";
 import { defaultHttp as retryHttp, isTransientNetworkError } from "../../adapters/_shared/http-retry.mjs";
 import { analyze as analyzeLineBudget } from "../../scripts/check-line-budget.mjs";
+import { runLoginSynthesis } from "./explore-login.mjs";
 
 // Launcher de navegador FALSO (offline): una URL ok (200) y las que contienen "bad" → 500.
 const fakeLaunch = () => ({
@@ -95,8 +96,7 @@ export async function run(ctx) {
   fs.rmSync(repoAtt, { recursive: true, force: true });
   ok("adjuntos azure: la captura de exploración se sube y se enlaza al Task hijo (mapping_file)");
 
-  // B2. adjuntos SIN Task hijo que matchee (caso E2E: tc_id = nº de la HU) → la captura se adjunta
-  //     DIRECTO a la HU (fallback parent_work_item). Antes se perdía en `unmatched`.
+  // B2. adjuntos SIN Task hijo que matchee (E2E: tc_id = nº de HU) → adjunta DIRECTO a la HU (fallback).
   const repoAtt2 = fs.mkdtempSync(path.join(os.tmpdir(), "qa-att2-"));
   const shot2 = path.join(repoAtt2, "explore-1.png");
   fs.writeFileSync(shot2, "PNGDATA");
@@ -133,6 +133,9 @@ export async function run(ctx) {
   assert.ok(/Playwright/.test(expSkip[0].narrative));
   fs.rmSync(repoExp, { recursive: true, force: true });
   ok("runner explore: launcher inyectable (offline), pass/fail por URL, skip sin Playwright, gating sin URL");
+
+  // C2. URL + credenciales sin guion → login automático (ir_a → login). Ver explore-login.mjs.
+  await runLoginSynthesis(ok);
 
   // D. runQaCycle (local): explora la URL y deja SOLO reporte local (sin red).
   const repoLoc = fs.mkdtempSync(path.join(os.tmpdir(), "qa-cyc-loc-"));
@@ -179,7 +182,7 @@ export async function run(ctx) {
   fs.rmSync(repoCyc, { recursive: true, force: true });
   ok("runQaCycle azure: preflight REST + explora + publica la evidencia E2E en la HU (offline)");
 
-  // F. guarda online: tracker remoto SIN -w (workItemId="local") no comenta sobre una HU inexistente.
+  // F. guarda online: tracker remoto SIN -w (workItemId="local") no comenta sobre HU inexistente.
   const repoGuard = fs.mkdtempSync(path.join(os.tmpdir(), "qa-guard-"));
   const fakeGuard = makeFakeAdo([[(r) => r.method === "GET" && r.url.includes("/_apis/projects/Proj"), () => ({ status: 200, json: { id: "p1" } })]]);
   const cycGuard = await runQaCycle({ repoRoot: repoGuard, env: creds, profile: pFlit, appUrl: "https://app.test/", launchBrowser: fakeLaunch, http: fakeGuard.http });
@@ -212,8 +215,7 @@ export async function run(ctx) {
   }
   ok("transporte HTTP: reintenta fallos de red transitorios (ECONNRESET/fetch failed), no status HTTP");
 
-  // I. guion de pasos (núcleo): ejecuta pasos EN ORDEN sobre una misma sesión, interpola
-  //    ${VAR} de secretos (nunca en el guion), captura por paso, y fail-fast + auto-captura.
+  // I. guion de pasos (núcleo): pasos EN ORDEN sobre una sesión, ${VAR}, captura por paso, fail-fast.
   {
     const repoFlow = fs.mkdtempSync(path.join(os.tmpdir(), "qa-flow-"));
     const seen = { fills: [], clicks: [] };

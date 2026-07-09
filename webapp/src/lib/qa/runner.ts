@@ -9,7 +9,6 @@ import { saveRun } from "@/lib/runStore";
 import { currentTenantId, runInTenant } from "@/lib/db/tenantContext";
 import { isStopRequested, clearStop } from "@/lib/procRegistry";
 import { runFeatureFanout } from "./fanout";
-import { autogenFlow, hasActionableSteps } from "./autogen";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
 
 export interface RunInput {
@@ -19,6 +18,11 @@ export interface RunInput {
   steps?: Array<Record<string, string>>;
   vars?: Record<string, string>;
   declaredAcs?: string[]; // AC declarados de la HU → matriz de cobertura en el reporte
+  // --- modo "code" (QA del código) ---
+  sourcePath?: string; // ruta del repo a analizar (relativa a CODE_QA_BASE_DIR)
+  layers?: string[]; // subconjunto de capas static/unit/api/db/security (vacío = detectadas)
+  featureId?: string; // FT padre (traza la carpeta de evidencia)
+  developer?: string; // dev responsable (traza la carpeta de evidencia)
 }
 
 /**
@@ -44,12 +48,13 @@ function runId(): string {
 }
 
 function titleFor(input: RunInput): string {
+  if (input.mode === "code") return `Analizar código → ${input.sourcePath || "?"}`;
   const flow = Array.isArray(input.steps) && input.steps.length > 0;
   return `Explorar${flow ? " (flujo)" : ""} → ${input.appUrl || "?"}`;
 }
 
 /** Construye el perfil efectivo (default ← preset del tracker) sin tocar el repo. */
-async function buildProfile(tracker: string): Promise<any> {
+export async function buildProfile(tracker: string): Promise<any> {
   const { resolveProfile } = await importKit("runtime/profile/resolve-profile.mjs");
   ensureDataDirs();
   const tmpDir = path.join(DATA_DIR, "tmp");
@@ -71,7 +76,7 @@ async function buildProfile(tracker: string): Promise<any> {
 }
 
 /** env para el ciclo: credenciales del tracker (la exploración no usa BD). */
-async function buildEnv(cfg: AppConfig): Promise<Record<string, string>> {
+export async function buildEnv(cfg: AppConfig): Promise<Record<string, string>> {
   return { ...(process.env as Record<string, string>), ...trackerEnv(cfg.tracker) };
 }
 
@@ -90,6 +95,7 @@ export async function startRun(input: RunInput): Promise<RunRecord> {
     tracker,
     title: titleFor(input),
     appUrl: input.appUrl,
+    sourcePath: input.sourcePath,
     workItemId: input.workItemId?.trim() || undefined,
   };
   await saveRun(record); // la fila del run debe existir antes de emitir eventos (FK run_events)
@@ -104,6 +110,8 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
   const id = record.id;
   const tracker = cfg.tracker.selected;
   emitEvent(id, "system", `Iniciando ciclo · modo ${record.mode} · tracker ${tracker}`);
+  // Modo "QA del código": ruta aparte y autónoma. NO toca el camino E2E/PR de abajo.
+  if (input.mode === "code") return executeCode(record, input, cfg);
   try {
     const { runQaCycle } = await importKit("runtime/orchestrator.mjs");
 
@@ -141,15 +149,10 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
     // (no "local") comenta la evidencia y traza el caso (tcId) para el attach en ADO.
     const manualFlow = Array.isArray(input.steps) && input.steps.length > 0;
     const workItemId = input.workItemId?.trim() || "local";
-    // ¿La corrida trae credenciales? → el guion autogenerado antepone el login automático.
-    const hasCreds = !!(input.vars && input.vars.QA_USER && input.vars.QA_PASS);
-
-    // Guion AUTOGENERADO para la HU sola (sin guion manual): se deduce de sus AC (determinista).
-    let autoFlow: Array<Record<string, any>> | null = null;
-    let autoDeclaredAcs: string[] = [];
 
     // ¿Fan-out de Feature? Solo azure con WI real: si el WI destino es un Feature, se recorre cada
-    // HU hija y se corre su guion GUARDADO o, si no hay, uno AUTOGENERADO desde sus AC.
+    // HU hija y se corre su guion GUARDADO (sin guion → esa HU se salta). Una HU sola sin guion
+    // manual cae al smoke de la URL (más abajo); ya NO se autogenera nada desde los AC ni con IA.
     let fanout: any = null;
     if (tracker === "azure-devops" && workItemId !== "local") {
       try {
@@ -157,26 +160,8 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
         const adapter = getAdapter({ profile, env, repoRoot });
         const wi = await adapter.getWorkItem(workItemId);
 
-        // RECON (solo si la IA está activa y hay con qué navegar): captura UNA vez el DOM de la app
-        // —autenticado si hay credenciales— para que el planner deduzca localizadores REALES. Se
-        // comparte entre el fan-out y la HU sola. Best-effort: si falla, la IA usa solo los AC.
-        const aiOn = !!(cfg.ai && cfg.ai.enabled && cfg.ai.model);
-        let reconDom = "";
-        const willAutogen = wi?.type === "Feature" || (wi && !manualFlow && input.appUrl);
-        if (aiOn && input.appUrl && launchBrowser && willAutogen) {
-          try {
-            const { captureDom } = await importKit("runtime/generate/recon.mjs");
-            emitEvent(id, "info", "IA activa → recon: abriendo la app para leer sus campos/botones reales…");
-            const rc = await captureDom({ appUrl: input.appUrl, login: hasCreds, env, vars: input.vars || {}, launchBrowser });
-            reconDom = rc.dom || "";
-            emitEvent(id, rc.ok ? "info" : "stderr", rc.ok ? `Recon OK (${reconDom.length} caracteres de pantalla leídos).` : `Recon no disponible: ${rc.message}. La IA usará solo los AC.`);
-          } catch (e: any) {
-            emitEvent(id, "stderr", `Recon falló: ${describeError(e)}. La IA usará solo los AC.`);
-          }
-        }
-
         if (wi?.type === "Feature") {
-          emitEvent(id, "system", `WI ${workItemId} es un Feature → fan-out por HU hija (guion guardado o autogenerado de cada una).`);
+          emitEvent(id, "system", `WI ${workItemId} es un Feature → fan-out por HU hija (guion guardado de cada una).`);
           fanout = await runFeatureFanout(workItemId, {
             runQaCycle,
             getChildren: (fid: string) => adapter.getChildren(fid),
@@ -187,46 +172,58 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
                 .map((a: any) => (typeof a === "string" ? a : a?.title))
                 .filter((t: any) => t && String(t).trim() !== "");
             },
-            // Autogenera el guion de una HU hija desde sus AC cuando no tiene guion guardado.
-            // Usa la IA (Ollama) si está encendida en Ajustes; si no, el generador determinista.
-            // El `reconDom` (pantalla real) alimenta al planner IA para localizadores reales.
-            autogen: (cid: string) => autogenFlow(adapter, cid, input.appUrl || "", hasCreds, cfg.ai, reconDom),
             profile,
             env,
             repoRoot,
             launchBrowser,
             vars: input.vars || {},
+            // URL adjunta a la corrida → habilita el login-smoke en HU frontend SIN guion guardado
+            // (abre la URL + login + captura por paso). Sin URL, esas HU se saltan como antes.
+            appUrl: input.appUrl,
             emit: (lvl: string, msg: string) => emitEvent(id, lvl as any, msg),
           });
-        } else if (wi && !manualFlow && input.appUrl) {
-          // HU sola sin guion manual → autogenerar desde sus AC (autonomía sin copiar/pegar).
-          const g = await autogenFlow(adapter, workItemId, input.appUrl, hasCreds, cfg.ai, reconDom);
-          if (hasActionableSteps(g)) {
-            autoFlow = g.flow;
-            autoDeclaredAcs = (wi.acceptance_criteria || [])
-              .map((a: any) => (typeof a === "string" ? a : a?.title))
-              .filter((t: any) => t && String(t).trim() !== "");
-            emitEvent(id, "info", `WI ${workItemId}: guion AUTOGENERADO (${g.origin === "ia" ? "IA local" : "determinista"}) desde sus AC (${g.flow.length} paso(s)).`);
-            for (const n of g.notes || []) emitEvent(id, "stderr", `  · ${n}`);
-          } else {
-            emitEvent(id, "stderr", `No se pudo autogenerar para ${workItemId}: ${g.reason || "AC no aptos para E2E"}. Sigo con lo indicado.`);
+
+          // Comentario de RESUMEN de la corrida en el FEATURE (padre), además de la evidencia por
+          // HU. Espeja lo que hace "QA del código" en su WI: quien mira el Feature ve el resultado
+          // de la ejecución (qué HU pasó/falló/se omitió) sin abrir cada hija. Best-effort: si el
+          // comentario falla, la corrida NO se cae (la evidencia por HU ya se publicó).
+          try {
+            const { renderFanoutSummary } = await importKit("runtime/evidence/fanout-comment.mjs");
+            const html = renderFanoutSummary({ feature: workItemId, hus: fanout.hus });
+            const c = await adapter.commentWorkItem(workItemId, html);
+            if (c?.ok) emitEvent(id, "info", `Resumen de la ejecución comentado en el Feature ${workItemId}.`);
+            else emitEvent(id, "stderr", `No se pudo comentar el resumen en el Feature ${workItemId}: ${c?.reason ?? "?"}`);
+          } catch (e: any) {
+            emitEvent(id, "stderr", `Resumen del Feature no publicado: ${describeError(e)}`);
           }
         }
       } catch (e: any) {
-        emitEvent(id, "stderr", `No se pudo evaluar el fan-out/autogeneración: ${describeError(e)}. Sigo como corrida única.`);
+        emitEvent(id, "stderr", `No se pudo evaluar el fan-out: ${describeError(e)}. Sigo como corrida única.`);
       }
     }
 
-    // Guion efectivo de la corrida única: el manual tiene prioridad; si no, el autogenerado.
-    const flowToRun = manualFlow ? input.steps! : autoFlow;
+    // Guion efectivo de la corrida única: solo el manual (sin autogeneración).
+    const flowToRun = manualFlow ? input.steps! : null;
     const useFlow = Array.isArray(flowToRun) && flowToRun.length > 0;
-    const declaredAcsToRun = input.declaredAcs && input.declaredAcs.length ? input.declaredAcs : autoDeclaredAcs;
+    const declaredAcsToRun = input.declaredAcs || [];
 
     let summary: any;
     if (fanout) {
       summary = fanout;
       record.status = !fanout.anyRun ? "error" : fanout.anyFail ? "failed" : "passed";
-      if (!fanout.anyRun) emitEvent(id, "error", "Ninguna HU hija tenía guion guardado.");
+      if (!fanout.anyRun) {
+        const bk = fanout.backendSkipped || 0;
+        const fe = fanout.frontendNoGuion || 0;
+        const parts: string[] = [];
+        if (bk) parts.push(`${bk} backend (no se prueban por navegador)`);
+        if (fe) parts.push(`${fe} frontend sin guion guardado`);
+        const detail = parts.length ? ` De ${fanout.hus.length} HU: ${parts.join(" y ")}.` : "";
+        emitEvent(
+          id,
+          "error",
+          `No se ejecutó ninguna prueba.${detail} El brief te dice QUÉ validar; para EJECUTAR necesitás un guion: armalo (o usá «🧩 Generar andamiaje» en el paso «Desde un PR») y guardalo en las HU frontend, luego volvé a correr.`,
+        );
+      }
       emitEvent(id, "result", `Fan-out terminado: ${record.status} · ${fanout.hus.length} HU(s).`);
     } else {
       emitEvent(id, "info", useFlow ? `Ejecutando flujo de ${flowToRun!.length} paso(s)…` : `Explorando ${input.appUrl}…`);
@@ -247,6 +244,88 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
       const fails = (summary.results || []).filter((r: any) => r.status === "fail").length;
       record.status = summary.stopped ? "error" : fails ? "failed" : "passed";
       emitEvent(id, "result", `Ciclo terminado: ${record.status} · ${fails} fallo(s).`);
+      const local = summary.report?.local || summary.report;
+      if (local?.htmlPath) emitEvent(id, "info", `Reporte: ${local.htmlPath}`);
+    }
+
+    record.summary = summary;
+    record.finishedAt = new Date().toISOString();
+    await saveRun(record);
+  } catch (e: any) {
+    record.status = "error";
+    record.error = describeError(e);
+    record.finishedAt = new Date().toISOString();
+    await saveRun(record);
+    emitEvent(id, "error", `Error: ${record.error}`);
+  } finally {
+    clearStop(id);
+    await endRun(id);
+  }
+}
+
+/**
+ * Ejecuta el modo "QA del código": corre las capas static/unit/api/db/security sobre un repo
+ * LOCAL confinado (dentro de CODE_QA_BASE_DIR) y publica la evidencia por el mismo sink que el
+ * E2E. Autónomo: no comparte cuerpo con execute() (la espina E2E queda intacta). Sin navegador.
+ */
+async function executeCode(record: RunRecord, input: RunInput, cfg: AppConfig): Promise<void> {
+  const id = record.id;
+  const tracker = cfg.tracker.selected;
+  try {
+    // runCodeCycle se re-exporta desde orchestrator.mjs (ya en la allowlist de importKit) → no se
+    // amplía la superficie de kit.ts; el grafo interno del motor se resuelve por import nativo.
+    const { runCodeCycle } = await importKit("runtime/orchestrator.mjs");
+
+    emitEvent(id, "info", "Resolviendo perfil y entorno…");
+    const profile = await buildProfile(tracker);
+    const env = await buildEnv(cfg);
+
+    if (isStopRequested(id)) {
+      emitEvent(id, "error", "Detenido por el usuario.");
+      record.status = "error";
+      record.finishedAt = new Date().toISOString();
+      await saveRun(record);
+      return;
+    }
+
+    const workItemId = input.workItemId?.trim() || "local";
+    const layers = Array.isArray(input.layers) && input.layers.length ? input.layers : undefined;
+    emitEvent(id, "info", `Analizando código en «${input.sourcePath}»… (detectando capas y corriendo sus herramientas — las pruebas grandes pueden tardar minutos)`);
+
+    // Sin `evidenceRoot` → el motor escribe la evidencia DENTRO del proyecto analizado
+    // (<proyecto>/qa-evidence/<fecha>/…), como el modo local-first: queda junto al repo y trazable.
+    const summary = await runCodeCycle({
+      sourcePath: input.sourcePath,
+      env,
+      profile,
+      workItemId,
+      featureId: input.featureId,
+      developer: input.developer,
+      layers,
+      // Progreso en vivo por capa (la corrida es bloqueante; sin esto la UI parece colgada).
+      emit: (lvl: string, msg: string) => emitEvent(id, lvl as any, msg),
+    });
+
+    // La evidencia quedó en <proyecto>/qa-evidence/…: apuntamos repoRoot a esa carpeta del run para
+    // que /api/artifacts pueda servir el reporte (el sandbox de artefactos = repoRoot del run).
+    const rep = summary.report?.local || summary.report;
+    if (rep?.dir) {
+      record.repoRoot = rep.dir;
+      await saveRun(record);
+    }
+
+    for (const w of summary.warnings || []) emitEvent(id, "stderr", `⚠ ${w}`);
+    if (summary.stopped === "source") {
+      // Gate/confinamiento de ruta rechazó la fuente (CODE_QA_BASE_DIR sin configurar o traversal).
+      const msg: string = summary.warnings?.[0] || "No se pudo resolver la ruta de código.";
+      record.status = "error";
+      record.error = msg;
+      emitEvent(id, "error", msg);
+    } else {
+      const fails = (summary.results || []).filter((r: any) => r.status === "fail").length;
+      record.status = summary.stopped ? "error" : fails ? "failed" : "passed";
+      const ran = (summary.layersRun || []).join(", ") || "ninguna";
+      emitEvent(id, "result", `Análisis terminado: ${record.status} · ${fails} fallo(s) · capas: ${ran}.`);
       const local = summary.report?.local || summary.report;
       if (local?.htmlPath) emitEvent(id, "info", `Reporte: ${local.htmlPath}`);
     }

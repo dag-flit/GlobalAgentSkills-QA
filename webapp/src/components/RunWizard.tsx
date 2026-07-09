@@ -4,6 +4,8 @@ import { TrackerStep } from "@/components/TrackerStep";
 import { MODES } from "@/components/run-wizard/types";
 import { useRunWizard } from "@/components/run-wizard/useRunWizard";
 import { Stepper } from "@/components/run-wizard/Stepper";
+import { PrStep } from "@/components/run-wizard/PrStep";
+import { CodeStep } from "@/components/run-wizard/CodeStep";
 import { UrlStep } from "@/components/run-wizard/UrlStep";
 import { StepsStep } from "@/components/run-wizard/StepsStep";
 import { RunSummary } from "@/components/run-wizard/RunSummary";
@@ -72,6 +74,8 @@ export function RunWizard() {
         />
       )}
 
+      {key === "pr" && <PrStep w={w} />}
+      {key === "code" && <CodeStep w={w} />}
       {key === "url" && <UrlStep w={w} />}
       {key === "pasos" && <StepsStep w={w} />}
       {key === "run" && <RunSummary w={w} />}

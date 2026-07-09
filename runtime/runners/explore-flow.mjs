@@ -35,6 +35,11 @@ export async function runFlow({
   const files = [];
   const consoleErrors = [];
 
+  // Todas las acciones de Playwright (fill/click/getBy…) heredan ESTE timeout en vez del default
+  // global de 30 s → un localizador equivocado del guion falla en `timeout`, no en 30 s. Guardado
+  // por si la página es falsa (offline). El `goto`/las esperas explícitas ya reciben `timeout` aparte.
+  if (page && typeof page.setDefaultTimeout === "function") page.setDefaultTimeout(timeout);
+
   if (page && typeof page.on === "function") {
     page.on("console", (m) => {
       try {

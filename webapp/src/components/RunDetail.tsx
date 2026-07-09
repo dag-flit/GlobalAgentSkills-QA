@@ -6,6 +6,7 @@ import { useRunDetail } from "@/components/run-detail/useRunDetail";
 import { RunMeta } from "@/components/run-detail/RunMeta";
 import { RunConsole } from "@/components/run-detail/RunConsole";
 import { RunResults } from "@/components/run-detail/RunResults";
+import { AcContext } from "@/components/run-detail/AcContext";
 
 export function RunDetail({ id }: { id: string }) {
   const { record, events, live, autoscroll, setAutoscroll, logRef, stop } = useRunDetail(id);
@@ -96,6 +97,13 @@ export function RunDetail({ id }: { id: string }) {
       )}
 
       <RunConsole events={events} autoscroll={autoscroll} setAutoscroll={setAutoscroll} logRef={logRef} />
+
+      {/* QA del código: criterios del Feature/HU como CONTEXTO, junto a los resultados (nivel 1: sin
+          cruce automático AC↔prueba). Solo con WI de Azure. */}
+      {record?.mode === "code" && (
+        <AcContext wid={record.workItemId} tracker={record.tracker} />
+      )}
+
       <RunResults results={results} report={report} shots={shots} />
       {record?.error && <div className="card text-sm text-red-300">Error: {record.error}</div>}
     </div>

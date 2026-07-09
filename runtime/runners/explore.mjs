@@ -13,6 +13,13 @@ import path from "node:path";
 import { runFlow } from "./explore-flow.mjs";
 import { computeCoverage } from "../evidence/ac-coverage.mjs";
 
+// ¿La corrida trae credenciales de login? (mismo criterio de resolución que interpolate:
+// vars gana a env). Con ambas presentes, una corrida de URL sin guion inicia sesión y captura.
+function hasCreds(vars = {}, env = {}) {
+  const pick = (k) => vars[k] ?? env[k];
+  return Boolean(pick("QA_USER") && pick("QA_PASS"));
+}
+
 async function resolveLaunch(injected) {
   if (injected) return injected;
   try {
@@ -32,7 +39,9 @@ async function resolveLaunch(injected) {
  * @param {string} [opts.appUrl]         URL viva a explorar (modo URL-smoke)
  * @param {string[]} [opts.paths]        rutas adicionales a visitar (modo URL-smoke)
  * @param {Array} [opts.flow]            GUION de pasos (modo flujo E2E); gate: sin appUrl ni flow → []
- * @param {object} [opts.vars]           variables de la corrida para `${VAR}` del guion
+ * @param {object} [opts.vars]           variables de la corrida para `${VAR}` del guion. Con
+ *                                        `QA_USER`+`QA_PASS` y URL sin guion → login automático
+ *                                        (sintetiza `ir_a → login`, captura por paso).
  * @param {string} [opts.tcId]           id del caso/HU para trazar la evidencia (attach en ADO)
  * @param {string[]} [opts.declaredAcs]  AC declarados de la HU (para la matriz de cobertura)
  * @param {function} [opts.launchBrowser] launcher inyectable () -> browser (API tipo Playwright)
@@ -65,11 +74,24 @@ export async function runExplore({
     ];
   }
 
-  const timeout = Number(env.EXPLORE_TIMEOUT_MS) || 30000;
+  // 15 s por paso (antes 30 s, el default de Playwright): un localizador equivocado del guion
+  // autogenerado falla rápido en vez de colgar la corrida 30 s. Ajustable por env si un sitio es lento.
+  const timeout = Number(env.EXPLORE_TIMEOUT_MS) || 15000;
+
+  // Sin guion explícito, pero con URL + credenciales → sintetiza un guion MÍNIMO de login
+  // (`ir_a` → `login`). El ejecutor de flujo captura una imagen por paso, así queda evidencia
+  // visual de la pantalla de login y del estado post-login (autenticado). Es el caso "mandé la
+  // URL y quiero que inicie sesión y capture". Sin credenciales → sigue el URL-smoke de abajo.
+  let effFlow = flow;
+  let effHasFlow = hasFlow;
+  if (!hasFlow && appUrl && hasCreds(vars, env)) {
+    effFlow = [{ op: "ir_a", url: appUrl }, { op: "login" }];
+    effHasFlow = true;
+  }
 
   // ── Modo GUION (E2E de un flujo): pasos en orden sobre una misma sesión ───────
-  if (hasFlow) {
-    return runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs, timeout, launch });
+  if (effHasFlow) {
+    return runFlowMode({ repoRoot, env, flow: effFlow, vars, tcId, declaredAcs, timeout, launch });
   }
   const targets = [appUrl, ...(Array.isArray(paths) ? paths : [])].filter(Boolean);
   const evidenceDir = path.join(repoRoot, "qa-evidence", ".explore");

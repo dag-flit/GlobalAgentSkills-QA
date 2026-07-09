@@ -3,7 +3,7 @@ import { startRun } from "@/lib/qa/runner";
 import { listRuns } from "@/lib/runStore";
 import { withTenantScope } from "@/lib/auth/route";
 import { parseJson } from "@/lib/validation/parse";
-import { runInputSchema } from "@/lib/validation/schemas";
+import { anyRunInputSchema } from "@/lib/validation/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const parsed = await parseJson(req, runInputSchema, "plain");
+  const parsed = await parseJson(req, anyRunInputSchema, "plain");
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
   return withTenantScope(async () => {

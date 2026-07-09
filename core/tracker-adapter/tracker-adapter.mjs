@@ -82,6 +82,15 @@ export class TrackerAdapter {
   async publishEvidence(target, payload) {
     throw new Error("publishEvidence() no implementado");
   }
+
+  /**
+   * Publica un comentario HTML en un work item — p.ej. el brief de validación PR-driven.
+   * Default: no soportado (trackers sin Discussion, como `local`).
+   * @param {string} id @param {string} html @returns {Promise<{ok:boolean, id?:any, reason?:string}>}
+   */
+  async commentWorkItem(id, html) {
+    return { ok: false, reason: `${this.name}: sin soporte de comentarios` };
+  }
 }
 
 export default TrackerAdapter;

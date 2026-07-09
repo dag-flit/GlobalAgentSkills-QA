@@ -8,10 +8,10 @@ const ALLOWED = new Set<string>([
   "core/tracker-adapter/index.mjs",
   "runtime/orchestrator.mjs",
   "runtime/profile/resolve-profile.mjs",
-  "runtime/generate/ac-to-flow.mjs", // generador determinista AC→guion (autogen.ts)
-  "runtime/generate/flow-planner.mjs", // planner IA (Ollama) con fallback determinista (autogen.ts)
-  "runtime/generate/recon.mjs", // recon: captura el DOM de la app para el planner IA (runner.ts)
-  "adapters/_shared/http-retry.mjs", // transporte HTTP endurecido para el planner (autogen.ts)
+  "runtime/pr/pr-reader.mjs", // lector de PRs de GitHub (PR-driven QA) — prBrief.ts
+  "runtime/pr/brief.mjs", // generador de brief de validación (PR-driven QA) — prBrief.ts
+  "runtime/pr/scaffold.mjs", // andamiaje determinista de guion desde los AC — prBrief.ts
+  "runtime/evidence/fanout-comment.mjs", // resumen de la corrida para comentar en el Feature — runner.ts
 ]);
 
 /**

@@ -95,4 +95,9 @@ export async function runQaCycle({
   };
 }
 
+// Modo aditivo "QA del código" (capas static/unit/api/db/security sobre un repo local
+// confinado): backbone HERMANO en ./orchestrator/code-cycle.mjs. Re-export para un único punto
+// de entrada del motor; NO altera runQaCycle (la espina E2E queda intacta).
+export { runCodeCycle } from "./orchestrator/code-cycle.mjs";
+
 export default { runQaCycle };

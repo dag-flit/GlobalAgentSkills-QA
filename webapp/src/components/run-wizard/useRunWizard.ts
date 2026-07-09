@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAction } from "@/components/ActionFeedback";
 import type { TrackerName } from "@/lib/types";
-import { buildSteps, type Mode } from "./types";
+import { buildSteps, type Mode, type CodeLayer } from "./types";
 import { type FlowStep, type OpId, type DeclaredAc, OP_BY_ID, stepFilled, cleanStep } from "./steps-catalog";
 
 // Estado + lógica del asistente de ejecución. El kit quedó acotado al modo "Explorar una URL"
@@ -23,18 +23,12 @@ export function useRunWizard() {
   const [flow, setFlow] = useState<FlowStep[]>([]); // guion de pasos (opcional)
   const [vars, setVars] = useState<Record<string, string>>({}); // credenciales del guion (${VAR})
   const [acs, setAcs] = useState<DeclaredAc[]>([]); // AC declarados de la HU (los trae AcPanel)
-  // ¿El Asistente IA (Ollama) está activo? Se configura en Ajustes (por tenant). Solo INFORMATIVO
-  // en el asistente: si está activo y la HU/Feature no tiene guion guardado, el guion se deduce con
-  // IA leyendo la pantalla real; si no, con el generador determinista. Fuente única: Ajustes.
-  const [aiEnabled, setAiEnabled] = useState(false);
-  useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((c) => setAiEnabled(!!c?.ai?.enabled))
-      .catch(() => {});
-  }, []);
 
-  const steps = mode ? buildSteps() : [];
+  // Modo "QA del código": ruta del repo (relativa a CODE_QA_BASE_DIR) + capas a correr (vacío = detectadas).
+  const [sourcePath, setSourcePath] = useState("");
+  const [layers, setLayers] = useState<CodeLayer[]>([]);
+
+  const steps = mode ? buildSteps(mode) : [];
   const safeIdx = Math.min(idx, Math.max(0, steps.length - 1));
   const key = steps[safeIdx]?.key;
 
@@ -52,35 +46,48 @@ export function useRunWizard() {
   }
 
   async function launch() {
-    if (!mode) return;
+    // Un solo clic: si ya se está lanzando, ignora el clic (evita disparar una 2ª corrida mientras
+    // la 1ª navega — en dev la página /runs/[id] compila la 1ª vez y puede tardar minutos).
+    if (!mode || launching) return;
     setLaunching(true);
     setLaunchError(null);
     try {
-      await action
+      const id = await action
         .run(
-          { loading: "Iniciando el ciclo QA…", success: "Ciclo QA iniciado — abriendo la corrida" },
+          { loading: "Iniciando el ciclo QA…", success: "Ciclo QA iniciado — abriendo la corrida", autoCloseMs: 1500 },
           async () => {
-            // Si hay pasos, se corre un GUION: la URL es el primer paso (ir_a) y luego los pasos
-            // del constructor. Sin pasos → URL-smoke (comportamiento anterior). Los pasos vacíos
-            // se descartan; las credenciales vacías no se envían.
-            const filled = flow.filter(stepFilled);
-            const appTrim = appUrl.trim();
-            const steps = filled.length
-              ? [{ op: "ir_a", url: appTrim }, ...filled.map(cleanStep)]
-              : undefined;
-            const varsClean = Object.fromEntries(
-              Object.entries(vars).filter(([, v]) => v && v.trim() !== ""),
-            );
-            // AC declarados (títulos) → el backend arma la matriz de cobertura (detecta "sin cubrir").
-            const declaredAcs = acs.map((a) => a.title).filter((t) => t && t.trim() !== "");
-            const body = {
-              mode,
-              appUrl: appTrim ? appTrim : undefined,
-              workItemId: workItem.trim() ? workItem.trim() : undefined,
-              steps,
-              vars: Object.keys(varsClean).length ? varsClean : undefined,
-              declaredAcs: declaredAcs.length ? declaredAcs : undefined,
-            };
+            // Modo "QA del código": ruta del repo + capas (subconjunto o detectadas). Sin URL/pasos.
+            let body: Record<string, unknown>;
+            if (mode === "code") {
+              body = {
+                mode,
+                sourcePath: sourcePath.trim(),
+                workItemId: workItem.trim() ? workItem.trim() : undefined,
+                layers: layers.length ? layers : undefined,
+              };
+            } else {
+              // Si hay pasos, se corre un GUION: la URL es el primer paso (ir_a) y luego los pasos
+              // del constructor. Sin pasos → URL-smoke (comportamiento anterior). Los pasos vacíos
+              // se descartan; las credenciales vacías no se envían.
+              const filled = flow.filter(stepFilled);
+              const appTrim = appUrl.trim();
+              const steps = filled.length
+                ? [{ op: "ir_a", url: appTrim }, ...filled.map(cleanStep)]
+                : undefined;
+              const varsClean = Object.fromEntries(
+                Object.entries(vars).filter(([, v]) => v && v.trim() !== ""),
+              );
+              // AC declarados (títulos) → el backend arma la matriz de cobertura (detecta "sin cubrir").
+              const declaredAcs = acs.map((a) => a.title).filter((t) => t && t.trim() !== "");
+              body = {
+                mode,
+                appUrl: appTrim ? appTrim : undefined,
+                workItemId: workItem.trim() ? workItem.trim() : undefined,
+                steps,
+                vars: Object.keys(varsClean).length ? varsClean : undefined,
+                declaredAcs: declaredAcs.length ? declaredAcs : undefined,
+              };
+            }
             let res: any;
             try {
               const r = await fetch("/api/runs", {
@@ -97,11 +104,13 @@ export function useRunWizard() {
             }
             return res.id as string;
           },
-        )
-        .then((id) => router.push(`/runs/${id}`));
+        );
+      // Éxito: navego y DEJO `launching` en true a propósito → el botón queda deshabilitado hasta
+      // que la navegación complete (en dev la 1ª compilación de /runs/[id] tarda). Así el usuario no
+      // puede disparar una 2ª corrida con un segundo clic. Solo se re-habilita si hubo error.
+      router.push(`/runs/${id}`);
     } catch {
       /* el error ya se mostró en la modal y en launchError */
-    } finally {
       setLaunching(false);
     }
   }
@@ -186,7 +195,7 @@ export function useRunWizard() {
     mode, setMode, idx, launching, launchError,
     tracker, setTracker, appUrl, setAppUrl,
     workItem, setWorkItem, flow, setFlow, vars, setVars, acs, setAcs,
-    aiEnabled,
+    sourcePath, setSourcePath, layers, setLayers,
     steps, safeIdx, key, back, next, chooseMode, launch,
     saveFlowToHu, loadFlowFromHu, importFlowJson, exportFlowJson,
   };
