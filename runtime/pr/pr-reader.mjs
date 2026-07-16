@@ -148,9 +148,27 @@ export async function readPrFiles({ owner, repo, number, http = defaultHttp, tok
 }
 
 /**
+ * Lee el contenido de un archivo en un REF concreto (rama/sha) vía la Contents API. Devuelve el texto
+ * decodificado, o null si no existe en ese ref (p.ej. un archivo agregado no existe en la base). Se usa
+ * para comparar un contrato OpenAPI entre la base y el head del PR (ver openapi-diff.mjs).
+ */
+export async function readFileAtRef({ owner, repo, path, ref, http = defaultHttp, token = "" }) {
+  const url = `${GH_API}/repos/${owner}/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`;
+  const res = await http({ url, method: "GET", headers: ghHeaders(token) });
+  if (res.status === 404) return null;
+  if (res.status >= 400) throw new Error(`GitHub ${res.status}: contenido de ${path}@${ref}`);
+  const j = res.json || {};
+  if (typeof j.content === "string" && /base64/i.test(j.encoding || "base64")) {
+    return Buffer.from(j.content, "base64").toString("utf8");
+  }
+  if (typeof j.content === "string") return j.content;
+  return null;
+}
+
+/**
  * Lee un PR completo (metadatos + archivos + work items vinculados + test plan del dev).
  * @returns { number, title, branch, author, state, merged, body, url, hus, feature, changedFiles,
- *            testPlan, acClaims }
+ *            testPlan, acClaims, baseSha, headSha }
  */
 export async function readPr({ owner, repo, number, http = defaultHttp, token = "" }) {
   const pr = await ghGet(http, `${GH_API}/repos/${owner}/${repo}/pulls/${number}`, token);
@@ -181,6 +199,9 @@ export async function readPr({ owner, repo, number, http = defaultHttp, token = 
     filesTruncated: !!files.truncated,
     testPlan: extractSection(body, /test\s*plan|plan de prueba/i),
     acClaims: extractAcClaims(body),
+    // SHA de base y head → leer el contrato OpenAPI en ambas versiones y diffear (openapi-diff.mjs).
+    baseSha: pr.base?.sha || pr.base?.ref || "",
+    headSha: pr.head?.sha || pr.head?.ref || branch,
   };
 }
 
@@ -194,4 +215,4 @@ export async function findPrsForWorkItem({ owner, repo, wid, http = defaultHttp,
   return (res?.items || []).map((it) => ({ number: it.number, title: it.title, url: it.html_url || "", state: it.state }));
 }
 
-export default { parseRepoUrl, extractWorkItems, splitBestEffort, extractSection, extractAcClaims, readPrFiles, readPr, findPrsForWorkItem };
+export default { parseRepoUrl, extractWorkItems, splitBestEffort, extractSection, extractAcClaims, readPrFiles, readPr, readFileAtRef, findPrsForWorkItem };

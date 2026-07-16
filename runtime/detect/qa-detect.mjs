@@ -218,9 +218,13 @@ function detectLayers(m, pyproject) {
       tool = tool || "ruff"; signals.push("ruff");
     }
     if (m.hasBase(/^\.?mypy\.ini$/) || /\[tool\.mypy\]/.test(pyproject)) { tool = tool || "mypy"; signals.push("mypy"); }
+    // .NET: cualquier .csproj/.sln habilita el análisis estático Roslyn (`dotnet build`). Va al final
+    // de la prioridad (JS/Python ganan como primaria en un scope mixto), pero enciende la capa para
+    // repos backend-only; en monorepo el runner (expandDotnetStaticTargets) suma el objetivo .NET.
+    if (m.hasBase(/\.(csproj|sln)$/)) { tool = tool || "dotnet-build"; signals.push("dotnet (.csproj/.sln)"); }
     layers.static = signals.length
       ? { enabled: true, tool, signals }
-      : { enabled: false, tool: null, signals: [], reason: "sin linter/type-checker (eslint/ruff/tsc/mypy)" };
+      : { enabled: false, tool: null, signals: [], reason: "sin linter/type-checker (eslint/ruff/tsc/mypy/dotnet)" };
   }
 
   // unit

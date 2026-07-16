@@ -55,7 +55,11 @@ export async function run(ctx) {
     assert.strictEqual(blocked.code, 127, "comando fuera de la allowlist → 127 (se omite, no rompe)");
     assert.ok(/allowlist/.test(blocked.stderr));
     assert.strictEqual(baseCalls, 1, "el comando bloqueado NUNCA llega al ejecutor real");
-    ok("QA de código: sandbox de exec (allowlist deja pasar vitest con timeout; bloquea curl sin ejecutarlo)");
+    // Las herramientas de SCA (security) deben estar en la allowlist, o el SCA se saltaría en la webapp.
+    for (const scaBin of ["npm", "pnpm", "pip-audit", "dotnet"]) {
+      assert.ok(sbx(scaBin, ["audit"], {}).code !== 127, `la allowlist del sandbox permite '${scaBin}' (SCA)`);
+    }
+    ok("QA de código: sandbox de exec (deja pasar vitest+SCA npm/pnpm/pip-audit/dotnet con timeout; bloquea curl)");
 
     // (2) local-source: base OPT-IN. Sin base → ruta directa (acepta la carpeta real tecleada);
     // con base → confinamiento (acepta subdir, rechaza traversal).

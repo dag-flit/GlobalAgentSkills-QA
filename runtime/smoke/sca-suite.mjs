@@ -122,4 +122,28 @@ export async function run(ctx) {
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+
+  // (7) COHERENCIA de security en los 3 escenarios (hallazgo / omitido / limpio) — HU/MD/HTML idénticos:
+  //   - un hallazgo (secreto/vuln, sin blame) NO muestra "Sin responsable" en NINGUNA ruta (igual que la HU);
+  //   - un skip de SCA (pip-audit ausente) cae en «No verificado» en las 3;
+  //   - un objetivo limpio cae en «Evidencia» en las 3.
+  const mixed = [
+    { layer: "security", status: "fail", metrics: { tool: "secret-scan" }, cases: [
+      { name: "Contraseña en una cadena de conexión", status: "fail", message: "src/db.ts:12 → •••", plain: "Se encontró la contraseña de la base en el código.", action: "Rotala y movela a una variable de entorno." } ] },
+    { layer: "security", status: "fail", metrics: { tool: "pnpm-audit", label: "raíz (pnpm)" }, cases: [
+      { name: "shell-quote (crítica)", status: "fail", message: "https://x/GHSA", plain: "La dependencia «shell-quote» tiene una vulnerabilidad conocida de severidad crítica.", action: "Actualizá la dependencia." } ] },
+    { layer: "security", status: "skip", metrics: { tool: "pip-audit", label: "services/python-ml (pip)" }, cases: [
+      { name: "Dependencias — services/python-ml (pip)", status: "skip", plain: "No se analizaron las dependencias de «services/python-ml (pip)»: pip-audit no está instalada.", action: "Instalá pip-audit." } ] },
+    { layer: "security", status: "pass", metrics: { tool: "dotnet-vulnerable", label: "Api.csproj (NuGet)" }, cases: [
+      { name: "Dependencias sin vulnerabilidades conocidas", status: "pass", plain: "Se revisaron las dependencias de «Api.csproj (NuGet)» y ninguna tiene vulnerabilidad conocida." } ] },
+  ];
+  const hu2 = renderFindingsDescription({ results: mixed, layersRun: ["security"], when: "w" });
+  const rep2 = renderReport(mixed);
+  for (const [route, s] of [["HU", hu2], ["MD", rep2.md], ["HTML", rep2.html]]) {
+    assert.ok(s.includes("shell-quote (crítica)") && s.includes("Contraseña en una cadena de conexión"), `${route}: los hallazgos de security aparecen`);
+    assert.ok(!/Sin responsable/.test(s), `${route}: un hallazgo de security NO muestra "Sin responsable" (coherente con la HU)`);
+    assert.ok(/No verificado/.test(s) && s.includes("services/python-ml (pip)"), `${route}: el skip de SCA (pip-audit) cae en «No verificado»`);
+    assert.ok(/Evidencia/.test(s) && s.includes("Api.csproj (NuGet)"), `${route}: el objetivo limpio cae en «Evidencia»`);
+  }
+  ok("Security: hallazgo/omitido/limpio COHERENTES en HU/MD/HTML (sin 'Sin responsable', skip→No verificado, pass→Evidencia)");
 }

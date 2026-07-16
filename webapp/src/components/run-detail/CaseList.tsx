@@ -139,8 +139,10 @@ export function CaseList({ cases, layer, tool }: { cases: Case[]; layer?: string
                         {(c.status === "fail" || c.plain) && (() => {
                           const ex = explainFailure(c, { layer, tool });
                           const L = explainLabels(c.status);
-                          // La atribución de código solo aplica a fallos, y no a hallazgos de esquema (db/api).
-                          const showNoBlame = c.status === "fail" && !c.blame && layer !== "db" && layer !== "api";
+                          // La atribución por git-blame solo aplica a fallos, y no a hallazgos de esquema
+                          // (db/api) ni de seguridad (una dependencia vulnerable o un secreto no son una
+                          // línea "de autor"). Coherente con la HU y el reporte md/html (NO_BLAME_LAYERS).
+                          const showNoBlame = c.status === "fail" && !c.blame && layer !== "db" && layer !== "api" && layer !== "security";
                           // Sin explicación NI responsable la caja quedaría VACÍA y se vería como una
                           // raya de borde suelta: en ese caso no se dibuja.
                           const hasBox = Boolean(ex) || Boolean(c.blame) || showNoBlame;

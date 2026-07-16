@@ -17,19 +17,21 @@ export const LEVEL_COLOR: Record<LogLevel, string> = {
 // Descripción en lenguaje claro de cada capa (exploración E2E + capas de QA del código).
 export const LAYER_INFO: Record<string, { label: string; desc: string }> = {
   explore: { label: "Exploración de URL", desc: "Abre la app en un navegador: revisa estado HTTP, errores de consola y guarda una captura." },
-  static: { label: "Análisis estático", desc: "Linter / type-checker: revisa estilo, tipos y reglas del código (eslint, tsc, ruff, mypy)." },
+  static: { label: "Análisis estático", desc: "Linter / type-checker / analizadores: revisa estilo, tipos y reglas del código (eslint, tsc, ruff, mypy y .NET/Roslyn vía dotnet build)." },
   unit: { label: "Pruebas unitarias", desc: "Corre la suite de tests del repo (vitest, jest, pytest, dotnet test)." },
   api: { label: "Contrato de API", desc: "Valida el contrato OpenAPI (redocly) o corre colecciones Postman (newman)." },
   db: { label: "Base de datos", desc: "Valida la base: conecta directamente a PostgreSQL (o corre pgTAP/prisma) usando la conexión configurada." },
-  security: { label: "Seguridad", desc: "Escáner SAST (semgrep / bandit) + escáner de secretos + análisis de dependencias (SCA: npm / pnpm / dotnet / pip): patrones de vulnerabilidad, credenciales quemadas y librerías vulnerables." },
+  security: { label: "Seguridad", desc: "Escáner SAST (semgrep / bandit) + escáner de secretos + análisis de dependencias (SCA: npm / pnpm / dotnet / pip) + licencias de dependencias: patrones de vulnerabilidad, credenciales quemadas, librerías vulnerables y licencias copyleft/sin declarar." },
 };
 
 // Nombre amigable del stack/herramienta (para descripciones claras y específicas de la evidencia).
 const TOOL_STACK: Record<string, string> = {
   "dotnet-test": ".NET", vitest: "Vitest", jest: "Jest", pytest: "pytest", eslint: "ESLint",
+  "dotnet-build": ".NET (analizadores Roslyn)",
   tsc: "TypeScript", ruff: "Ruff", mypy: "mypy", semgrep: "Semgrep", bandit: "Bandit",
-  "secret-scan": "escáner de secretos", "npm-audit": "npm audit", "pnpm-audit": "pnpm audit", "dotnet-vulnerable": "dotnet (NuGet)", "pip-audit": "pip-audit",
+  "secret-scan": "escáner de secretos", "license-scan": "licencias de dependencias", "npm-audit": "npm audit", "pnpm-audit": "pnpm audit", "dotnet-vulnerable": "dotnet (NuGet)", "pip-audit": "pip-audit",
   "postgres-probe": "PostgreSQL", openapi: "OpenAPI", newman: "Postman", pgtap: "pgTAP", prisma: "Prisma",
+  axe: "axe-core (accesibilidad)", playwright: "Playwright",
 };
 // Herramientas de análisis de dependencias (SCA).
 const SCA_TOOLS = new Set(["npm-audit", "pnpm-audit", "dotnet-vulnerable", "pip-audit"]);
@@ -99,6 +101,7 @@ export function layerNarrative(r: any): { what: string; result: string } {
     tsc: "Chequeo de tipos de TypeScript: verifica que los tipos sean correctos (no genera archivos).",
     ruff: "Linter de Python: detecta errores y malas prácticas.",
     mypy: "Chequeo de tipos de Python (anotaciones de tipo).",
+    "dotnet-build": "Análisis estático de .NET: compila con los analizadores Roslyn activados y reporta advertencias (CAxxxx) y errores de compilación (CSxxxx) SIN modificar el repo.",
     vitest: "Corre las pruebas unitarias del proyecto con Vitest.",
     jest: "Corre las pruebas unitarias del proyecto con Jest.",
     pytest: "Corre las pruebas unitarias de Python con pytest.",
@@ -107,10 +110,12 @@ export function layerNarrative(r: any): { what: string; result: string } {
     openapi: "Valida el contrato OpenAPI contra la especificación (redocly), sin servidor vivo.",
     pgtap: "Corre pruebas de base de datos con pgTAP.",
     prisma: "Verifica el estado de las migraciones de Prisma.",
-    "postgres-probe": "Conecta DIRECTAMENTE a la base PostgreSQL configurada (usuario, clave y túnel del módulo de BD) y contrasta la base REAL contra lo que el código del repo declara: que la conexión funcione, que la base tenga tablas, que las migraciones del código estén aplicadas, que el aislamiento por cliente (RLS) que el propio DDL declara esté activo en la base, que toda tabla tenga clave primaria, que las llaves foráneas tengan índice, que los contadores de IDs no estén por agotarse, la codificación del texto y el tamaño de las tablas.",
+    "postgres-probe": "Conecta DIRECTAMENTE a la base PostgreSQL configurada (usuario, clave y túnel del módulo de BD) y contrasta la base REAL contra lo que el código del repo declara: que la conexión funcione, que la base tenga tablas, que las migraciones del código estén aplicadas, que el aislamiento por cliente (RLS) que el propio DDL declara esté activo en la base, que el rol de la conexión NO sea superusuario (menor privilegio), que toda tabla tenga clave primaria, que las llaves foráneas tengan índice, que las restricciones de integridad estén validadas, que los contadores de IDs no estén por agotarse, la codificación del texto y el tamaño de las tablas.",
+    axe: "Análisis de accesibilidad (WCAG) con axe-core: abre la página viva y detecta barreras para lectores de pantalla, teclado y contraste. Solo en el modo Explorar URL.",
     semgrep: "Escáner de seguridad: busca patrones de vulnerabilidad (OWASP) en el código.",
     bandit: "Escáner de seguridad para Python: detecta usos inseguros comunes.",
     "secret-scan": "Escáner de secretos: busca credenciales quemadas en el código (contraseñas, llaves privadas, tokens de API, cadenas de conexión con contraseña), con reglas de alta confianza. El valor detectado se muestra REDACTADO.",
+    "license-scan": "Escáner de licencias: lee la licencia declarada de las dependencias instaladas (node_modules) y marca las copyleft (GPL/AGPL/SSPL) o sin licencia declarada. Riesgo LEGAL (no técnico) en un producto propietario.",
     "npm-audit": "Análisis de dependencias (SCA): revisa las librerías npm del proyecto contra la base pública de avisos de seguridad conocidos.",
     "pnpm-audit": "Análisis de dependencias (SCA): revisa las librerías del workspace pnpm contra la base pública de avisos de seguridad conocidos.",
     "dotnet-vulnerable": "Análisis de dependencias (SCA): revisa los paquetes NuGet (.NET) del proyecto contra la base de avisos de seguridad conocidos.",
@@ -146,6 +151,8 @@ export function layerNarrative(r: any): { what: string; result: string } {
     else if (layer === "static") res = `Se revisó el código${objId ? ` de${objTxt}` : ""} SIN ejecutarlo${stack ? ` (con ${stack})` : ""} — estilo, tipos y buenas prácticas — y no hay errores${other ? `. Quedan ${other} sugerencia(s) menor(es), listadas abajo` : ""}.`;
     else if (layer === "security") res = tool === "secret-scan"
       ? `Se revisó el código del proyecto buscando credenciales quemadas (contraseñas, llaves privadas, tokens de API, cadenas de conexión con contraseña) con reglas de alta confianza y no apareció ninguna. Reduce el riesgo; no garantiza ausencia total.`
+      : tool === "license-scan"
+      ? `Se revisaron las licencias declaradas de las dependencias instaladas del proyecto y todas son permisivas conocidas (MIT/BSD/Apache/ISC…), compatibles con un producto propietario. Reduce el riesgo legal; no lo elimina.`
       : SCA_TOOLS.has(tool || "")
         ? `Se revisaron las dependencias de${objTxt || " terceros del proyecto"} contra la base pública de avisos de seguridad y ninguna versión usada tiene una vulnerabilidad conocida. Reduce el riesgo; no lo elimina.`
         : `Se escaneó el código${objId ? ` de${objTxt}` : ""}${stack ? ` con ${stack}` : ""} buscando vulnerabilidades conocidas (OWASP) y no apareció ninguna. Reduce el riesgo; no garantiza seguridad total.`;
@@ -159,6 +166,7 @@ export function layerNarrative(r: any): { what: string; result: string } {
         : "Se conectó a la base de datos real del proyecto y se corrieron sus verificaciones.";
     }
     else if (layer === "api") res = `El contrato de la API${objTxt} (OpenAPI) es válido: cumple lo que declara, sin necesitar el servidor corriendo.`;
+    else if (layer === "explore" && tool === "axe") res = `Se analizó la accesibilidad (reglas WCAG con axe-core) de las páginas visitadas y no aparecieron violaciones automáticas. Cubre parte de WCAG; no reemplaza una revisión manual (lector de pantalla, teclado).`;
     else res = p ? `${p} verificación(es) pasaron.` : "Se ejecutó sin errores.";
     return { what, result: res };
   }
@@ -207,6 +215,9 @@ const RULE_PREFIX_HELP: Array<[RegExp, string]> = [
   [/^react-hooks\//, "Regla sobre el uso correcto de los hooks de React."],
   [/^react\//, "Regla de buenas prácticas de React."],
   [/^import\//, "Regla sobre cómo se importan o exportan los módulos."],
+  [/^CA\d+$/, "Regla del analizador de calidad de .NET (Roslyn): buena práctica de diseño, rendimiento o seguridad. No bloquea, pero conviene revisarla."],
+  [/^CS\d+$/, "Advertencia del compilador de C# (.NET): un aviso del lenguaje (p.ej. una variable sin usar o una referencia posiblemente nula)."],
+  [/^(IDE|SA|SCS)\d+$/, "Regla de estilo/analizador de .NET (Roslyn): convención de código o buena práctica."],
 ];
 export function lintRuleHelp(name: string): { rule: string; location: string; help: string } | null {
   // "ruta/archivo.ext:línea[:col] regla" → ubicación + regla.

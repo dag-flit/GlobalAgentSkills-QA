@@ -87,26 +87,29 @@ async function runScaTarget({ target, repoRoot, exec, failOn, ignore, workItemId
   const [name, ...args] = argv;
   const cwd = target.cwd ? path.join(repoRoot, target.cwd) : repoRoot;
   const metrics = { tool: target.tool, label: target.label, cwd: target.cwd, command: argv.join(" ") };
+  // Skip CON caso explicativo (`plain`) → aparece en «No verificado» en las 4 rutas (HU/MD/HTML/UX),
+  // igual que los checks declarativos de BD. Sin el caso, la razón solo salía en la tabla del md/html.
+  const skip = (reason) => ({
+    ...base, status: "skip", narrative: `${target.label}: ${reason}`, metrics,
+    cases: [{ name: `Dependencias — ${target.label}`, status: "skip",
+      plain: `No se analizaron las dependencias de «${target.label}»: ${reason}`,
+      action: "Resolvé lo indicado y volvé a correr para que el análisis de vulnerabilidades cubra este objetivo.",
+      message: metrics.command }],
+  });
 
   // Lockfile ausente (npm) → skip SIN invocar (determinista, testable).
-  if (target.tool === "npm-audit" && !target.hasLock) {
-    return { ...base, status: "skip", narrative: `${target.label}: ${scaSkipReason(target, { stdout: "", stderr: "" })}`, metrics };
-  }
+  if (target.tool === "npm-audit" && !target.hasLock) return skip(scaSkipReason(target, { stdout: "", stderr: "" }));
   const bin = resolveBin(repoRoot, name, cwd);
   const out = await exec(bin, args, { cwd });
 
   // Herramienta ausente / no lanzable → skip con la razón real (no instalada, timeout…).
-  if (out.spawnError || out.code === 127) {
-    return { ...base, status: "skip", narrative: `${target.label}: ${explainExecFailure(out, name)} — SCA omitido`, metrics };
-  }
+  if (out.spawnError || out.code === 127) return skip(`${explainExecFailure(out, name)}`);
   const reason = scaSkipReason(target, out);
-  if (reason) return { ...base, status: "skip", narrative: `${target.label}: ${reason}`, metrics };
+  if (reason) return skip(reason);
 
   let cases = null;
   try { cases = PARSERS[target.tool](out, { failOn }); } catch { cases = null; }
-  if (!Array.isArray(cases)) {
-    return { ...base, status: "skip", narrative: `${target.label}: no se pudo interpretar la salida de ${target.tool} — SCA omitido`, metrics };
-  }
+  if (!Array.isArray(cases)) return skip(`no se pudo interpretar la salida de ${target.tool}`);
   cases = cases.filter((c) => !ignore.some((frag) => c.name.toLowerCase().includes(frag)));
   if (!cases.length) {
     return { ...base, status: "pass", narrative: `${target.label}: sin dependencias con vulnerabilidades conocidas`, metrics,

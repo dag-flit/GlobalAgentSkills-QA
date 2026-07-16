@@ -14,6 +14,7 @@ export interface FanoutDeps {
   env: Record<string, string>;
   repoRoot: string;
   launchBrowser?: () => Promise<any>;
+  axeSource?: string; // fuente de axe-core (accesibilidad): se inyecta al motor; solo modo Explorar URL
   vars: Record<string, string>;
   appUrl?: string; // URL adjunta a la corrida: habilita el login-smoke en HU frontend SIN guion
   emit: (level: string, msg: string) => void;
@@ -37,7 +38,7 @@ function isBackendHu(title = ""): boolean {
 }
 
 export async function runFeatureFanout(featureId: string, deps: FanoutDeps): Promise<FanoutSummary> {
-  const { runQaCycle, getChildren, getDeclaredAcs, profile, env, repoRoot, launchBrowser, vars, appUrl, emit } = deps;
+  const { runQaCycle, getChildren, getDeclaredAcs, profile, env, repoRoot, launchBrowser, axeSource, vars, appUrl, emit } = deps;
   const children = await getChildren(featureId);
   emit("info", `Feature ${featureId}: ${children.length} HU hija(s).`);
 
@@ -77,7 +78,7 @@ export async function runFeatureFanout(featureId: string, deps: FanoutDeps): Pro
         emit("info", `HU ${cid}: sin guion → ${origenSmoke} sobre ${appUrl}…`);
         const summary = await runQaCycle({
           repoRoot, env, profile, workItemId: cid, appUrl, vars, tcId: cid,
-          declaredAcs: declaredAcsSmoke, explore: true, launchBrowser,
+          declaredAcs: declaredAcsSmoke, explore: true, launchBrowser, axeSource,
         });
         for (const w of summary.warnings || []) emit("stderr", `⚠ [HU ${cid}] ${w}`);
         const childResults = summary.results || [];
@@ -109,6 +110,7 @@ export async function runFeatureFanout(featureId: string, deps: FanoutDeps): Pro
       declaredAcs,
       explore: true,
       launchBrowser,
+      axeSource,
     });
     for (const w of summary.warnings || []) emit("stderr", `⚠ [HU ${cid}] ${w}`);
     const childResults = summary.results || [];

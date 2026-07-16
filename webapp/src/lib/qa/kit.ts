@@ -11,6 +11,7 @@ const ALLOWED = new Set<string>([
   "runtime/pr/pr-reader.mjs", // lector de PRs de GitHub (PR-driven QA) — prBrief.ts
   "runtime/pr/brief.mjs", // generador de brief de validación (PR-driven QA) — prBrief.ts
   "runtime/pr/scaffold.mjs", // andamiaje determinista de guion desde los AC — prBrief.ts
+  "runtime/pr/openapi-diff.mjs", // breaking-change de contrato OpenAPI (modo PR/E2E) — prBrief.ts
   "runtime/evidence/fanout-comment.mjs", // resumen de la corrida para comentar en el Feature — runner.ts
   "runtime/source/validate-project.mjs", // valida que la ruta del repo (QA del código) sea un proyecto real — api/code/validate-path
   "runtime/source/db-env.mjs", // arma las vars de conexión a BD para inyectar a las pruebas — runner.ts

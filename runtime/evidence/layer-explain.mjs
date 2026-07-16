@@ -8,6 +8,7 @@ const TOOL_DESC = {
   tsc: "chequeo de tipos de TypeScript: verifica que los tipos sean correctos (no genera archivos)",
   ruff: "linter de Python: detecta errores y malas prácticas",
   mypy: "chequeo de tipos de Python (anotaciones de tipo)",
+  "dotnet-build": "análisis estático de .NET: compila con los analizadores Roslyn activados y reporta advertencias (CAxxxx) y errores de compilación (CSxxxx) SIN modificar el repo",
   vitest: "corre las pruebas unitarias del proyecto con Vitest",
   jest: "corre las pruebas unitarias del proyecto con Jest",
   pytest: "corre las pruebas unitarias de Python con pytest",
@@ -17,10 +18,12 @@ const TOOL_DESC = {
   pgtap: "corre pruebas de base de datos con pgTAP (pg_prove)",
   prisma: "verifica el estado de las migraciones de Prisma",
   "postgres-probe":
-    "conecta DIRECTAMENTE a PostgreSQL (con las credenciales/túnel del módulo de BD) y contrasta la base REAL contra lo que el código del repo declara: conectividad, estructura, migraciones aplicadas vs. las del código, aislamiento por cliente (RLS/policies que el propio DDL declara), clave primaria por tabla, índices en llaves foráneas, capacidad de las secuencias, codificación y tamaño de las tablas",
+    "conecta DIRECTAMENTE a PostgreSQL (con las credenciales/túnel del módulo de BD) y contrasta la base REAL contra lo que el código del repo declara: conectividad, estructura, migraciones aplicadas vs. las del código, aislamiento por cliente (RLS/policies que el propio DDL declara), el privilegio mínimo del rol de conexión (que no sea superusuario), clave primaria por tabla, índices en llaves foráneas, integridad referencial (restricciones validadas), capacidad de las secuencias, codificación y tamaño de las tablas",
+  axe: "análisis de accesibilidad (WCAG) con axe-core: abre la página viva y detecta barreras para lectores de pantalla, teclado y contraste. Solo en el modo Explorar URL",
   semgrep: "escáner de seguridad: busca patrones de vulnerabilidad (reglas tipo OWASP) en el código",
   bandit: "escáner de seguridad para Python: detecta usos inseguros comunes",
   "secret-scan": "escáner de secretos: busca credenciales quemadas en el código (contraseñas, llaves privadas, tokens de API, cadenas de conexión con contraseña), con reglas de alta confianza",
+  "license-scan": "escáner de licencias: lee la licencia declarada de las dependencias instaladas (node_modules) y marca las copyleft (GPL/AGPL) o sin licencia — riesgo legal en un producto propietario",
   "npm-audit": "análisis de dependencias (SCA): revisa las librerías npm del proyecto contra la base pública de avisos de seguridad",
   "pnpm-audit": "análisis de dependencias (SCA): revisa las librerías del workspace pnpm contra la base pública de avisos de seguridad",
   "dotnet-vulnerable": "análisis de dependencias (SCA): revisa los paquetes NuGet (.NET) del proyecto contra la base de avisos de seguridad",
@@ -49,9 +52,11 @@ export function toolDescription(tool, layer) {
 // Nombre amigable del stack/herramienta (para descripciones legibles).
 const TOOL_STACK = {
   "dotnet-test": ".NET", vitest: "Vitest", jest: "Jest", pytest: "pytest", eslint: "ESLint",
+  "dotnet-build": ".NET (analizadores Roslyn)",
   tsc: "TypeScript", ruff: "Ruff", mypy: "mypy", semgrep: "Semgrep", bandit: "Bandit",
-  "secret-scan": "escáner de secretos", "npm-audit": "npm audit", "pnpm-audit": "pnpm audit", "dotnet-vulnerable": "dotnet (NuGet)", "pip-audit": "pip-audit",
+  "secret-scan": "escáner de secretos", "license-scan": "licencias de dependencias", "npm-audit": "npm audit", "pnpm-audit": "pnpm audit", "dotnet-vulnerable": "dotnet (NuGet)", "pip-audit": "pip-audit",
   "postgres-probe": "PostgreSQL", openapi: "OpenAPI", newman: "Postman (newman)", pgtap: "pgTAP", prisma: "Prisma",
+  axe: "axe-core (accesibilidad)", playwright: "Playwright",
 };
 export function toolStack(tool) {
   return TOOL_STACK[tool] || tool || "";
@@ -126,6 +131,8 @@ export function describePassed(r) {
     case "security":
       if (r.metrics?.tool === "secret-scan")
         return `Se revisó el código del proyecto buscando credenciales quemadas (contraseñas, llaves privadas, tokens de API, cadenas de conexión con contraseña) con reglas de alta confianza y no apareció ninguna. Reduce el riesgo; no garantiza ausencia total.`;
+      if (r.metrics?.tool === "license-scan")
+        return `Se revisaron las licencias declaradas de las dependencias instaladas del proyecto y todas son permisivas conocidas (MIT/BSD/Apache/ISC…), compatibles con un producto propietario. Reduce el riesgo legal; no lo elimina.`;
       if (isScaTool(r.metrics?.tool))
         return `Se revisaron las dependencias de${objTxt || " terceros del proyecto"} contra la base pública de avisos de seguridad y ninguna versión usada tiene una vulnerabilidad conocida. Reduce el riesgo; no lo elimina.`;
       return `Se escaneó el código${obj ? ` de${objTxt}` : ""}${stack ? ` con ${stack}` : ""} buscando vulnerabilidades conocidas (estilo OWASP) y no apareció ninguna. Reduce el riesgo; no garantiza seguridad total.`;
@@ -139,6 +146,8 @@ export function describePassed(r) {
     case "api":
       return `El contrato de la API${objTxt} (OpenAPI) es válido: cumple lo que declara, sin necesitar el servidor corriendo.`;
     case "explore":
+      if (r.metrics?.tool === "axe")
+        return `Se analizó la accesibilidad (reglas WCAG con axe-core) de ${r.metrics?.pages || "las"} página(s) y no aparecieron violaciones automáticas. Es un análisis automático: cubre parte de WCAG, no reemplaza una revisión manual.`;
       return "Se abrió la URL en un navegador y respondió sin errores (estado HTTP y consola OK).";
     default:
       return p ? `${p} verificación(es) pasaron.` : r.narrative || "Se ejecutó sin problemas.";

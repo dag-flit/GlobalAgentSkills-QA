@@ -27,6 +27,11 @@ export function blameAt(b) {
   return { friendly: friendlyFile(b.file), exact: `${String(b.file || "").replace(/\\/g, "/")}${b.line ? ":" + b.line : ""}` };
 }
 
+// Capas cuyos hallazgos NO se atribuyen por git-blame: esquema (db/api) y seguridad (una dependencia
+// vulnerable o un secreto no son una línea "de autor"). La HU tampoco muestra "Sin responsable" para
+// estas → tenerlas en un set ÚNICO mantiene las 4 rutas coherentes. Espejado en la webapp (CaseList).
+export const NO_BLAME_LAYERS = new Set(["db", "api", "security"]);
+
 // ¿Este caso lleva bloque explicativo? Los rojos siempre; el resto solo si el check emitió su
 // propia explicación (`plain`) — así las 71 pruebas verdes de una suite NO inflan el reporte,
 // pero un check declarativo de BD sí se explica aunque esté en verde u omitido.
@@ -66,8 +71,10 @@ export function casesMd(results) {
         if (tc.blame) {
           const bl = blameAt(tc.blame);
           md.push(`  - 👤 **Último en modificar** ${esc(bl.friendly)} \`${esc(bl.exact)}\`: ${esc(tc.blame.author)}${tc.blame.date ? ` _(${esc(tc.blame.date)})_` : ""}`);
-        } else if (r.layer !== "db" && r.layer !== "api") {
-          // La atribución de código no aplica a hallazgos de esquema (db/api).
+        } else if (!NO_BLAME_LAYERS.has(r.layer)) {
+          // La atribución por git-blame no aplica a hallazgos de esquema (db/api) ni de seguridad
+          // (una dependencia vulnerable o un secreto no son una línea "de autor" en ese sentido). La HU
+          // tampoco la muestra para estos → suprimirla acá mantiene las 4 rutas coherentes.
           md.push(`  - 👤 _Sin responsable: el error no señala un archivo/línea del repo, así que no hay a quién atribuirlo automáticamente._`);
         }
       }
@@ -103,7 +110,7 @@ export function casesHtml(results, byFile = {}, embedded = new Set()) {
               if (tc.blame) {
                 const bl = blameAt(tc.blame);
                 parts.push(`<div style="color:#555">👤 <b>Último en modificar</b> ${esc(bl.friendly)} <code>${esc(bl.exact)}</code>: ${esc(tc.blame.author)}${tc.blame.date ? ` <small>(${esc(tc.blame.date)})</small>` : ""}</div>`);
-              } else if (r.layer !== "db" && r.layer !== "api") {
+              } else if (!NO_BLAME_LAYERS.has(r.layer)) {
                 parts.push(`<div style="color:#888">👤 Sin responsable: el error no señala un archivo/línea del repo, no hay a quién atribuirlo automáticamente.</div>`);
               }
             }

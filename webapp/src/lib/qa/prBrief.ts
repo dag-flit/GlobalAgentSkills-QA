@@ -41,6 +41,28 @@ function prNumberFrom(url: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/**
+ * Analiza los cambios que ROMPEN el contrato OpenAPI del PR (modo PR/E2E; determinista, sin binarios).
+ * El lector de contenidos (base vs head) va por el http del kit; el YAML se parsea con `yaml` (webapp).
+ * Best-effort: si algo falla, devuelve null y el brief sale sin la sección de contrato. Nota: SOLO se usa
+ * en el modo PR; la QA de código nunca llama a esto.
+ */
+async function computeApiDiff(repo: { owner: string; repo: string }, pr: any, token: string): Promise<any> {
+  try {
+    const specs = (pr.changedFiles || []).filter((f: any) => typeof (f?.filename ?? f) === "string");
+    const { readFileAtRef } = await importKit("runtime/pr/pr-reader.mjs");
+    const { analyzeApiBreaking, isOpenapiSpecPath } = await importKit("runtime/pr/openapi-diff.mjs");
+    if (!specs.some((f: any) => isOpenapiSpecPath(f?.filename ?? f))) return null; // el PR no toca ningún OpenAPI
+    const YAML: any = await import("yaml");
+    const parseYaml = (t: string) => YAML.parse(t);
+    const readFile = (path: string, which: "base" | "head") =>
+      readFileAtRef({ owner: repo.owner, repo: repo.repo, path, ref: which === "base" ? pr.baseSha : pr.headSha, token });
+    return await analyzeApiBreaking({ changedFiles: pr.changedFiles, readFile, parseYaml });
+  } catch {
+    return null;
+  }
+}
+
 /** Resuelve el PR + AC (si el tracker es Azure) y arma el brief. No publica nada. */
 export async function buildPrBrief(prUrl: string): Promise<PrBriefResult> {
   const cfg = await loadConfig();
@@ -90,7 +112,10 @@ export async function buildPrBrief(prUrl: string): Promise<PrBriefResult> {
     hus: detected.hus.map((h) => Number(h.id)),
     primaryHu: detected.hus[0] ? Number(detected.hus[0].id) : null,
   };
-  const brief = generateBrief({ pr: prForBrief, husWithAcs: detected.hus });
+  // Breaking-change del contrato OpenAPI (si el PR tocó un spec) → sección en el brief (MD/HTML).
+  const apiDiff = await computeApiDiff(repo, pr, token);
+  if (apiDiff && apiDiff.totals?.breaking) warnings.push(`El PR incluye ${apiDiff.totals.breaking} cambio(s) que ROMPEN el contrato de la API — priorizá validar regresión de los clientes.`);
+  const brief = generateBrief({ pr: prForBrief, husWithAcs: detected.hus, apiDiff });
 
   // Andamiaje determinista de la HU primaria (esqueleto de guion a completar). Sin HU → null.
   let scaffold: Scaffold | null = null;
@@ -139,6 +164,7 @@ export async function publishPrBrief(prUrl: string, workItemId: string): Promise
   // AC de la HU destino (para que el comentario liste los gaps con contexto de AC).
   const wi = await adapter.getWorkItem(workItemId).catch(() => null);
   const hus = [{ id: workItemId, title: wi?.title || "", acs: wi?.acceptance_criteria || [] }];
-  const html = briefComment({ pr, hus });
+  const apiDiff = await computeApiDiff(repo, pr, token);
+  const html = briefComment({ pr, hus, apiDiff });
   return adapter.commentWorkItem(workItemId, html);
 }

@@ -147,6 +147,16 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
     } catch (e: any) {
       emitEvent(id, "stderr", `Playwright no disponible: ${e?.message ?? e}. La exploración se omitirá.`);
     }
+    // Fuente de axe-core (accesibilidad, SOLO modo Explorar URL): se carga desde el node_modules de la
+    // webapp y se inyecta al motor como `axeSource` (el motor es cero-dependencias). Si no está, la
+    // accesibilidad simplemente no corre (queda en silencio) → la QA de código nunca la ve.
+    let axeSource: string | undefined;
+    try {
+      const axe: any = await import("axe-core");
+      axeSource = axe.source ?? axe.default?.source;
+    } catch {
+      /* axe-core no instalado → sin análisis de accesibilidad */
+    }
 
     if (isStopRequested(id)) {
       emitEvent(id, "error", "Detenido por el usuario.");
@@ -187,6 +197,7 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
             env,
             repoRoot,
             launchBrowser,
+            axeSource,
             vars: input.vars || {},
             // URL adjunta a la corrida → habilita el login-smoke en HU frontend SIN guion guardado
             // (abre la URL + login + captura por paso). Sin URL, esas HU se saltan como antes.
@@ -250,6 +261,7 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
         declaredAcs: declaredAcsToRun,
         explore: true,
         launchBrowser,
+        axeSource,
       });
       for (const w of summary.warnings || []) emitEvent(id, "stderr", `⚠ ${w}`);
       const fails = (summary.results || []).filter((r: any) => r.status === "fail").length;

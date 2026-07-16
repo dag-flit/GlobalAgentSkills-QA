@@ -751,8 +751,38 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
     v6) → **`parseNpmAudit` se reutiliza** sin parser nuevo. VALIDADO contra FLIT real: 1 `pnpm-audit` (raíz) + 1
     `npm-audit` (un sub-paquete con su package-lock propio) + 18 `dotnet-vulnerable` + 1 `pip-audit`, **0 skips
     engañosos**. Nombres amigables en las 4 rutas (`layer-explain`/webapp `helpers` += `pnpm-audit` en TOOL_DESC/
-    TOOL_STACK/SCA_TOOLS/TOOL_WHAT). Smoke 73 (+caso pnpm). Ver [[sca-dependencias-vulnerables]]. Pendiente del
-    usuario: validar E2E (pnpm audit en frontend + dotnet --vulnerable con restore).
+    TOOL_STACK/SCA_TOOLS/TOOL_WHAT). Smoke 73 (+caso pnpm). Ver [[sca-dependencias-vulnerables]].
+  - **VALIDADO contra FLIT real (2026-07-16):** se corrió la capa `security` completa contra
+    `C:\FLIT\FLIT 2.0 V Final\flit` con el ejecutor real del motor. Resultado (todo real y accionable):
+    **secret-scan** ❌ 10 hallazgos en 2036 archivos (contraseña en cadena de conexión + secreto asignado;
+    **valores REDACTADOS**, 10/10, cero fugas — verificado que los "tokens largos" son solo rutas/clases);
+    **pnpm-audit** ❌ shell-quote(crítica) bloquea, postcss(media) sugerencia; **npm-audit** (sub-paquete
+    `tools/fur-assets` con package-lock propio) ❌ braces/micromatch(alta) + 3 medias; **dotnet-vulnerable**
+    ×18 → 3 en rojo (Microsoft.AspNetCore.DataProtection crítica + System.Security.Cryptography.Xml alta),
+    resto en verde; **pip-audit** ⏭ (no instalado, skip accionable); **SAST** semgrep(frontend)+bandit en
+    rojo. Confirma severidad (crítica/alta bloquea, media = sugerencia), redacción y skips accionables.
+  - **Fix destapado por la validación — allowlist del sandbox (2026-07-16, motor):** `exec-sandbox.DEFAULT_ALLOW`
+    NO incluía `npm`/`pnpm`/`pip-audit` (sí `dotnet`/`semgrep`/`bandit`) → por la WEBAPP el SCA de npm/pnpm/pip
+    se saltaba con exit 127 "fuera de la allowlist" (mi validación directa los corrió porque usó el ejecutor
+    crudo, sin sandbox). Agregados a la lista (la propia lista pide mantenerla sincronizada con los TOOLS de
+    los runners). Smoke +aserción (la allowlist permite npm/pnpm/pip-audit/dotnet). Smoke 73, budget 0.
+    **Reiniciado `npm run dev`.** Paso 2 (seguridad) validado E2E de motor; falta la validación del usuario
+    por la UI (login→correr→HU de hallazgos).
+
+- **Coherencia de la capa `security` en las 4 rutas (2026-07-16, motor+webapp, smoke 74 · tsc0 · budget0, sin
+  commitear).** Antes de la prueba por UI, el usuario pidió confirmar que la evidencia de CADA capa (cada escenario:
+  pase/falle/omita) se plasme consistente en las 4 rutas (HU, MD, HTML, UX). Auditoría → 2 inconsistencias que la
+  capa security (ahora con varios objetos: secret-scan + SCA + SAST) destapaba, corregidas: **(1) «Sin responsable»**
+  — un hallazgo de security (secreto/vuln, sin `blame`) mostraba «👤 Sin responsable…» en MD/HTML/UX pero NO en la HU
+  (`failCard` nunca la pinta) → 3-contra-1. Una dependencia vulnerable o un secreto no son una línea «de autor»
+  (igual que db/api). Fix: `report-cases.NO_BLAME_LAYERS = {db, api, security}` (MD+HTML) + espejo en `CaseList`
+  (`layer !== "security"`) → NINGUNA ruta la muestra para security (coherente con la HU). **(2) Skips de SCA** —
+  pip-audit ausente / sin lockfile mostraban su razón en la tabla de MD/HTML pero NO caían en «No verificado» (la HU
+  ni siquiera tiene columna de notas) → el motivo faltaba en HU/UX. Fix: `sca.runScaTarget` ahora adjunta un caso
+  `skip` con `plain`/`action` a cada skip → cae en `notVerifiedCases` → «No verificado» en las 4 rutas (patrón de los
+  checks declarativos de BD). VALIDADO con datos REALES de FLIT renderizados por HU/MD/HTML: hallazgos presentes ·
+  «Sin responsable» ausente en las 3 · skip de pip-audit en «No verificado» en las 3 · cero secretos crudos filtrados.
+  Smoke +1 (coherencia security hallazgo/omitido/limpio en HU/MD/HTML). **Reiniciado `npm run dev`.**
 
 - **Corridas HUÉRFANAS: heartbeat + reconciliación perezosa + stop que finaliza (2026-07-16, webapp, migración 0007 ·
   tsc0 · budget0 · smoke 72, sin commitear).** NO es una capa de QA: es el CICLO DE VIDA de la corrida. Bug: si el
@@ -776,6 +806,98 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   persiste): huérfana(heartbeat viejo)→error+finished_at; viva(heartbeat fresco)→intacta; activa-en-este-proceso→
   excluida. No debilita la auditoría multitenant (todo por `withTenant`/RLS; control-plane intacto). Solo TS+SQL →
   Next recompila en caliente (no exige reiniciar). Ver [[reconciliacion-corridas-huerfanas]].
+
+- **.NET en la capa `static` (analizadores Roslyn) + regla "instalar en el kit, no en el repo probado"
+  (2026-07-16, motor+webapp, smoke 79 · tsc0 · budget0, sin commitear).** La capa `static` solo cubría
+  JS/TS/Python (eslint/tsc/ruff/mypy) → en FLIT (mayoría .NET) el backend quedaba SIN análisis estático
+  (el hueco más grande). Agregado como capacidad aditiva, patrón espejo del fan-out de `unit`
+  ([[fanout-proyectos-test-dotnet]]): `runtime/runners/dotnet-static.mjs` (`scanDotnetProjects` app vs
+  test; `expandDotnetStaticTargets` = con `.sln` un objetivo, sin `.sln` uno por proyecto de APLICACIÓN
+  —los de test los cubre `unit`—, cwd en la raíz para no activar un `global.json` profundo, conserva los
+  objetivos no-dotnet como eslint); `parse-cases.parseDotnetBuild` (warning CAxxxx→skip/sugerencia, error
+  CSxxxx→fail; dedup por archivo:línea:regla); `static-analysis.mjs` tool `dotnet-build` = `dotnet build
+  <target> --no-incremental --nologo /p:EnableNETAnalyzers=true /p:AnalysisLevel=latest-recommended
+  /clp:NoSummary`. **`--no-incremental` es CLAVE:** sin él, con el build al día MSBuild salta los proyectos
+  y NO re-emite las advertencias → falso "sin hallazgos"; fuerza recompilar (1ª pasada lenta = el precio
+  de un estático honesto). Los `/p:` fuerzan analizadores por LÍNEA DE COMANDO → **NO modifican el repo**.
+  `qa-detect`: `.csproj`/`.sln` enciende `static` (repos backend-only); monorepo mixto → el runner suma el
+  objetivo .NET junto a eslint. 4 rutas: `layer-explain` + webapp `helpers` (TOOL_DESC/TOOL_STACK/
+  TOOL_WHAT/LAYER_INFO + ayuda de reglas Roslyn CA/CS/IDE en `lintRuleHelp`). Suite `dotnet-static-suite.mjs`
+  (+5). **No toca el repo probado:** `dotnet build` restaura al caché global de NuGet y escribe obj/bin
+  (transitorios git-ignored) — igual que `dotnet test` de `unit`, que ya se corría. **Regla de instalación
+  (invariante 9 aplicada a herramientas):** *herramienta* → se instala en el KIT (host de la webapp, PATH;
+  `resolveBin` cae al PATH del kit para todo lo que no sea un bin de Node del repo probado); *artefacto*
+  (lockfile/restore) → es del repo probado, el kit NO lo genera. Cubrir skips coverables desde el kit:
+  `pip install pip-audit` (SCA Python), `pip install semgrep bandit` (SAST); SDK .NET + Node/npx ya están;
+  todos ya en `exec-sandbox.DEFAULT_ALLOW`. **NO coverables:** `npm/pnpm audit` sin lockfile y
+  `dotnet --vulnerable` sin restore (artefactos del repo); **RLS "no declarado"** → correcto omitir.
+  Ver [[dotnet-static-roslyn]]. **Reiniciado `npm run dev`.** Pendiente: el usuario valida .NET static por
+  la UI contra FLIT real.
+
+- **Licencias de dependencias en la capa `security` (copyleft en producto propietario) (2026-07-16,
+  motor+webapp, smoke 85 · tsc0 · budget0, sin commitear).** Nuevo objeto de evidencia `license-scan`
+  (junto a SAST + secret-scan + SCA). `runtime/runners/license-scan.mjs` (PURO, SOLO LECTURA de
+  `node_modules`, sin instalar ni ejecutar nada → no toca el repo; `listInstalled`/`projectLicense`
+  inyectables → offline-testable). Clasifica la licencia SPDX declarada de cada dependencia (permissive
+  MIT/BSD/Apache · weak LGPL/MPL · strong GPL/AGPL/SSPL · unknown UNLICENSED/vacío; doble licencia
+  "A OR B" → la menos restrictiva). **Autonomía (invariante 9): el criterio sale del PROPIO repo** — si
+  el `package.json` raíz se declara PROPIETARIO (`private:true`/`UNLICENSED`) y arrastra copyleft FUERTE
+  → **conflicto objetivo = fail**; postura no clara → **sugerencia (skip)**, no se impone postura; weak/
+  unknown siempre informativos. Escape hatch `profile.security.licenses` (off/deny/allow/ignore). Sin
+  `node_modules` → **skip accionable** ("instalá las dependencias del proyecto"): las licencias son
+  artefacto del repo, el kit no las genera (misma regla que SCA sin lockfile). Cada caso emite `{plain,
+  action}` + `message` (dependencia@versión (licencia)) → **HU/MD/HTML/UX coherentes** (invariante 8);
+  `layer-explain` + webapp `helpers` += `license-scan`; NO_BLAME ya cubre security (sin "Sin responsable").
+  Suite `license-scan-suite.mjs` (+6, con caso de coherencia HU/MD/HTML). Solo npm/pnpm (lee node_modules);
+  NuGet/.NET = extensión futura. Ver [[license-scan-copyleft]]. **Reiniciado `npm run dev`.**
+
+- **Capa `db`: 2 checks read-only nuevos (menor privilegio + integridad referencial) (2026-07-16, motor+webapp,
+  smoke 86 · tsc0 · budget0, sin commitear).** Roadmap #3 de "otros tipos de prueba por capa". Dos verificaciones
+  CHEAP/CATALOG-ONLY (solo lectura, sin escanear datos), universales y NO opinadas, sumadas a `db-checks.mjs`
+  (heredan las 4 rutas por `plain`/`action`): **(1) Menor privilegio de la conexión** (`db.privileges.superuser`,
+  default warn) — `pg_roles.rolsuper` del `current_user`: un superusuario IGNORA la RLS → conectarse así anula el
+  aislamiento por cliente (coherente con el check de RLS). **(2) Integridad referencial** (`db.schema.fk_validated`,
+  default warn) — `pg_constraint.convalidated=false` (FK/CHECK NOT VALID): la restricción se aplica a los datos
+  NUEVOS pero nunca comprobó los EXISTENTES → puede haber filas viejas que la violan. (Evité el escaneo de filas
+  huérfanas por su costo en BD grandes por SSH; el chequeo de catálogo es barato y objetivo.) Ambos ajustables/
+  apagables por `profile.db` (escape hatch). `describePassed(db)` y el TOOL_DESC/TOOL_WHAT de `postgres-probe` (motor
+  + webapp) los nombran. Suite `db-probe-suite` += escenarios superuser/notvalid (+1 caso). Ver
+  [[db-checks-declarativos-y-coherencia]]. **Reiniciado `npm run dev`.**
+
+- **Accesibilidad (axe/WCAG) en el modo Explorar URL (E2E) (2026-07-16, motor+webapp, smoke 90 · tsc0 ·
+  budget0, sin commitear).** Roadmap #4. **Condición del usuario: solo se invoca en "Explorar URL"; en la
+  ejecución de pruebas de CÓDIGO NO se menciona en ningún lado** (le sirve para robustecer el módulo E2E
+  luego). Cumplido estructuralmente: `runExplore` solo corre en `runQaCycle` (E2E); `runCodeCycle` nunca
+  llama a explore. **Motor cero-dependencias (invariante 4):** `runtime/runners/axe-scan.mjs` NO importa
+  axe-core directo — la FUENTE llega INYECTADA (`axeSource`, string) como `launchBrowser`; la webapp la
+  provee desde su `node_modules` (instalé `axe-core` en `webapp/`). `scanPageAccessibility(page,{axeSource})`
+  inyecta la fuente y corre axe (`page.evaluate` → `window.axe.run`, CDP → salta CSP); `buildAxeEvidence`
+  agrupa por regla, severidad crítica/grave → **fail**, moderada/menor → **sugerencia**; escape hatch
+  `profile.explore.accessibility` (off/fail_on/ignore). **Silencio total si no hay axe** (ni un skip) → cero
+  ruido y aislamiento del modo código. `explore.mjs` corre axe por página (URL-smoke) y en el estado final
+  (flujo), anexa `{layer:"explore", metrics:{tool:"axe"}}`; `orchestrator` enhebra `axeSource`+`profile`;
+  webapp `runner.ts`+`fanout.ts` cargan `axe.source` y lo pasan. 4 rutas por `plain`/`action`; `layer-explain`
+  + webapp `helpers` += tool `axe`/`playwright` (no filtran a código porque explore nunca está en sus
+  reportes). Suite `axe-suite.mjs` (+4). `axe-core` nuevo en `webapp/package.json`. Ver
+  [[axe-accesibilidad-e2e]]. **Reiniciado `npm run dev`.**
+
+- **Breaking-change de contrato OpenAPI en el modo PR (E2E) (2026-07-16, motor+webapp, smoke 94 · tsc0 ·
+  budget0, sin commitear).** Roadmap #5. Enfoque **JS puro** (NO oasdiff): el pipeline `runtime/pr/` es
+  puro/determinista/offline-testable/sin binarios y oasdiff lo rompería (install + allowlist + escribir
+  specs a disco + no offline-testable) — aclaración al usuario: "rompe" = la PUREZA del diseño, NO la
+  ejecución existente. **Mismo carácter que axe:** el modo PR es parte del E2E → el breaking-change queda
+  AISLADO de la QA de código (vive en `runtime/pr/`, solo lo invoca `prBrief.ts`/flujo /pr; `runCodeCycle`
+  nunca lo toca; silencioso si el PR no cambia OpenAPI). `runtime/pr/openapi-diff.mjs` (PURO):
+  `diffOpenapi(old,new)` enfoque consumidor del API (path/operación eliminada, parámetro nuevo/ahora
+  obligatorio, tipo cambiado, cuerpo obligatorio, propiedad de request obligatoria, respuesta/campo de
+  respuesta quitado), resuelve `$ref` local; `parseSpec` JSON nativo / YAML por parser INYECTADO;
+  `analyzeApiBreaking` lee base/head por `readFile(path,ref)` INYECTADO (added=nota, removed=ruptura).
+  `pr-reader` += `readFileAtRef` (Contents API base64→utf8) y `baseSha`/`headSha` en `readPr`. `brief.mjs`
+  `generateBrief`/`briefComment` += `apiDiff` → sección "Contrato de API (OpenAPI)" en **MD + HTML +
+  comentario ADO** (silenciosa sin `checked`). Webapp: instalé `yaml`; `prBrief.computeApiDiff` liga
+  `readFile`→`readFileAtRef` (http del kit) + `parseYaml`→`yaml`; allowlist `kit.ts` += `openapi-diff.mjs`.
+  Motor sigue cero-dependencias (YAML/http/readFile inyectados, patrón axe). Suite `openapi-diff-suite.mjs`
+  (+4). `yaml` nuevo en `webapp/package.json`. Ver [[openapi-breaking-change-pr]]. **Reiniciado `npm run dev`.**
 
 ## Mapa del repo
 

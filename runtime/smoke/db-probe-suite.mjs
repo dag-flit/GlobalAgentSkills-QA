@@ -35,6 +35,10 @@ export async function runDbProbeCases(ctx) {
       if (/table_name IN/.test(sql)) return [{ table_schema: "public", table_name: "__EFMigrationsHistory" }];
       if (/count\(\*\)::int AS n FROM "public"/.test(sql)) return [{ n: scenario === "behind" ? 0 : 5 }];
       if (/pg_encoding_to_char/.test(sql)) return [{ enc: "UTF8" }];
+      // Rol de la conexión (menor privilegio): superusuario solo en el escenario "superuser".
+      if (/rolsuper AS super/.test(sql)) return [{ usr: scenario === "superuser" ? "postgres" : "app_user", super: scenario === "superuser" }];
+      // Integridad referencial (restricciones sin validar): una FK NOT VALID solo en "notvalid".
+      if (/NOT c\.convalidated/.test(sql)) return scenario === "notvalid" ? [{ tbl: "public.orders", con: "orders_customer_fk", typ: "f" }] : [];
       if (/relforcerowsecurity/.test(sql)) {
         if (scenario === "rlsgap") return [{ sch: "public", tbl: "orders", en: false, forced: false, pol: false }];
         if (scenario === "rlsok") return [{ sch: "public", tbl: "orders", en: true, forced: false, pol: true }];
@@ -108,6 +112,19 @@ export async function runDbProbeCases(ctx) {
     // DECLARATIVO — el repo puede apagar un check universal (no se inventa criterio sobre su base).
     const dbPkOff = await runDbTests({ repoRoot: base, detection: det, env, pgQuery: fakePg("ok"), workItemId: "local", profile: { db: { schema: { primary_key: "off" } } } });
     assert.ok(!dbPkOff[0].cases.some((c) => /Clave primaria/.test(c.name)), "un check apagado por declaración no corre ni aparece");
+
+    // Checks NUEVOS (read-only, universales): en el escenario "ok" pasan (rol acotado + restricciones validadas).
+    assert.ok(dbOk[0].cases.some((c) => /Menor privilegio/.test(c.name) && c.status === "pass"), "el rol no-superusuario → menor privilegio OK");
+    assert.ok(dbOk[0].cases.some((c) => /Integridad referencial/.test(c.name) && c.status === "pass"), "sin restricciones NOT VALID → integridad referencial OK");
+    // Menor privilegio: por defecto es SUGERENCIA (warn→skip); subido a bloqueante detecta el superusuario.
+    const dbSuper = await runDbTests({ repoRoot: base, detection: det, env, pgQuery: fakePg("superuser"), workItemId: "local", profile: { db: { privileges: { superuser: "fail" } } } });
+    const superCase = dbSuper[0].cases.find((c) => /Menor privilegio/.test(c.name));
+    assert.ok(superCase.status === "fail" && /SUPERUSUARIO/.test(superCase.message) && superCase.plain && superCase.action, "conexión con superusuario → hallazgo con plain/action (ignora RLS)");
+    // Integridad referencial: subida a bloqueante, nombra la restricción sin validar.
+    const dbNotValid = await runDbTests({ repoRoot: base, detection: det, env, pgQuery: fakePg("notvalid"), workItemId: "local", profile: { db: { schema: { fk_validated: "fail" } } } });
+    const nvCase = dbNotValid[0].cases.find((c) => /Integridad referencial/.test(c.name));
+    assert.ok(nvCase.status === "fail" && /orders_customer_fk/.test(nvCase.message) && nvCase.plain, "restricción NOT VALID → hallazgo que la nombra, con explicación");
+    ok("QA de código: checks de BD read-only nuevos (menor privilegio/superusuario + integridad referencial NOT VALID) — universales, ajustables, con plain/action en las 4 rutas");
 
     const dbBehind = await runDbTests({ repoRoot: base, detection: det, env, pgQuery: fakePg("behind"), workItemId: "local" });
     assert.strictEqual(dbBehind[0].status, "fail", "faltan migraciones (0 aplicadas < 2 en código) → fail");

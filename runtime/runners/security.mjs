@@ -7,6 +7,7 @@ import { runLayer } from "./_runner-core.mjs";
 import { parseSemgrep, parseBandit } from "./parse-cases.mjs";
 import { scanSecrets } from "./secret-scan.mjs";
 import { runSca } from "./sca.mjs";
+import { scanLicenses } from "./license-scan.mjs";
 
 // target_profile → config de semgrep. `generic`/`auto` usan el ruleset por defecto.
 function semgrepConfig(profile) {
@@ -54,13 +55,34 @@ function secretEvidence(opts = {}) {
   }
 }
 
+// Escáner de LICENCIAS de dependencias: objeto de evidencia PROPIO (patrón del secret-scan). PURO,
+// solo lectura de node_modules → aporta cobertura sin herramienta externa. Best-effort: si falla, se OMITE.
+function licenseEvidence(opts = {}) {
+  const { repoRoot = process.cwd(), profile = {}, workItemId } = opts;
+  const cfg = (profile.security && profile.security.licenses) || {};
+  if (cfg.off === true) return null; // apagado explícito por el perfil (escape hatch)
+  try {
+    const res = scanLicenses(repoRoot, { profile });
+    if (!res.cases.length) return null;
+    const narrative = res.status === "fail"
+      ? `Licencias de dependencias: ${res.cases.filter((c) => c.status === "fail").length} conflicto(s) de licencia`
+      : res.status === "pass"
+        ? `Licencias de dependencias: ${res.total} dependencia(s) con licencia permisiva conocida`
+        : `Licencias de dependencias: ${res.cases.filter((c) => c.status === "skip").length} punto(s) a revisar (sugerencia)`;
+    return { layer: "security", work_item_id: workItemId, status: res.status, narrative, cases: res.cases, metrics: { tool: "license-scan", cwd: "" } };
+  } catch (e) {
+    return { layer: "security", work_item_id: workItemId, status: "skip", narrative: `escaneo de licencias omitido: ${(e && e.message) || e}`, metrics: { tool: "license-scan", cwd: "" } };
+  }
+}
+
 /** @returns {Promise<import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]>} */
 export async function runSecurityTests(opts = {}) {
   const secret = secretEvidence(opts);
+  const license = licenseEvidence(opts);
   // SCA (dependencias vulnerables): objetos propios, detectados por manifiesto; best-effort.
   const sca = await runSca(opts).catch(() => []);
   const sast = await runLayer({ layer: "security", tools: TOOLS, ...opts });
-  return [...(secret ? [secret] : []), ...sca, ...sast];
+  return [...(secret ? [secret] : []), ...(license ? [license] : []), ...sca, ...sast];
 }
 
-export default { runSecurityTests, secretEvidence };
+export default { runSecurityTests, secretEvidence, licenseEvidence };

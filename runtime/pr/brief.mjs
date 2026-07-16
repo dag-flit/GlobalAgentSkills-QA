@@ -29,17 +29,60 @@ function surfaceLine(counts) {
 
 /**
  * Ensambla el brief. `husWithAcs` = [{ id, title, acs:[{title,detail}] }] (los AC ya leídos de Azure).
+ * `apiDiff` (opcional) = salida de openapi-diff.analyzeApiBreaking: cambios que rompen el contrato OpenAPI.
  * @returns { data, markdown, html }
  */
-export function generateBrief({ pr, husWithAcs = [] }) {
+export function generateBrief({ pr, husWithAcs = [], apiDiff = null }) {
   const cls = classifyChangedFiles(pr.changedFiles || []);
   const hus = husWithAcs.map((hu) => ({
     ...hu,
     isPrimary: pr.primaryHu != null && String(hu.id) === String(pr.primaryHu),
     scope: buildScopeMatrix({ acs: hu.acs || [], e2eAreas: cls.e2eAreas, testPlan: pr.testPlan, acClaims: pr.acClaims }),
   }));
-  const data = { pr, classification: cls, hus };
-  return { data, markdown: toMarkdown(pr, cls, hus), html: toHtml(pr, cls, hus) };
+  const data = { pr, classification: cls, hus, apiDiff };
+  return { data, markdown: toMarkdown(pr, cls, hus, apiDiff), html: toHtml(pr, cls, hus, apiDiff) };
+}
+
+// ---------- Contrato de API (breaking-change) — compartido por md/html/comentario ----------
+
+// Aplana los cambios que ROMPEN de todos los specs → [{method,path,detail,file}].
+function flattenBreaking(apiDiff) {
+  if (!apiDiff || !Array.isArray(apiDiff.specs)) return [];
+  return apiDiff.specs.flatMap((s) => (s.breaking || []).map((b) => ({ ...b, file: s.file })));
+}
+function apiDiffMd(apiDiff) {
+  if (!apiDiff || !apiDiff.checked) return ""; // silencioso: el PR no cambió ningún contrato OpenAPI
+  const breaks = flattenBreaking(apiDiff);
+  const L = ["", "## Contrato de API (OpenAPI)"];
+  if (breaks.length) {
+    L.push(`> ⚠ **${breaks.length} cambio(s) que ROMPEN el contrato** — quien ya consume el API puede fallar. Priorizá validar regresión de los clientes.`);
+    for (const b of breaks) L.push(`- \`${b.method} ${b.path}\` — ${b.detail}`);
+  } else {
+    L.push("> ✅ No se detectaron cambios que rompan el contrato en los specs OpenAPI cambiados (revisión automática determinista).");
+  }
+  for (const s of apiDiff.specs) {
+    if (s.error) L.push(`- ⏭ \`${s.file}\`: ${s.error}`);
+    else if (s.note) L.push(`- ℹ️ \`${s.file}\`: ${s.note}`);
+    for (const i of s.info || []) L.push(`- ℹ️ \`${i.method} ${i.path}\` — ${i.detail}`);
+  }
+  return L.join("\n");
+}
+function apiDiffHtml(apiDiff) {
+  if (!apiDiff || !apiDiff.checked) return "";
+  const breaks = flattenBreaking(apiDiff);
+  const rows = breaks.map((b) => `<li class="gap"><code>${esc(b.method)} ${esc(b.path)}</code> — ${esc(b.detail)}</li>`).join("");
+  const notes = apiDiff.specs
+    .flatMap((s) => [
+      s.error ? `<li>⏭ <code>${esc(s.file)}</code>: ${esc(s.error)}</li>` : "",
+      s.note ? `<li>ℹ️ <code>${esc(s.file)}</code>: ${esc(s.note)}</li>` : "",
+      ...(s.info || []).map((i) => `<li>ℹ️ <code>${esc(i.method)} ${esc(i.path)}</code> — ${esc(i.detail)}</li>`),
+    ])
+    .filter(Boolean)
+    .join("");
+  const head = breaks.length
+    ? `<p class="warn"><b>${breaks.length} cambio(s) que ROMPEN el contrato</b> — validá regresión de los clientes del API.</p><ul>${rows}</ul>`
+    : `<p class="ok"><b>Sin rupturas de contrato</b> detectadas en los specs OpenAPI cambiados.</p>`;
+  return `<div class="card"><h3>Contrato de API (OpenAPI)</h3>${head}${notes ? `<ul>${notes}</ul>` : ""}</div>`;
 }
 
 // ---------- Markdown ----------
@@ -59,7 +102,7 @@ function scopeRows(scope) {
   return rows.join("\n");
 }
 
-function toMarkdown(pr, cls, hus) {
+function toMarkdown(pr, cls, hus, apiDiff) {
   const L = [];
   L.push(`# Brief de validación QA — PR #${pr.number}`);
   L.push(`**${pr.title}**`);
@@ -72,6 +115,8 @@ function toMarkdown(pr, cls, hus) {
   if (cls.hasE2eSurface) L.push(`\n> **Áreas visibles a validar por navegador (E2E):** ${cls.e2eAreas.join(", ")}.`);
   else L.push(`\n> ⚠ Este PR **no toca UI visible** (backend/infra/docs) → no hay superficie E2E directa; validar por API/BD/otra vía.`);
   if (pr.filesTruncated) L.push(`\n> ⚠ La lista de archivos se truncó (PR muy grande): la superficie puede estar incompleta.`);
+  const apiMd = apiDiffMd(apiDiff);
+  if (apiMd) L.push(apiMd);
   L.push("");
   L.push(`## Lo que el dev dice haber probado`);
   L.push(pr.testPlan ? pr.testPlan : "_No declaró un test plan funcional (o corrió solo CI: lint/build/test). QA valida desde cero._");
@@ -110,7 +155,7 @@ function scopeHtml(scope) {
   return parts.join("");
 }
 
-function toHtml(pr, cls, hus) {
+function toHtml(pr, cls, hus, apiDiff) {
   const huList = hus.map((h) => `${h.id}${h.isPrimary ? " ⭐" : ""}`).join(", ") || "—";
   const husHtml = hus.length
     ? hus
@@ -143,6 +188,7 @@ ul{list-style:none;padding-left:0;margin:.3em 0} li{padding:4px 0;border-bottom:
 <p class="meta">Autor: <code>${esc(pr.author)}</code> · Rama: <code>${esc(pr.branch)}</code> · Estado: ${esc(pr.state)}${pr.merged ? " (merged)" : ""}<br>
 Feature: ${esc(pr.feature ?? "—")} · HU: ${esc(huList)}</p>
 <div class="card"><h3>Superficie del cambio</h3><p>${esc(surfaceLine(cls.counts) || "—")}</p>${surface}</div>
+${apiDiffHtml(apiDiff)}
 <div class="card"><h3>Lo que el dev dice haber probado</h3><pre>${esc(pr.testPlan || "No declaró un test plan funcional (o corrió solo CI). QA valida desde cero.")}</pre></div>
 <h2>Alcance de validación por HU <span class="meta">(✅ dev = probado por el dev · 🔺 QA = gap a cubrir)</span></h2>
 ${husHtml}
@@ -153,7 +199,7 @@ ${husHtml}
  * Fragmento HTML COMPACTO del brief para publicar como comentario en ADO (sin <style>/<html>, que la
  * Discussion no soporta): encabezado + superficie + por HU, los gaps de QA (lo que falta validar).
  */
-export function briefComment({ pr, hus }) {
+export function briefComment({ pr, hus, apiDiff = null }) {
   const cls = classifyChangedFiles(pr.changedFiles || []);
   const parts = [
     `<b>🔎 Brief de validación QA — PR #${esc(pr.number)}</b>`,
@@ -164,6 +210,13 @@ export function briefComment({ pr, hus }) {
       ? `<div>Áreas E2E a validar: <b>${esc(cls.e2eAreas.join(", "))}</b></div>`
       : `<div><i>Sin UI visible → sin superficie E2E directa.</i></div>`,
   ];
+  // Cambios que rompen el contrato de la API (si el PR tocó un OpenAPI). Va en el comentario de la HU.
+  const breaks = flattenBreaking(apiDiff);
+  if (apiDiff && apiDiff.checked) {
+    parts.push(breaks.length
+      ? `<br><b>⚠ API: ${breaks.length} cambio(s) que ROMPEN el contrato</b><ul>${breaks.map((b) => `<li><code>${esc(b.method)} ${esc(b.path)}</code> — ${esc(b.detail)}</li>`).join("")}</ul>`
+      : `<div>✅ API: sin rupturas de contrato en los specs OpenAPI cambiados.</div>`);
+  }
   for (const h of hus) {
     const scope = buildScopeMatrix({ acs: h.acs || [], e2eAreas: cls.e2eAreas, testPlan: pr.testPlan, acClaims: pr.acClaims });
     const gaps = scope.acScenarios

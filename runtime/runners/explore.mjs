@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runFlow } from "./explore-flow.mjs";
 import { computeCoverage } from "../evidence/ac-coverage.mjs";
+import { scanPageAccessibility, buildAxeEvidence, loadAxeSource } from "./axe-scan.mjs";
 
 // ¿La corrida trae credenciales de login? (mismo criterio de resolución que interpolate:
 // vars gana a env). Con ambas presentes, una corrida de URL sin guion inicia sesión y captura.
@@ -45,6 +46,9 @@ async function resolveLaunch(injected) {
  * @param {string} [opts.tcId]           id del caso/HU para trazar la evidencia (attach en ADO)
  * @param {string[]} [opts.declaredAcs]  AC declarados de la HU (para la matriz de cobertura)
  * @param {function} [opts.launchBrowser] launcher inyectable () -> browser (API tipo Playwright)
+ * @param {object} [opts.profile]        perfil resuelto (se lee `profile.explore.accessibility`)
+ * @param {string} [opts.axeSource]      fuente de axe-core INYECTADA (la webapp la provee desde su
+ *                                        node_modules); sin ella la accesibilidad no corre (queda en silencio).
  * @returns {Promise<import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]>}
  */
 export async function runExplore({
@@ -57,9 +61,17 @@ export async function runExplore({
   tcId,
   declaredAcs = [],
   launchBrowser,
+  profile = {},
+  axeSource,
 } = {}) {
   const hasFlow = Array.isArray(flow) && flow.length > 0;
   if (!appUrl && !hasFlow) return []; // gated: sin URL ni guion, la capa no participa del ciclo
+
+  // Accesibilidad (axe): SOLO en la exploración de URL. Corre únicamente si hay una fuente de axe-core
+  // disponible (inyectada por la webapp, o importable en CLI) y no está apagada en el perfil. Sin axe →
+  // queda en silencio (no aparece en el reporte) → la QA de código nunca la ve.
+  const axeSrc = axeSource || (await loadAxeSource());
+  const doAxe = Boolean(axeSrc) && !((profile.explore && profile.explore.accessibility && profile.explore.accessibility.off) === true);
 
   const launch = await resolveLaunch(launchBrowser);
   if (!launch) {
@@ -91,7 +103,7 @@ export async function runExplore({
 
   // ── Modo GUION (E2E de un flujo): pasos en orden sobre una misma sesión ───────
   if (effHasFlow) {
-    return runFlowMode({ repoRoot, env, flow: effFlow, vars, tcId, declaredAcs, timeout, launch });
+    return runFlowMode({ repoRoot, env, flow: effFlow, vars, tcId, declaredAcs, timeout, launch, profile, axeSrc: doAxe ? axeSrc : null });
   }
   const targets = [appUrl, ...(Array.isArray(paths) ? paths : [])].filter(Boolean);
   const evidenceDir = path.join(repoRoot, "qa-evidence", ".explore");
@@ -103,6 +115,7 @@ export async function runExplore({
 
   const cases = [];
   const files = [];
+  const axePages = [];
   let browser;
   try {
     browser = await launch();
@@ -137,6 +150,11 @@ export async function runExplore({
         } catch {
           /* screenshot best-effort */
         }
+        // Accesibilidad de esta página (solo si hay axe disponible) — antes de cerrarla.
+        if (doAxe) {
+          const a = await scanPageAccessibility(page, { axeSource: axeSrc });
+          axePages.push({ url, ran: a.ran, violations: a.violations });
+        }
         if (typeof page.close === "function") await page.close();
       } catch (e) {
         errText = String((e && e.message) || e);
@@ -163,7 +181,7 @@ export async function runExplore({
   }
 
   const failed = cases.filter((c) => c.status === "fail").length;
-  return [
+  const results = [
     {
       layer: "explore",
       status: failed ? "fail" : "pass",
@@ -173,11 +191,17 @@ export async function runExplore({
       cases,
     },
   ];
+  // Objeto de accesibilidad (axe): se anexa SOLO si axe analizó alguna página (si no, queda en silencio).
+  if (doAxe) {
+    const axeObj = buildAxeEvidence(axePages, { profile, tcId });
+    if (axeObj) results.push(axeObj);
+  }
+  return results;
 }
 
 // Modo GUION: abre una sesión, corre los pasos (explore-flow) y normaliza el EvidenceObject
 // (un caso por paso, capturas juntas). Mismo contrato que el modo URL-smoke → sink/adapter igual.
-async function runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs = [], timeout, launch }) {
+async function runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs = [], timeout, launch, profile = {}, axeSrc = null }) {
   const evidenceDir = path.join(repoRoot, "qa-evidence", ".explore");
   try {
     fs.mkdirSync(evidenceDir, { recursive: true });
@@ -189,10 +213,18 @@ async function runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs = [], 
   let cases = [];
   let files = [];
   let consoleErrors = [];
+  const axePages = [];
   try {
     browser = await launch();
     const page = await browser.newPage();
     ({ cases, files, consoleErrors } = await runFlow({ page, steps: flow, evidenceDir, env, vars, timeout }));
+    // Accesibilidad del estado FINAL del flujo (autenticado, ya navegado) — antes de cerrar la página.
+    if (axeSrc) {
+      const first = flow.find((s) => s && (s.op === "ir_a" || s.url || (s.args && s.args.url))) || {};
+      const url = first.url || (first.args && first.args.url) || "flujo E2E";
+      const a = await scanPageAccessibility(page, { axeSource: axeSrc });
+      axePages.push({ url, ran: a.ran, violations: a.violations });
+    }
     if (typeof page.close === "function") await page.close();
   } finally {
     try {
@@ -206,7 +238,7 @@ async function runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs = [], 
   const consoleNote = consoleErrors.length ? ` · ${consoleErrors.length} error(es) de consola` : "";
   // Matriz de cobertura de AC: cruza los pasos que declaran `ac` con los AC declarados de la HU.
   const coverage = computeCoverage(cases, declaredAcs);
-  return [
+  const results = [
     {
       layer: "explore",
       ...(tcId ? { tc_id: tcId } : {}),
@@ -218,6 +250,11 @@ async function runFlowMode({ repoRoot, env, flow, vars, tcId, declaredAcs = [], 
       cases,
     },
   ];
+  if (axeSrc) {
+    const axeObj = buildAxeEvidence(axePages, { profile, tcId });
+    if (axeObj) results.push(axeObj);
+  }
+  return results;
 }
 
 export default { runExplore };

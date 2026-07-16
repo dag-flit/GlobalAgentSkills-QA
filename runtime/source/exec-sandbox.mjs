@@ -20,7 +20,8 @@ export const DEFAULT_ALLOW = [
   "vitest", "jest", "pytest", "dotnet",       // unit
   "newman", "npx",                            // api
   "pg_prove", "prisma",                       // db
-  "semgrep", "bandit",                        // security
+  "semgrep", "bandit",                        // security — SAST
+  "npm", "pnpm", "pip-audit",                 // security — SCA (npm/pnpm audit, pip-audit; dotnet ya está en unit)
 ];
 
 // Timeout por defecto por comando (ms). Ajustable por env CODE_QA_EXEC_TIMEOUT_MS.

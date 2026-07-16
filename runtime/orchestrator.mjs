@@ -44,6 +44,7 @@ export async function runQaCycle({
   declaredAcs = [],
   explore = true,   // compat: la exploración corre si hay appUrl o un guion
   launchBrowser,
+  axeSource,        // fuente de axe-core inyectada por la webapp → accesibilidad (solo modo Explorar URL)
 } = {}) {
   const resolvedProfile = profile || resolveProfile({ repoRoot }).profile;
   const adapter = getAdapter({ profile: resolvedProfile, env, repoRoot, http });
@@ -62,7 +63,7 @@ export async function runQaCycle({
   const results = [];
   const hasFlow = Array.isArray(flow) && flow.length > 0;
   if (explore && (appUrl || hasFlow)) {
-    const explored = await runExplore({ repoRoot, env, appUrl, flow, vars, tcId, declaredAcs, launchBrowser });
+    const explored = await runExplore({ repoRoot, env, appUrl, flow, vars, tcId, declaredAcs, launchBrowser, profile: resolvedProfile, axeSource });
     results.push(...explored);
   }
 

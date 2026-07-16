@@ -257,6 +257,34 @@ function dotnetError(block) {
   return msg;
 }
 
+// dotnet build (salida de CONSOLA): análisis ESTÁTICO de .NET. `dotnet build --no-incremental`
+// re-corre los analizadores Roslyn (CAxxxx) + el compilador (CSxxxx) y emite una línea por hallazgo:
+//   "…\Foo.cs(12,34): warning CA1822: Member '…' does not access instance data… [Proj.csproj]"
+//   "…\Foo.cs(5,10):  error   CS0103: The name '…' does not exist… [Proj.csproj]"
+// Mapea `warning`→skip (advertencia: se lista, NO bloquea, igual que eslint) y `error`→fail (no
+// compila / analizador severo). Cada caso guarda archivo:línea + regla → humanizable y atribuible
+// por git blame. Dedup por archivo:línea:regla (MSBuild repite el mismo aviso por cada TFM/proyecto).
+export function parseDotnetBuild(out, { repoRoot } = {}) {
+  const text = stripAnsi(`${out.stdout || ""}\n${out.stderr || ""}`);
+  const re = /^(.*?\.(?:cs|vb|fs|razor|cshtml|xaml))\((\d+),\d+\):\s*(warning|error)\s+([A-Za-z]+\d+)\s*:\s*(.+?)(?:\s*\[[^\]]*\])?\s*$/gim;
+  const cases = [];
+  const seen = new Set();
+  let m;
+  while ((m = re.exec(text))) {
+    const [, file, line, sev, code, msg] = m;
+    const key = `${file}:${line}:${code}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cases.push({
+      name: `${rel(repoRoot, file)}:${line} ${code}`,
+      status: sev === "error" ? "fail" : "skip",
+      duration: null,
+      message: cleanMsg(msg),
+    });
+  }
+  return cases.length ? cases : null;
+}
+
 // bandit (`-f json`): { results: [ { test_id, issue_text, issue_severity, filename, line_number } ] }
 export function parseBandit(out, { repoRoot } = {}) {
   const j = pickJson(out.stdout);
@@ -279,4 +307,5 @@ export default {
   parseBandit,
   parseCucumber,
   parseDotnet,
+  parseDotnetBuild,
 };

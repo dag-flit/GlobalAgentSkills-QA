@@ -21,8 +21,9 @@ const emsg = (e) => String((e && e.message) || e || "error").replace(/\s+/g, " "
 // Los universales traen su modo por defecto: "fail" (bloquea) | "warn" (sugerencia) | "off" (no corre).
 const DEFAULTS = {
   multitenant: { rls: null, tenant_column: "tenant_id", except: [] },
-  schema: { primary_key: "fail", fk_indexes: "warn", encoding: "UTF8" },
+  schema: { primary_key: "fail", fk_indexes: "warn", encoding: "UTF8", fk_validated: "warn" },
   capacity: { sequences_max_pct: 80, report_top: 5 },
+  privileges: { superuser: "warn" },
 };
 
 /** Resuelve la declaración del repo (`profile.db`) sobre los defaults. Puro. */
@@ -32,6 +33,7 @@ export function resolveDbSpec(profile = {}) {
     multitenant: { ...DEFAULTS.multitenant, ...(d.multitenant || {}) },
     schema: { ...DEFAULTS.schema, ...(d.schema || {}) },
     capacity: { ...DEFAULTS.capacity, ...(d.capacity || {}) },
+    privileges: { ...DEFAULTS.privileges, ...(d.privileges || {}) },
   };
 }
 
@@ -150,6 +152,30 @@ async function checkFkIndex(query, spec) {
   };
 }
 
+// (3b) Integridad referencial — restricciones (FK/CHECK) declaradas como NO VALIDADAS. Solo lectura del
+// catálogo (barato, sin escanear datos): una restricción NOT VALID se aplica a las filas NUEVAS pero
+// nunca comprobó las EXISTENTES → pueden quedar filas que violan la relación sin que la base lo note.
+// Universal, por defecto SUGERENCIA (db.schema.fk_validated).
+async function checkFkValidated(query, spec) {
+  const name = "Integridad referencial (restricciones validadas)";
+  const mode = spec.schema.fk_validated;
+  if (isOff(mode)) return null;
+  const rows = await query(
+    `SELECT conrelid::regclass::text AS tbl, conname AS con, contype AS typ FROM pg_constraint c
+     WHERE c.contype IN ('f','c') AND NOT c.convalidated
+       AND connamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname IN ('pg_catalog','information_schema'))`,
+  );
+  const bad = (rows || []).map((r) => `${r.tbl}.${r.con}${r.typ === "f" ? " (FK)" : " (CHECK)"}`);
+  if (!bad.length) return { name, status: "pass", message: "Todas las restricciones de integridad están validadas.", plain: `Las relaciones entre tablas y las reglas de validación (llaves foráneas y CHECK) están VALIDADAS contra los datos existentes: la base garantiza que no hay filas que las violen.` };
+  return {
+    name,
+    status: violation(mode),
+    message: `${bad.length} restricción(es) sin validar: ${list(bad)}`,
+    plain: `${bad.length} restricción(es) de integridad están declaradas como NO VALIDADAS: la base las exige a los datos nuevos, pero NUNCA comprobó los que ya estaban. Puede haber filas viejas que violan la relación (p. ej. una llave foránea que apunta a un registro que no existe) sin que la base lo detecte.`,
+    action: `Validá esas restricciones tras corregir los datos (ALTER TABLE … VALIDATE CONSTRAINT …). Si es intencional, bajá o apagá el check con «db.schema.fk_validated».`,
+  };
+}
+
 // (4) Capacidad de secuencias — universal (db.capacity.sequences_max_pct).
 async function checkSequences(query, spec) {
   const name = "Capacidad de secuencias";
@@ -207,10 +233,32 @@ async function checkCapacity(query, spec) {
   };
 }
 
+// (7) Menor privilegio — el rol de la conexión NO debería ser SUPERUSUARIO. Solo lectura (pg_roles).
+// Universal, por defecto SUGERENCIA (db.privileges.superuser). Es coherente con el check de RLS: un
+// superusuario IGNORA la seguridad por fila, así que conectarse así anula el aislamiento por cliente.
+async function checkSuperuser(query, spec) {
+  const name = "Menor privilegio de la conexión";
+  const mode = spec.privileges.superuser;
+  if (isOff(mode)) return null;
+  const rows = await query(`SELECT current_user AS usr, rolsuper AS super FROM pg_roles WHERE rolname = current_user`);
+  const r = (rows && rows[0]) || {};
+  const isSuper = r.super === true || r.super === "t" || r.super === "true";
+  if (!isSuper) return { name, status: "pass", message: `El rol «${r.usr || "de la conexión"}» no es superusuario.`, plain: `La aplicación se conecta con un rol de permisos ACOTADOS (no superusuario): la seguridad por fila (RLS) sí lo limita y, ante una inyección SQL, el alcance del daño es limitado.` };
+  return {
+    name,
+    status: violation(mode),
+    message: `El rol «${r.usr || "de la conexión"}» es SUPERUSUARIO.`,
+    plain: `La aplicación se conecta a la base con un rol de SUPERUSUARIO. Un superusuario puede leer, modificar o borrar cualquier cosa e IGNORA la seguridad por fila (RLS): si la app se conecta así, el aislamiento por cliente no protege nada y una vulnerabilidad de inyección tendría acceso TOTAL a la base.`,
+    action: `Usá un rol de aplicación con los permisos mínimos (SELECT/INSERT/UPDATE/DELETE sobre sus tablas), NUNCA superusuario. Ajustá o silenciá con «db.privileges.superuser».`,
+  };
+}
+
 const CHECKS = [
   { title: "Aislamiento por tenant (RLS)", run: checkRls },
+  { title: "Menor privilegio de la conexión", run: checkSuperuser },
   { title: "Clave primaria por tabla", run: checkPk },
   { title: "Índices en llaves foráneas", run: checkFkIndex },
+  { title: "Integridad referencial (restricciones validadas)", run: checkFkValidated },
   { title: "Capacidad de secuencias", run: checkSequences },
   { title: "Codificación de la base", run: checkEncoding },
   { title: "Capacidad y tamaño", run: checkCapacity },
