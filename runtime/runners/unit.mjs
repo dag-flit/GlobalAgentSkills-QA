@@ -11,15 +11,15 @@ import path from "node:path";
 import { runLayer } from "./_runner-core.mjs";
 import { parseJestLike, parseDotnet } from "./parse-cases.mjs";
 
-// Busca el destino de `dotnet test` bajo baseDir: prefiere una solución (.sln) —corre TODOS
-// los proyectos de test— y si no hay, el primer proyecto de test (*.csproj con Test/Tests).
-// Así `dotnet test` no depende de la cwd: en monorepos el .csproj puede vivir en backend/.
-function findDotnetTarget(baseDir, { maxDepth = 4 } = {}) {
+// Escanea el árbol (acotado) y recolecta la solución (.sln) y TODOS los proyectos de test
+// (*.csproj con Test/Tests). En monorepos el .csproj puede vivir en backend/services/… → no
+// depende de la cwd. Un solo recorrido; los llamadores deciden qué usar.
+function scanDotnet(baseDir, { maxDepth = 5 } = {}) {
   const SKIP = new Set(["node_modules", "bin", "obj", ".git", "dist", "build", ".vs"]);
   let sln = null;
-  let testProj = null;
+  const tests = []; // { abs, label }
   function walk(dir, depth) {
-    if (depth > maxDepth || (sln && testProj)) return;
+    if (depth > maxDepth) return;
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
@@ -28,12 +28,37 @@ function findDotnetTarget(baseDir, { maxDepth = 4 } = {}) {
         walk(path.join(dir, e.name), depth + 1);
       } else if (e.isFile()) {
         if (!sln && /\.sln$/i.test(e.name)) sln = path.join(dir, e.name);
-        else if (!testProj && /tests?\.csproj$/i.test(e.name)) testProj = path.join(dir, e.name);
+        else if (/tests?\.csproj$/i.test(e.name)) tests.push({ abs: path.join(dir, e.name), label: e.name.replace(/\.csproj$/i, "") });
       }
     }
   }
   walk(baseDir, 0);
-  return sln || testProj || null;
+  return { sln, tests };
+}
+
+// Destino de una ÚNICA invocación `dotnet test`: prefiere la solución (.sln) —corre TODOS los
+// proyectos de test de una— y si no hay, el primer proyecto de test.
+function findDotnetTarget(baseDir) {
+  const { sln, tests } = scanDotnet(baseDir);
+  return sln || (tests[0] && tests[0].abs) || null;
+}
+
+// SIN solución (.sln), `dotnet test` no puede correr TODOS los proyectos de test en una sola
+// invocación; sin esto el runner corría SOLO el primero y saltaba el resto (pérdida SILENCIOSA de
+// cobertura). Expandimos el objetivo dotnet en uno POR proyecto de test: cada uno pasa su .csproj por
+// RUTA ABSOLUTA (arg de dotnet) con la cwd en la RAÍZ del repo — así un `global.json` PROFUNDO (que
+// fijaría un SDK no instalado) NO se activa. Con .sln, o con 0/1 proyecto, se deja el comportamiento
+// de siempre (una sola invocación). Se preserva el resto de objetivos de la capa (p.ej. vitest@frontend).
+function expandDotnetTargetsForUnit(detection, repoRoot) {
+  const unit = detection?.layers?.unit;
+  if (!unit || !unit.enabled || !Array.isArray(unit.targets)) return detection;
+  const idx = unit.targets.findIndex((t) => t.tool === "dotnet-test");
+  if (idx < 0) return detection;
+  const { sln, tests } = scanDotnet(repoRoot);
+  if (sln || tests.length < 2) return detection; // .sln o ≤1 proyecto → una sola invocación
+  const expanded = tests.map((t) => ({ tool: "dotnet-test", cwd: "", project: t.abs, label: t.label }));
+  const targets = [...unit.targets.slice(0, idx), ...expanded, ...unit.targets.slice(idx + 1)];
+  return { ...detection, layers: { ...detection.layers, unit: { ...unit, targets } } };
 }
 
 // Prioridad fijada por qa-detect (vitest > jest > pytest > *.csproj).
@@ -44,11 +69,11 @@ const TOOLS = {
   vitest: () => ({ argv: ["vitest", "run", "--reporter=json"], parseCases: parseJestLike }),
   jest: () => ({ argv: ["jest", "--json"], parseCases: parseJestLike }),
   pytest: ["pytest"],
-  // función: localiza el .sln/.csproj y lo pasa explícito (recibe la cwd del objetivo como
-  // base). Sin destino localizable → skip con aviso, no aborta. `--nologo` reduce el ruido de
-  // restauración en la salida; parseDotnet extrae los fallos reales (compilación / pruebas).
-  "dotnet-test": ({ repoRoot }) => {
-    const target = findDotnetTarget(repoRoot);
+  // función: si el objetivo trae un `project` explícito (fan-out sin .sln), lo corre; si no,
+  // localiza el .sln/primer .csproj bajo la cwd. Sin destino localizable → skip con aviso, no aborta.
+  // `--nologo` reduce el ruido de restauración; parseDotnet extrae los fallos reales (compilación / pruebas).
+  "dotnet-test": ({ repoRoot, project }) => {
+    const target = project || findDotnetTarget(repoRoot);
     return target
       ? { argv: ["dotnet", "test", target, "--nologo"], parseCases: parseDotnet }
       : { skip: "dotnet detectado pero sin .sln ni *Tests.csproj localizable" };
@@ -57,7 +82,12 @@ const TOOLS = {
 
 /** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
 export function runUnitTests(opts = {}) {
-  return runLayer({ layer: "unit", tools: TOOLS, ...opts });
+  // Sin .sln, expande el objetivo dotnet a uno por proyecto de test (corre TODOS, no solo el primero).
+  // Requiere la detección; si no vino, runLayer la calcula y NO se expande (comportamiento previo).
+  const detection = opts.detection
+    ? expandDotnetTargetsForUnit(opts.detection, opts.repoRoot || process.cwd())
+    : opts.detection;
+  return runLayer({ layer: "unit", tools: TOOLS, ...opts, detection });
 }
 
 export default { runUnitTests };

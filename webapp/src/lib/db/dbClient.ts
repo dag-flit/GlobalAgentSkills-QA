@@ -25,13 +25,18 @@ export interface DbTestResult {
 }
 
 /** Host/puerto a los que el driver se conecta realmente (local si hay túnel). */
-interface ResolvedTarget {
+export interface ResolvedTarget {
   host: string;
   port: number;
   tunnel?: Tunnel;
 }
 
-async function resolveTarget(db: DbConnection): Promise<ResolvedTarget> {
+/**
+ * Resuelve el host/puerto EFECTIVOS de una conexión: si tiene SSH activado, abre el túnel y
+ * devuelve el `127.0.0.1:<puertoLocal>` (un puerto TCP local real → un proceso HIJO puede conectarse
+ * a él); si es directa, host/puerto tal cual. El llamador DEBE cerrar `tunnel` cuando termina.
+ */
+export async function resolveTarget(db: DbConnection): Promise<ResolvedTarget> {
   if (db.ssh?.enabled) {
     const tunnel = await openSshTunnel(db);
     return { host: tunnel.localHost, port: tunnel.localPort, tunnel };

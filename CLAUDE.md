@@ -278,7 +278,22 @@ happy-path del dev.
    `node scripts/check-line-budget.mjs [all|engine|webapp]`. La `ALLOWLIST` está vacía: NO repueblar.
 7. **El smoke queda verde.** Tras cada cambio: `node runtime/smoke-test.mjs` (30/30). Si agregas
    capacidades, agrega su caso.
-8. **Webapp multitenant — aislamiento por tenant (detalle en `docs/MULTITENANT.md`).** La webapp es
+8. **Todo ítem de prueba que se agregue a una capa se plasma en las 4 rutas: HU, MD, HTML y UX** —
+   siempre en el lenguaje más claro posible para personas NO técnicas. Cómo se cumple SIN duplicar texto:
+   el check emite su propia explicación `{plain, action}` junto al caso y `failure-explain.explainFailure`
+   la deja pasar (rama 0, pass-through) → las 4 superficies la muestran solas. Un caso se explica si está
+   en rojo **o si trae `plain`** (así un check verde u omitido no pierde su mensaje, y las N pruebas verdes
+   de una suite no inflan el reporte). Etiqueta según el estado (`explainLabels`, espejada en la webapp):
+   ✔ Qué se validó / 🧩 Qué pasó / ℹ️ Qué significa + 👉 Qué hacer. La evidencia positiva se selecciona con
+   `layer-explain.evidenceLayers` + `describeEvidence` (incluye la capa en rojo que igual validó cosas
+   adentro → "evidencia parcial"). Al sumar un check nuevo: emitir `plain`/`action` y listo.
+9. **La capa `db` NO opina ni pide configuración: verifica que la base cumpla lo que el CÓDIGO del repo
+   declara.** El criterio se DETECTA del repo probado (`db-declared.scanDeclaredRls` lee su DDL/migraciones),
+   igual que `static` corre el `.eslintrc` que el equipo escribió. Si el repo no declara algo, el check NO
+   aplica y se omite (no es hallazgo). Nunca exigir lo que el proyecto no declara (p.ej. FLIT declara RLS
+   pero NO `FORCE` → no se le exige FORCE). Quien certifica NO debe tocar el repo probado ni llenar
+   formularios: el objetivo es autonomía (`profile.db` existe solo como escape hatch).
+10. **Webapp multitenant — aislamiento por tenant (detalle en `docs/MULTITENANT.md`).** La webapp es
    un servicio multitenant (Postgres + RLS forzada, auth propia, secretos cifrados AES-256-GCM); el
    endurecimiento de la auditoría **sigue intacto y es ortogonal al giro explore-only**. Al extender:
    - **Control-plane (`CONTROL_PLANE_URL`) ≠ data-plane (`DATABASE_URL`):** nunca mezclar.
@@ -435,6 +450,332 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   con los chips."). (3) El mensaje de «Publicar» aclara el destino cuando difiere del WI seleccionado ("(HU del PR,
   no el WI …)"). NO frena la ejecución (decisión del usuario). tsc 0, line-budget 0. Solo UI → Next recompila en
   caliente. Pendiente: el usuario repite el caso PR+WI distintos y ve el aviso + que su WI se mantiene.
+
+- **QA del código → Azure-only + HU de hallazgos por ejecución (2026-07-13, motor+webapp, smoke 47 · tsc0 · budget0,
+  NADA commiteado).** El usuario redefinió el destino del modo "code": tracker **solo Azure** (sin botón Local; el
+  reporte local se sigue escribiendo en el repo), **sin "WI destino"** — los hallazgos se plasman en una **HU nueva**
+  (User Story) NO relacionada a nada, en el **sprint en curso** del proyecto configurado, con incrementador `#N` y
+  fecha/hora en el título; y no dejar avanzar si la ruta no es un **proyecto real**. Motor: `evidence/findings-workitem.mjs`
+  (render puro: título+Description), `source/validate-project.mjs` (`validateProjectPath`), `ado-rest.currentIteration()`,
+  `azure-devops-adapter.createFindingsWorkItem` (conteo #N por tag `QualityOps` vía WIQL → sprint activo → crea User Story
+  → adjunta report.html), contrato base += `createFindingsWorkItem` (local `{ok:false}`), `code-cycle` paso 7 SIEMPRE crea
+  la HU si el tracker es de red (best-effort). Webapp: `TrackerStep.lockAzure`, `CodeStep` valida la ruta en Continuar
+  (`POST /api/code/validate-path`) y quita el WI card + `AcPanel`, `useRunWizard` deja de enviar `workItemId` y fija azure
+  al elegir el modo, `RunSummary` sin "WI destino". Reusa el reporte local (invariante 1) y no toca la auditoría multitenant.
+  Ver [[reintro-qa-codigo-modulo]]. Reiniciado `npm run dev`. Pendiente: validación E2E del usuario contra Azure real.
+
+- **Capas omitidas mal explicadas: «no ejecutable» ocultaba TIMEOUT; y capa `db` con conexión no aclaraba (2026-07-14,
+  motor, smoke 52 · tsc0 · budget0, sin commitear).** Corrida real contra `C:\FLIT\FLIT 2.0 V Final\flit`: (1) la capa
+  **unit** (`dotnet-test`) salió «OMITIDA — no ejecutable (no instalado / fuera de PATH)» aunque `dotnet` SÍ está en el
+  PATH. Diagnóstico REPRODUCIDO: en frío `dotnet test` hace restore+build+71 tests y **supera el timeout del sandbox
+  (180 s)** → `spawnSync` lo mata → `spawnError` (ETIMEDOUT) → la rama de error de `_runner-core` lo etiquetaba con el
+  genérico «no instalado / fuera de PATH» (confundía «tardó» con «falta el binario»). Warm corre en ~36 s y da `fail —
+  71 TC` (los 71 fallan por no alcanzar la BD = el 28P01). (2) la capa **db** se omitía con «solo migrations/…» **aunque
+  el usuario marcó “usar BD configurada”**: FLIT solo tiene `migrations/` (sin pgtap/prisma) → el handler `migrations`
+  omite SIEMPRE; el toggle **no alimenta la capa `db`** sino las **pruebas de integración .NET de la capa `unit`**
+  (`ConnectionStrings__Core`) — que a su vez se saltaron por (1). Fixes (motor, no debilita nada): `_runner-core.explainExecFailure`
+  distingue **timeout / maxBuffer(ENOBUFS) / allowlist / binario ausente** con razón accionable (`defaultExec` ahora
+  devuelve el `timeout` efectivo para reportar «timeout Ns»); `exec-sandbox` **sube el default 180 s→600 s** (build .NET en
+  frío; sigue acotado y `CODE_QA_EXEC_TIMEOUT_MS` lo ajusta); `db.mjs` da un skip **consciente de la conexión** («la
+  conexión va a las pruebas de integración de la capa unit, no a una capa db aparte»). Smoke +2 (52/52). Ver
+  [[capas-omitidas-timeout-y-db]] y [[reintro-qa-codigo-modulo]]. **Reiniciado `npm run dev`.** Pendiente del usuario:
+  re-ejecutar (el build en frío ahora cabe en el timeout; la 1ª corrida igual tardará minutos — es normal). Para que los
+  71 tests .NET pasen: la conexión inyectada debe ser la BD correcta Y el proyecto necesita el SDK que fija su `global.json`
+  (10.0.300; la máquina tiene 10.0.101 — si se corre `dotnet` DENTRO de `services/core-api` falla por SDK, pero el runner
+  usa el `repoRoot` y ahí el `global.json` profundo no aplica).
+
+- **Sin `.sln`, la capa unit corría SOLO 1 de N proyectos de test .NET → fan-out por proyecto (2026-07-14, motor,
+  smoke 53 · tsc0 · budget0, sin commitear).** FLIT no tiene solución (`.sln`) y `findDotnetTarget` devolvía el
+  PRIMER `*Tests.csproj` (`Flit.Admin.Tests`), saltando los otros 5 (`Analytics`, `Infrastructure`, `Security`,
+  `Tramites.Application`, `Tramites.Domain`) → pérdida SILENCIOSA de cobertura. Fix (`unit.mjs`): `scanDotnet`
+  recolecta la `.sln` y TODOS los proyectos de test; con `.sln` se corre una sola invocación (como antes); SIN `.sln`
+  y ≥2 proyectos, `expandDotnetTargetsForUnit` expande la capa a **un objetivo por proyecto** —cada uno con su
+  `.csproj` por RUTA ABSOLUTA y `cwd` en la RAÍZ del repo (así un `global.json` PROFUNDO —el de `services/core-api`,
+  SDK 10.0.300— NO se activa; se usa el SDK instalado). `_runner-core`: el objetivo acepta `project` (arg de dotnet)
+  y `label` (etiqueta legible por proyecto). VALIDADO contra FLIT: de 2 objetivos (1 proyecto .NET) a **7** (los 6 +
+  vitest@frontend). No debilita nada (transporte/launcher inyectables intactos). Ver [[fanout-proyectos-test-dotnet]].
+  **Reiniciado `npm run dev`.**
+  - **Nota BD para la cobertura de código:** el kit NO tiene una capa de "integración" — las capas son
+    static/unit/api/db/security. Los tests de integración .NET (`WebApplicationFactory<Program>`, sin Testcontainers)
+    viven DENTRO de los proyectos de test y corren bajo la capa **`unit`** (`dotnet test`); ahí es donde importa la BD.
+    La capa **`db`** aparte solo corre con pgtap/prisma (FLIT no tiene → se omite; no es un bug). Para que la cobertura
+    de BD REAL ocurra: (1) toggle «usar BD configurada» ON con la conexión **QA** correcta; `buildDbEnv` inyecta
+    `ConnectionStrings__Core` (nombre que usa FLIT) y ASP.NET lo sobreescribe sobre appsettings; (2) Postgres accesible
+    con user/clave válidos (el `28P01` era clave equivocada del appsettings, user `postgres`); (3) esquema aplicado
+    (migraciones); (4) la capa unit debe correr (timeout 600s + fan-out ya arreglados). Ver [[capas-omitidas-timeout-y-db]].
+
+- **Claridad del reporte de código + SONDA DIRECTA a Postgres (2026-07-14, motor+webapp, smoke 54 · tsc0 · budget0,
+  sin commitear).** Tres pedidos del usuario tras correr QA del código: **(1)** las tarjetas de la capa unit no dejaban
+  claro que **cada comando es un objetivo distinto** (proyecto). Fix: `_runner-core` cuelga `metrics.label` en cada
+  objetivo; `RunResults` muestra un chip «🎯 <proyecto>» y `helpers.layerNarrative` antepone «Objetivo: «X» (esta
+  tarjeta es un comando/proyecto puntual)». **(2)** el análisis estático listaba las 10 advertencias solo como rutas.
+  Fix: `helpers.lintRuleHelp` (diccionario de reglas eslint/next/ruff → «qué significa» en lenguaje llano + prefijos
+  a11y/ts/react) y `CaseList` ahora muestra por advertencia: la **regla** (chip), **📖 Qué significa** y **📝 Mensaje
+  del linter** (antes solo la ruta). **(3)** la capa `db` se omitía; el usuario quiere **conectarse a Postgres
+  directo**. Fix: `runtime/runners/db-probe.mjs` (`probePostgres` + `countMigrationsInCode`): con una conexión + una
+  SONDA inyectada (`pgQuery`), la capa `db` **CONECTA a Postgres** y valida (1) conectividad, (2) estructura (nº de
+  tablas), (3) **migraciones código↔base** (cuenta EF `.cs`/`.sql` vs la tabla de control `__EFMigrationsHistory`/
+  flyway/prisma…) → tool `postgres-probe`. `db.runDbTests` ahora es **async** (`code-cycle` hace `await` los runners);
+  solo entra la sonda si el tool detectado es `migrations` (pgtap/prisma reales los corre runLayer). Webapp:
+  `lib/qa/dbInject.ts` (`setupConfiguredDb`: resuelve la conexión **por defecto** —sea cual sea, con/ sin SSH—, abre
+  túnel, arma env y expone `pgQuery` reusando UN cliente `pg`; se cierra en el finally); `runner.ts` la usa y pasa
+  `pgQuery` a `runCodeCycle` (extraído para no pasar 400 líneas). Es SOLO LECTURA (catálogo) → seguro; offline-testable
+  (pgQuery inyectable). VALIDADO: sonda contra FLIT contó **78 migraciones EF** y detecta desfase; auth-fail (28P01) se
+  surface con el mensaje real del driver. Nuevo smoke `runtime/smoke/db-probe-suite.mjs`. Ver
+  [[sonda-directa-postgres-y-claridad-reporte]]. **Reiniciado `npm run dev`.**
+
+- **Tests .NET no conectaban a la BD por SSH: el túnel Node lo congelaba `spawnSync` → EXEC ASÍNCRONO (2026-07-14,
+  motor, smoke 54 · tsc0 · budget0, sin commitear).** Diagnóstico por BD (leyendo `runs`/`run_events`/`summary` con RLS):
+  la conexión QA (SSH password a `177.7.49.115`, user condatab → `flitqa`) **SÍ funciona** — la sonda `postgres-probe`
+  conectó a PostgreSQL 16.14, vio 71 tablas y detectó 77/78 migraciones (¡1 pendiente!). PERO los 64 tests .NET fallaban
+  con `Npgsql: Failed to connect to 127.0.0.1:59190 — connection refused`. Causa RAÍZ: el túnel SSH está hecho en Node
+  (`net.createServer` + `ssh2`), que vive del **event loop**; pero `defaultExec` corría las herramientas con **`spawnSync`
+  (bloqueante)** → durante los minutos de `dotnet test` el event loop quedaba CONGELADO → el túnel no atendía → el
+  subproceso .NET recibía *connection refused*. La sonda funcionaba porque corre DESPUÉS (loop libre). Fix (`_runner-core`):
+  `defaultExec` reescrito con **`spawn` ASÍNCRONO** (Promise; maxBuffer por chunks → ENOBUFS; timeout → ETIMEDOUT; decode
+  utf8/latin1 igual); `runTarget`/`runLayer` ahora **async** (objetivos secuenciales con `await` → NO satura la máquina
+  pero el loop NO se congela → el túnel sigue vivo). `code-cycle` ya hacía `await` los runners; los 6 runners devuelven
+  Promesa; smoke: `await` en las 6 llamadas a `runUnitTests`. VALIDADO empíricamente: durante un subproceso de 2.1s el
+  event loop latió 19 veces (con spawnSync serían 0). No debilita nada (transporte/launcher inyectables intactos; el
+  `tick()` de SSE queda redundante pero inofensivo, y de hecho el streaming mejora). Ver [[tunel-ssh-vs-spawnsync]].
+  **Reiniciado `npm run dev`.** Pendiente: el usuario re-ejecuta el Feature con la BD QA por SSH → los .NET deben conectar.
+
+- **Reportes más claros + evidencia de lo que pasó (2026-07-14, motor, smoke 54 · budget0, sin commitear).** Tres
+  pedidos del usuario sobre la evidencia: **(1)** en la HU de hallazgos, incluir también las **capas que PASARON** como
+  evidencia (no solo fallos). **(2)** que la HU sea visualmente clara (cajas, separaciones). **(3)** estructurar el
+  `.md`/`.html` local. Fixes: `findings-workitem.mjs` (Description de la HU) reescrito con helpers `box`/`sectionBar`/
+  `evidenceCard`/`whatPassed`: cabecera con veredicto en caja de color, `layerTable` con bordes inline (ADO conserva
+  inline-style), **sección «✅ Evidencia — lo que se validó»** (una tarjeta verde por capa que pasó, con qué validó +
+  verificaciones concretas —p.ej. los checks de la sonda de BD), y **«❌ Hallazgos»** con una tarjeta roja por caso
+  (🧩/👉/👤/detalle). `local-sink.mjs`: `<style>` global en el HTML (h2 con separador, `.evi`, code), sección de
+  evidencia en HTML y `.md`, encabezado consciente del modo («Detalle por capa» en código vs «flujo» en E2E), y muestra
+  `metrics.label` (proyecto). Smoke case 7 actualizado (evidencia + estructura visual). Ver [[reportes-claros-evidencia]].
+  **Reiniciado `npm run dev`.**
+
+- **Claridad total de resultados + advertencias como sugerencias + números capas≠pruebas (2026-07-14, motor+webapp,
+  smoke 54 · tsc0 · budget0, sin commitear).** El usuario pidió: (1) advertencias del linter en el reporte md/html
+  (como en la HU); (2) descripciones de evidencia más claras para NO técnicos; (3) por qué «5 fallos» vs «7 hallazgos»;
+  (4) claridad de resultados en md/html/HU para TODAS las capas; (5) claridad también en la evidencia de lo que pasó.
+  **Respuesta a (3):** «5» = CAPAS en rojo (objetivos: vitest+api+db+bandit+semgrep); «7» = PRUEBAS en rojo (casos:
+  vitest 4+db 1+bandit 1+semgrep 1). Se mezclaban sin etiquetar. (Bonus: en esa corrida los 6 proyectos .NET pasaron →
+  el fix del túnel async funcionó.) **Fixes:** nuevo `runtime/evidence/lint-explain.mjs` (`lintRuleHelp` espejo de la
+  webapp + `warningsMd`/`warningsHtml`): las advertencias de eslint se explican en claro (regla → «qué significa») y se
+  plasman como **💡 Sugerencias (positivas, no bloquean)** en md, html y HU. Números **etiquetados y consistentes** en
+  las 4 superficies: «N capa(s) con hallazgos · M prueba(s) en rojo · K sugerencia(s)» (verdict de `local-sink` y
+  `findings-workitem`; `RunResults` muestra Capas/Pruebas/Sugerencias + nota «capa=objetivo, prueba=caso»). `whatPassed`
+  reescrito en lenguaje llano (qué validó cada capa). Smoke case 7 (HU) extraído a `runtime/smoke/findings-suite.mjs`
+  (guardrail 400). Ver [[claridad-resultados-y-sugerencias]]. **Reiniciado `npm run dev`.**
+
+- **Evidencia ESPECÍFICA por objetivo + advertencias referenciadas a su capa (2026-07-14, motor+webapp, smoke 54 ·
+  tsc0 · budget0, sin commitear).** (1) Cada advertencia del linter se REFERENCIA a la capa/objetivo de la que proviene
+  (agrupadas por «Capa: Análisis estático — eslint · frontend») en md/html/HU; la UI ya las muestra bajo la tarjeta de su
+  capa. (2) La descripción de la evidencia de lo que PASÓ dejó de ser genérica: nombra el OBJETIVO (proyecto/paquete) —
+  p.ej. «Proyecto de pruebas «Flit.Admin.Tests» — .NET: sus pruebas automáticas pasaron… verifican ese módulo…», «Se
+  revisó el código de «frontend»…», «Se conectó a la base de datos (N chequeos OK)…» — en las 4 rutas y para TODAS las
+  capas. Fix: `layer-explain.describePassed(r)` (redacción específica compartida, con `toolStack` para el nombre amigable
+  del stack) usada por `local-sink` (md+html) y `findings-workitem` (HU, reemplaza `whatPassed`); `lint-explain.collectWarnings`
+  añade `source` (capa+tool+cwd) y `warningsMd`/`warningsHtml`/`suggestionsSection` agrupan por ese origen; webapp
+  `helpers.layerNarrative` produce la evidencia específica para capas que pasan (espejo de describePassed + `TOOL_STACK`).
+  Ver [[claridad-resultados-y-sugerencias]]. **Reiniciado `npm run dev`.**
+
+- **Evidencias: nombres amigables + agrupado por regla, conservando la ruta exacta para los agentes (2026-07-14,
+  motor+webapp, smoke 54 · tsc0 · budget0, sin commitear).** El usuario aprobó A (nombre amigable de archivo) + B
+  (agrupar por regla) + C (normalizar rutas) + D (conteo), con la condición de que los **agentes de desarrollo** leen
+  los hallazgos para corregir → hay que CONSERVAR `regla` + `ruta:línea:col` exacta y solo ENRIQUECER. Fix:
+  `lint-explain.friendlyFile` (Next app router → «Página «/ruta»», «Componente «X»», «Módulo «x»», «Hook», «Ruta API»…)
+  + `parseLoc` + `groupWarnings` (por capa→regla, explicación UNA vez, «N usos en M archivos», cada ocurrencia = amigable
+  + `ruta:línea:col` normalizada a `/`); `warningsMd`/`warningsHtml` y `findings-workitem.suggestionsSection` reescritos.
+  Blame (atribución) en las 4 rutas → amigable + ruta exacta (`local-sink.blameAt`, `findings.failCard`, webapp
+  `CaseList`/`RunResults`). Webapp: espejos `helpers.friendlyFile/parseLoc/groupLintWarnings`; `CaseList` capa estática
+  → rama agrupada por regla. Doble propósito: humano (amigable, sin repetir) + agente (ruta exacta parseable). Uniforme
+  en MD/HTML/HU/UX. Ver [[evidencias-nombres-amigables-agrupado]]. **Reiniciado `npm run dev`.**
+
+- **Bug: el reporte local se sobreescribía en cada corrida → subcarpeta por hora (2026-07-14, motor, smoke 54 ·
+  budget0, sin commitear).** `writeLocalReport` escribía a `qa-evidence/<fecha>/<grupo>/` donde `<grupo>` = FT-…__dev
+  o (en modo código) SIEMPRE `WI-local` → cada corrida pisaba `report.md`/`report.html`/`capturas/` de la anterior.
+  Fix: `report-shots.evidenceRunDir` cuelga cada corrida en una **subcarpeta por hora** `qa-evidence/<fecha>/<grupo>/
+  <HH-MM-SS>` (con sufijo -2/-3 si coinciden en el mismo segundo) → se conservan TODAS las evidencias. `local-sink` usa
+  el helper (se movió la construcción de carpeta ahí para respetar el límite de líneas). Smoke de explore ajustado (el
+  grupo FT/dev es ahora el PADRE; el basename es la hora). Ver [[bug-reporte-local-sobreescrito]].
+  **Reiniciado `npm run dev`.**
+
+- **Capa db: verificaciones de salud/estructura (Paso 1, 2026-07-14, motor, sin commitear).** Primer incremento de las
+  mejoras acordadas (secuencial), empezando por RLS multitenant. Corren sobre el MISMO `pgQuery` inyectado que la sonda
+  → la BD del **repo probado** (túnel SSH si aplica), NUNCA la BD del kit. `runtime/runners/db-checks.mjs` (solo lectura
+  del catálogo, best-effort) con 6 checks: (1) **RLS multitenant**; (2) **PK** por tabla; (3) **índices en FK**;
+  (4) **capacidad de secuencias**; (5) **codificación**; (6) **capacidad/tamaño** (informativo). `db-probe.probePostgres`
+  las agrega tras conectividad/estructura/migraciones. Se suprimió "👤 Sin responsable" en capas `db`/`api` (la atribución
+  de código no aplica a hallazgos de esquema) en local-sink + CaseList. Ver [[db-checks-automaticos]]. **Nota:** nacieron
+  AUTOMÁTICOS (criterio cableado en el kit) y el usuario pidió volverlos DECLARATIVOS → ver la entrada siguiente.
+
+- **Checks de BD DECLARATIVOS + evidencia COHERENTE en las 4 rutas + fix de la "raya roja" (2026-07-15, motor+webapp,
+  smoke 56 · tsc0 · budget0, sin commitear).** Feedback del usuario tras correr el Paso 1: (a) los checks deben ser
+  **declarativos como las demás capas**; (b) **bug visual**: una raya roja arriba de "Migraciones al día"/"Aislamiento
+  por RLS" que crecía al abrir el detalle técnico; (c) al agregar alcance nuevo, la evidencia debe ser **coherente en
+  HU, MD, HTML y UX en TODOS los escenarios**.
+  - **Causa de la raya (era mía):** `CaseList` dibujaba SIEMPRE la caja 🧩/👉/👤 en un caso rojo, pero para `db`
+    `explainFailure` devolvía `null` (no conocía los checks nuevos) Y el "Sin responsable" ya estaba suprimido para
+    `db`/`api` → `div` con borde y padding y CERO hijos = una raya; al abrir el `<details>` aparecía el `<pre>` de borde
+    rojo → el área roja "crecía". Fix: la caja no se dibuja si no tiene contenido (`hasBox`).
+  - **Declarativo → AUTÓNOMO (corregido en la misma sesión).** Primero se puso la declaración en
+    `qa-project.profile.yaml` **del repo probado**; el usuario lo rechazó: *"SIN TOCAR NADA en el repo probado —
+    soy yo quien debe adaptarme al entorno que ando certificando"* y *"mi objetivo es que todo sea autónomo y lo
+    menos dependiente de mí posible"*. Se propuso entonces un panel en la webapp y también lo rechazó (seguía siendo
+    configurar). **La lectura correcta de "declarativo como las demás capas":** `static` no pide declarar nada —
+    **detecta** el `.eslintrc` que el equipo YA escribió y corre eso; es declarativo **y** autónomo porque el criterio
+    sale de artefactos que el repo ya tiene. Aplicado a la BD: **`runtime/runners/db-declared.mjs`**
+    (`scanDeclaredRls(repoRoot)`, PURO/offline) lee el DDL/migraciones del repo (.sql/.cs, salta bin/obj/node_modules)
+    y extrae qué tablas declara con `ENABLE/FORCE ROW LEVEL SECURITY` y `CREATE POLICY`. El check contrasta
+    **código ↔ base** (mismo patrón que el de migraciones, que al usuario le gustó): (a) el repo no declara RLS →
+    ⏭ *"este proyecto no usa RLS"*, no aplica; (b) declara y la base no cumple → ❌ *"el código dice una cosa y la
+    base tiene otra"*; (c) cumple → ✅. **Solo se exige lo que el proyecto declara** — validado contra FLIT: declara
+    RLS pero `force:false`, así que ya NO se le exige FORCE (el check original lo exigía = opinión del kit metida
+    como hallazgo). `profile.db` queda como **escape hatch** (`multitenant.except`, apagar universales con
+    `primary_key/fk_indexes/encoding/sequences_max_pct: off`), NO como el camino normal.
+  - **VALIDADO contra FLIT real:** `scanDeclaredRls` detecta **40 tablas en 37 archivos**
+    (`src/Flit.Infrastructure/Persistence/Sql/Ddl` + migraciones EF, no `docs/`) → el hallazgo de RLS pasó de ser
+    una opinión del kit a evidencia dura: *"tu código declara RLS para 40 tablas en 37 archivos; la base no las
+    protege"*. Los universales (PK/UTF-8/secuencias/FK) siguen activos por defecto (decisión del usuario).
+  - **Coherencia (regla ÚNICA en las 4 rutas):** cada check emite su propia explicación `{plain, action}` junto al caso;
+    `failure-explain.explainFailure` la deja **pasar tal cual** (rama 0, pass-through) → HU/MD/HTML/UX muestran lo mismo
+    sin duplicar texto, y **cualquier check futuro (SCA, secretos…) lo hereda gratis**. Un caso se explica si está en rojo
+    **o si trae `plain`** → un check verde u omitido ya NO pierde su mensaje (antes solo se explicaban los rojos), y las
+    71 pruebas verdes de una suite no inflan nada (no traen `plain`). Etiqueta según el estado (`explainLabels`, espejada
+    en webapp): ✔ Qué se validó / 🧩 Qué pasó / ℹ️ Qué significa + 👉 Qué hacer.
+  - **Huecos de la HU que esto destapó y se corrigieron:** los casos ⏭ **no aparecían** (un "no declarado" habría sido
+    invisible) → nueva sección **"⏭ No verificado"** (filtrada por `plain`, así el ruido del linter/tests saltados no
+    entra); y la evidencia positiva **desaparecía** si la capa fallaba → `layer-explain.evidenceLayers` +
+    `describeEvidence` (compartidos por HU/MD/HTML): la capa en rojo que igual validó cosas aparece como **"evidencia
+    parcial"**, nombrando cada punto cubierto. `describePassed(db)` y el espejo `helpers.layerNarrative(db)` ahora
+    **NOMBRAN los puntos comprobados** (conexión · estructura · migraciones · RLS · PK · índices · secuencias ·
+    codificación · tamaño) en vez del genérico "las verificaciones pasaron"; `TOOL_DESC["postgres-probe"]` también.
+  - **Refactor por guardrail:** `local-sink.mjs` estaba en 393/400 → el detalle POR CASO (md+html) se extrajo a
+    **`runtime/evidence/report-cases.mjs`** (`casesMd`/`casesHtml`, una sola regla para ambos formatos); local-sink bajó
+    a 293. Smoke: `db-probe-suite` += declarativo (no declarado / declarado+fail / `except` / apagar un universal /
+    pass-through) y `findings-suite` += caso de COHERENCIA (mismo resultado db → HU+MD+HTML con la etiqueta correcta por
+    estado). **Verificado en vivo:** FLIT no trae `qa-project.profile.yaml` → RLS sale ⏭ "no declarado"; declarando
+    `rls: true` + `except: [audit_log]` falla solo la tabla no exceptuada. Ver [[db-checks-declarativos-y-coherencia]].
+    **Reiniciado `npm run dev`.**
+
+- **Evidencia: verificaciones excluidas por un tope, texto recortado y sin detalle técnico (2026-07-15, motor,
+  smoke 59 · tsc0 · budget0, sin commitear).** El usuario vio en «✅ Evidencia — lo que se validó correctamente»
+  que «Capacidad y tamaño» moría en «…procedure_instance_status_history (1406 filas, 6…» y pidió (a) el **detalle
+  técnico** de la capa `db` ahí mismo y (b) que **no se excluya nada** de «qué se validó». Eran TRES bugs en el
+  mismo bloque: **(1)** el listado por verificación estaba condicionado a `passed.length <= 8` → con **9 checks no
+  se listaba NINGUNO** (la sonda de BD llega a 9; el tope se volvía en contra justo cuando más hay que mostrar);
+  **(2)** la HU recortaba la explicación con `short(c.plain, 220)` → el «…» que reportó; **(3)** el detalle técnico
+  (`c.message`) solo salía como *fallback* si el check NO traía `plain` — o sea, nunca para los declarativos de BD.
+  Fix: `layer-explain.evidenceItems(passed)` (regla ÚNICA compartida por HU/MD/HTML): **un check que trae su propia
+  explicación (`plain`) es un ítem de prueba y se lista SIEMPRE, sin tope y completo** — invariante 8; una suite
+  CRUDA sin `plain` (71 tests de vitest) mantiene el tope para no inundar (su evidencia ya está en la redacción de
+  la capa). `layer-explain.techDetail(m)` normaliza el detalle crudo. `findings-workitem.evidenceCard` +
+  `local-sink` (md y html) muestran ahora **explicación completa + 🔎 Detalle técnico por verificación**. La **UX ya
+  estaba bien** (CaseList muestra cada check con su `plain` y el `<details>` de detalle técnico) → el hueco era solo
+  HU/MD/HTML. Smoke +1 (9 checks listados sin recorte + detalle en las 3 rutas; y la suite de 71 sigue resumida).
+  Ver [[evidencia-sin-topes-ni-recortes]]. **Reiniciado `npm run dev`.**
+
+- **Sección «⏭ No verificado» en md/html + bitácora de ejecución en la Discussion de la HU (2026-07-15, motor,
+  smoke 58 · tsc0 · budget0, sin commitear).** El usuario validó lo anterior ("quedó correctamente") y reportó dos
+  cosas: (1) el check «Índices en llaves foráneas» se veía en la UX pero **no** en md/html/HU; (2) el resumen final
+  del md «Qué se ejecutó por capa» debería ir también a la HU, pero en **Evidences/Discussion**, NO en la Description.
+  - **(1) Causa:** la sección «💡 Sugerencias» de md/html filtra `layer === "static"` → solo cubre advertencias del
+    LINTER. El check de FK es una sugerencia de la capa **db** → quedaba fuera, y solo aparecía enterrado en «Detalle
+    por capa» (línea 837 de 870). La HU sí lo mostraba (`notVerifiedSection`, agregado antes) → el hueco real era
+    md/html. Fix: selección compartida `layer-explain.notVerifiedCases(results)` (casos `skip` con `plain`; el filtro
+    por `plain` deja fuera el ruido del linter/tests saltados) usada por la HU **y** por md/html → sección «⏭ No
+    verificado» en las 3 rutas (la UX ya lo mostraba en la tarjeta de la capa). Cumple el invariante 8.
+  - **(2) Hecho:** nuevo `runtime/evidence/report-executed.mjs` (`executedMd`/`executedHtml`/`executedLayers`) —
+    una sola redacción para DOS destinos: el md (reemplaza el bloque inline que tenía local-sink) y el **comentario**
+    de la HU. `code-cycle` paso **7b**: tras crear la HU de hallazgos, `adapter.commentWorkItem(id, executedHtml(...))`
+    → la bitácora va a la **Discussion**; la **Description NO la lleva** (ahí queda el análisis, como estaba).
+    Best-effort: si el comentario falla, va a `warnings` y la corrida no se cae. HTML con estilos EN LÍNEA (ADO
+    descarta las hojas de estilo).
+  - **Tercer hueco encontrado de paso:** «Qué se ejecutó por capa» filtraba por `metrics.command` → la sonda de BD
+    (`postgres-probe`, que no lanza un binario) **no aparecía** en el resumen. Ahora `executedLayers` incluye toda
+    capa que corrió (comando **o** casos) y para la sonda dice explícitamente "(conexión directa a PostgreSQL — no
+    ejecuta un comando de consola)".
+  - Smoke: `findings-suite` += ítem omitido de capa no-linter en las 4 rutas (usa `writeLocalReport` real a temporal)
+    + bitácora en md/comentario y **ausente** de la Description. Ver [[db-checks-declarativos-y-coherencia]].
+    **Reiniciado `npm run dev`.** Pendiente: Paso 2 = seguridad (SCA + secret scanning).
+
+- **Paso 2 (seguridad) — Incremento 1: escáner de SECRETOS quemados (2026-07-16, motor+webapp, smoke 66 · tsc0 ·
+  budget0, sin commitear).** Primer incremento del Paso 2 (el usuario eligió «secret scanning primero», luego SCA).
+  Nuevo `runtime/runners/secret-scan.mjs` (PURO/offline, `listFiles`/`readFile` inyectables): camina el repo probado
+  y busca credenciales escritas directo en el código con reglas de **ALTA confianza** (llave privada PEM, clave AWS
+  `AKIA/ASIA`, API key de Google `AIza`, tokens GitHub `ghp_`/`github_pat_`, Slack `xox…`, Stripe `sk_live_`, OpenAI
+  `sk-…`, contraseña embebida en URL de conexión `scheme://u:PASS@host`, `Password=` en cadena de conexión .NET con
+  contexto `Server=/Host=`, y una regla genérica `secret/token/api_key=…` **filtrada por entropía + placeholder**).
+  Autonomía (invariante 9): NO opina de estilo (no marca «esta var se llama password»); descarta placeholders y refs
+  de entorno (`process.env`, `${…}`, `<set-me>`, `changeme`, `xxxx`); salta `node_modules/bin/obj/dist/.next/…` y
+  lockfiles/binarios. **El valor JAMÁS viaja completo** — se REDACTA (`AKI…YZ (20 car.)`); el escáner no puede ser él
+  mismo una fuga hacia la HU/ADO. Escape hatch en `profile.security.secrets`: `off` desactiva, `ignore:[frag]` descarta
+  rutas de falsos positivos. Cada tipo de secreto = un caso agrupado por regla con `plain` (qué ES y por qué es
+  peligroso) + `action` (rotala YA, movela a env/gestor de secretos, purgala del historial de git) + `message`
+  (ruta:línea + valor redactado, para los agentes de desarrollo). Cableado: `security.runSecurityTests` ahora
+  devuelve un **objeto de evidencia propio `secret-scan`** (patrón de la sonda de BD) junto al SAST, corre SIEMPRE
+  (no necesita herramienta externa; best-effort). Nombres amigables + evidencia específica en las 4 rutas
+  (`layer-explain` TOOL_DESC/TOOL_STACK/`describePassed`; webapp `helpers` TOOL_STACK/TOOL_WHAT/`layerNarrative`).
+  Como cada caso emite `plain`/`action`, HU/MD/HTML/UX lo muestran sin tocar el render (pass-through, invariante 8).
+  Suite `runtime/smoke/secret-scan-suite.mjs` (+7): detecta formas reales + redacta + línea exacta; no marca
+  placeholders/env-refs; KV exige contexto y genérica exige entropía; escaneo de repo agrupa por regla; repo limpio
+  da evidencia positiva; escape hatch off/ignore; integración con SAST; y **coherencia HU/MD/HTML con el valor
+  REDACTADO en las 3 rutas**. Ver [[secret-scan-alta-confianza]]. **Reiniciado `npm run dev`.** Pendiente del Paso 2:
+  Incremento 2 = SCA (vulnerabilidades en dependencias: `npm audit` / `dotnet list package --vulnerable`).
+
+- **Paso 2 (seguridad) — Incremento 2: SCA (dependencias vulnerables) (2026-07-16, motor+webapp, smoke 72 · tsc0 ·
+  budget0, sin commitear).** Análisis de composición (SCA): vulnerabilidades CONOCIDAS en las dependencias de
+  terceros. `runtime/runners/sca.mjs` (detección + orquestación) + `runtime/runners/parse-sca.mjs` (parsers PUROS).
+  **Detecta el gestor por los MANIFIESTOS que el repo ya tiene** (invariante 9: no se configura, se detecta) y corre
+  la herramienta nativa: `npm audit --json` (package.json **con lockfile**), `dotnet list package --vulnerable
+  --include-transitive` (.sln → un objetivo; si no, uno por `.csproj`), `pip-audit --format json` (requirements/
+  pyproject). Emitido como **objeto(s) de evidencia propio(s)** junto al secret-scan y al SAST (patrón de la sonda
+  de BD). **Best-effort con skips ACCIONABLES:** sin lockfile → «corré npm install»; sin assets → «corré dotnet
+  restore»; herramienta ausente (127) → skip; salida no parseable → degrada. Necesita RED (feed de avisos), como
+  semgrep `auto`; el motor sigue offline-TESTABLE (`exec` inyectable). Severidad → estado: **crítica/alta bloquean
+  (fail), menor = sugerencia (skip)**; escape hatch `profile.security.sca` (`off`, `fail_on:[…]`, `ignore:[pkg]`).
+  Cada dependencia vulnerable = un caso con `plain` (qué ES + por qué corre con tu app aunque tu código esté bien) +
+  `action` (actualizá a versión corregida; si es transitiva, actualizá la que la trae) + `message` (URL del aviso +
+  rango/versión). Como emite `plain`/`action`, las 4 rutas lo muestran sin tocar el render (invariante 8). Nombres
+  amigables + evidencia específica (`layer-explain` TOOL_DESC/TOOL_STACK/`isScaTool`/`describePassed`; webapp
+  `helpers` SCA_TOOLS/TOOL_STACK/TOOL_WHAT/`layerNarrative`). Suite `runtime/smoke/sca-suite.mjs` (+6): detección de
+  manifiestos, parsers npm/dotnet/pip con mapeo de severidad, skips accionables, escape hatch off/fail_on/ignore,
+  integración con SAST+secret-scan y coherencia HU/MD/HTML. Ajustada la aserción de `code-suite` (exit 0 → «ningún
+  fallo», ya que SCA puede quedar en skip legítimo sin lockfile). Ver [[sca-dependencias-vulnerables]]. **Reiniciado
+  `npm run dev`.** **Paso 2 (seguridad) COMPLETO** (SAST + secret-scan + SCA). Pendiente del usuario: validar E2E
+  contra FLIT real (npm audit en frontend + dotnet --vulnerable en los .csproj, con restore/lockfile presentes).
+  - **Soporte pnpm agregado (2026-07-16, cierra el hueco de FLIT):** el frontend de FLIT usa **pnpm**
+    (`pnpm-lock.yaml`), que `npm audit` no lee. `sca.detectScaTargets` ahora detecta `pnpm-lock.yaml` → objetivo
+    **`pnpm-audit`** (`pnpm audit --json`) en la raíz del workspace; como pnpm guarda UN lock por workspace y
+    `pnpm audit` audita todo el árbol, los sub-paquetes cubiertos (`frontend/` sin lock propio) **ya NO emiten un
+    npm-audit con skip engañoso** (`coveredByPnpm`). `pnpm audit --json` usa el formato `advisories` (estilo npm
+    v6) → **`parseNpmAudit` se reutiliza** sin parser nuevo. VALIDADO contra FLIT real: 1 `pnpm-audit` (raíz) + 1
+    `npm-audit` (un sub-paquete con su package-lock propio) + 18 `dotnet-vulnerable` + 1 `pip-audit`, **0 skips
+    engañosos**. Nombres amigables en las 4 rutas (`layer-explain`/webapp `helpers` += `pnpm-audit` en TOOL_DESC/
+    TOOL_STACK/SCA_TOOLS/TOOL_WHAT). Smoke 73 (+caso pnpm). Ver [[sca-dependencias-vulnerables]]. Pendiente del
+    usuario: validar E2E (pnpm audit en frontend + dotnet --vulnerable con restore).
+
+- **Corridas HUÉRFANAS: heartbeat + reconciliación perezosa + stop que finaliza (2026-07-16, webapp, migración 0007 ·
+  tsc0 · budget0 · smoke 72, sin commitear).** NO es una capa de QA: es el CICLO DE VIDA de la corrida. Bug: si el
+  proceso que ejecuta una corrida muere a mitad (p.ej. reinicio de `npm run dev`), la corrida queda `running` para
+  siempre y el botón «Detener» miente (prende una bandera en memoria que solo lee el proceso —ya muerto— dueño; el
+  proceso nuevo no tiene registro de ella). Fue exactamente el zombi que hubo que matar a mano. Fix (3 piezas):
+  **(1) Liveness durable** — migración `0007_run_heartbeat.sql` (columna `heartbeat_at timestamptz` en `runs`; hereda
+  tenant_id+FORCE RLS de 0003; forward-only; **aplicada**) + `lib/qa/heartbeat.ts` (late `now()` cada 15s dentro del
+  contexto de tenant; `setInterval().unref()`; el exec ASÍNCRONO ya deja latir el loop aunque una herramienta tarde
+  minutos) + `runsRepo.touchHeartbeat`. `runner.startRun` marca la corrida activa (`procRegistry.markActive`) y
+  arranca el heartbeat; en el `.finally` del fire-and-forget para el heartbeat y `markDone`. Si el proceso muere,
+  esos no corren → el heartbeat se congela. **(2) Reconciliación PEREZOSA al leer** — `runsRepo.reconcileStaleInTx`
+  (en la MISMA transacción de `getRun`/`listRuns`, con el tenant ya fijado por `withTenant` → RLS): cierra como
+  `error` las `running`/`pending` con `COALESCE(heartbeat_at, started_at, created_at) < now()-90s`, excluyendo las que
+  ESTE proceso ejecuta (`procRegistry.activeRunIds`). NO hay barrido global entre tenants (Next no da un hook de
+  arranque limpio, y RLS lo impediría): cada tenant limpia sus huérfanas al mirar sus corridas — justo cuando la
+  mentira sería visible. **(3) Stop que finaliza** — `stop/route.ts`: si `isActive(id)` → corte cooperativo (como
+  antes); si NO (huérfana, aún dentro del margen de heartbeat) → `finalizeRun(id,"error",…)` directo en la base +
+  evento + `endRun` (prender la bandera no serviría). `procRegistry` += `markActive/markDone/isActive/activeRunIds`;
+  `runsRepo` += `touchHeartbeat/finalizeRun`. VALIDADO contra la BD real en una transacción con **ROLLBACK** (no
+  persiste): huérfana(heartbeat viejo)→error+finished_at; viva(heartbeat fresco)→intacta; activa-en-este-proceso→
+  excluida. No debilita la auditoría multitenant (todo por `withTenant`/RLS; control-plane intacto). Solo TS+SQL →
+  Next recompila en caliente (no exige reiniciar). Ver [[reconciliacion-corridas-huerfanas]].
 
 ## Mapa del repo
 

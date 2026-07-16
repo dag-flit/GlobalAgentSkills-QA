@@ -5,6 +5,8 @@
 
 import { runLayer } from "./_runner-core.mjs";
 import { parseSemgrep, parseBandit } from "./parse-cases.mjs";
+import { scanSecrets } from "./secret-scan.mjs";
+import { runSca } from "./sca.mjs";
 
 // target_profile → config de semgrep. `generic`/`auto` usan el ruleset por defecto.
 function semgrepConfig(profile) {
@@ -34,9 +36,31 @@ const TOOLS = {
   bandit: () => ({ argv: ["bandit", "-r", ".", "-f", "json", "--exclude", BANDIT_EXCLUDE], skipCodes: SCANNER_ERROR, parseCases: parseBandit }),
 };
 
-/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
-export function runSecurityTests(opts = {}) {
-  return runLayer({ layer: "security", tools: TOOLS, ...opts });
+// Escáner de SECRETOS: objeto de evidencia PROPIO (patrón de la sonda de BD), independiente del SAST.
+// Corre SIEMPRE (puro, sin herramienta externa, solo lee archivos) → aporta cobertura aunque el SAST
+// se omita. Best-effort: si el escaneo falla, se OMITE con aviso; nunca rompe el ciclo.
+function secretEvidence(opts = {}) {
+  const { repoRoot = process.cwd(), profile = {}, workItemId } = opts;
+  try {
+    const res = scanSecrets(repoRoot, { profile });
+    const cfg = (profile.security && profile.security.secrets) || {};
+    if (cfg.off === true) return null; // apagado explícito por el perfil (escape hatch)
+    const narrative = res.status === "fail"
+      ? `Secretos en el código: ${res.findings.length} hallazgo(s) en ${res.filesScanned} archivo(s) revisado(s)`
+      : `Secretos en el código: sin credenciales quemadas (${res.filesScanned} archivo[s] revisado[s])`;
+    return { layer: "security", work_item_id: workItemId, status: res.status, narrative, cases: res.cases, metrics: { tool: "secret-scan", cwd: "" } };
+  } catch (e) {
+    return { layer: "security", work_item_id: workItemId, status: "skip", narrative: `escaneo de secretos omitido: ${(e && e.message) || e}`, metrics: { tool: "secret-scan", cwd: "" } };
+  }
 }
 
-export default { runSecurityTests };
+/** @returns {Promise<import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]>} */
+export async function runSecurityTests(opts = {}) {
+  const secret = secretEvidence(opts);
+  // SCA (dependencias vulnerables): objetos propios, detectados por manifiesto; best-effort.
+  const sca = await runSca(opts).catch(() => []);
+  const sast = await runLayer({ layer: "security", tools: TOOLS, ...opts });
+  return [...(secret ? [secret] : []), ...sca, ...sast];
+}
+
+export default { runSecurityTests, secretEvidence };

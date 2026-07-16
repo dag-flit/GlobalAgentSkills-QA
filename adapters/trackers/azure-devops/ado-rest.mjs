@@ -101,6 +101,17 @@ export function createClient({ env = {}, http = defaultHttp } = {}) {
       });
     },
 
+    // Iteración EN CURSO del equipo por defecto del proyecto → { value: [{ path, ... }] }.
+    // Sirve para crear un work item en el sprint activo (System.IterationPath). Best-effort:
+    // si el proyecto no tiene sprint activo, `value` viene vacío y el WI queda en el backlog.
+    currentIteration() {
+      return http({
+        method: "GET",
+        url: `${projBase}/work/teamsettings/iterations?$timeframe=current&api-version=${API}`,
+        headers: headers(),
+      });
+    },
+
     // Sube un binario y devuelve { id, url } del adjunto (luego se enlaza al WI).
     uploadAttachment(fileName, content) {
       return http({

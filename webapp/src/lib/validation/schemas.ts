@@ -106,11 +106,20 @@ export const codeRunInputSchema = z.object({
   layers: z.array(z.enum(["static", "unit", "api", "db", "security"])).optional(),
   featureId: z.string().optional(),
   developer: z.string().optional(),
+  // Inyectar la BD configurada (módulo de BD) al entorno de las pruebas: conecta las pruebas de
+  // integración .NET y activa la capa `db`. Opt-in por corrida (interruptor en el asistente).
+  useConfiguredDb: z.boolean().optional(),
 });
 
 // Unión discriminada por `mode`: la ruta /api/runs acepta E2E (explore) o QA de código (code)
 // sin modificar ninguno de los dos schemas base.
 export const anyRunInputSchema = z.discriminatedUnion("mode", [runInputSchema, codeRunInputSchema]);
+
+// Validar la ruta del repo antes de avanzar en el asistente de QA del código: que exista, sea un
+// directorio confinado (CODE_QA_BASE_DIR) y PAREZCA un proyecto real (no un texto cualquiera).
+export const codeValidatePathSchema = z.object({
+  sourcePath: z.string().min(1),
+});
 
 // Guardar el guion de una HU (persistencia por work item). Sin credenciales: solo la estructura.
 export const flowSaveSchema = z.object({

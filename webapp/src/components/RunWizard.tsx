@@ -64,8 +64,10 @@ export function RunWizard() {
 
       {key === "tracker" && (
         <TrackerStep
-          workItem={w.workItem}
-          onWorkItem={w.setWorkItem}
+          // QA del código: sin "WI destino" (los hallazgos van a una HU nueva) y bloqueado a Azure.
+          workItem={mode === "code" ? undefined : w.workItem}
+          onWorkItem={mode === "code" ? undefined : w.setWorkItem}
+          lockAzure={mode === "code"}
           onBack={w.back}
           onContinue={(t) => {
             w.setTracker(t);

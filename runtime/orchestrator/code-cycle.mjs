@@ -24,6 +24,14 @@ import { runSecurityTests } from "../runners/security.mjs";
 import { resolveLocalSource } from "../source/local-source.mjs";
 import { makeSandboxedExec } from "../source/exec-sandbox.mjs";
 import { attributeFailures } from "../source/git-blame.mjs";
+import {
+  renderFindingsDescription,
+  buildFindingsTitle,
+  stampNow,
+  FINDINGS_TAGS,
+  FINDINGS_COUNT_TAG,
+} from "../evidence/findings-workitem.mjs";
+import { executedHtml } from "../evidence/report-executed.mjs";
 
 // Capas EN ALCANCE de este módulo (E2E/BDD viven en otra ruta / fuera de alcance del giro).
 export const CODE_LAYERS = ["static", "unit", "api", "db", "security"];
@@ -66,6 +74,7 @@ export async function runCodeCycle({
   layers,
   exec,
   timeoutMs,
+  pgQuery,
   emit,
 } = {}) {
   // Progreso en vivo (opcional): la webapp lo cablea a emitEvent para que la UI no se vea colgada
@@ -103,11 +112,20 @@ export async function runCodeCycle({
   const runExec = exec || makeSandboxedExec({ timeoutMs, env });
 
   // ── (5) Correr cada capa → EvidenceObjects normalizados (uno por objetivo) ───
+  // Los runners usan spawnSync (BLOQUEANTE): mientras una capa corre, el hilo de Node está
+  // congelado y el SSE no puede transmitir. `tick()` cede el hilo (macrotarea) para que el log EN
+  // VIVO alcance a salir ANTES de bloquear con cada herramienta → el usuario ve "Capa X: ejecutando…"
+  // durante la ejecución, no todo junto al final.
+  const tick = () => new Promise((r) => setImmediate(r));
   say("info", `Capas detectadas: ${toRun.join(", ") || "ninguna"}. Corriendo…`);
+  await tick(); // deja que el SSE se conecte y transmita lo previo antes de la 1ª capa bloqueante
   const results = [];
   for (const layer of toRun) {
     say("info", `Capa ${layer}: ejecutando…`);
-    const out = RUNNERS[layer]({ layer, repoRoot, profile: resolvedProfile, env, detection, exec: runExec, workItemId });
+    await tick(); // flush del "ejecutando…" ANTES de bloquear el hilo con spawnSync
+    // `await`: la mayoría de runners son síncronos (spawnSync) pero `db` puede ser ASÍNCRONO (sonda
+    // directa a Postgres vía pgQuery). await sobre un valor síncrono lo devuelve igual → uniforme.
+    const out = await RUNNERS[layer]({ layer, repoRoot, profile: resolvedProfile, env, detection, exec: runExec, workItemId, pgQuery });
     const arr = Array.isArray(out) ? out : [out];
     // Resumen de la capa para el log en vivo (❌ si algún objetivo falló; ⏭ si todos se omitieron).
     const verdict = arr.some((r) => r.status === "fail") ? "❌ con fallos" : arr.every((r) => r.status === "skip") ? "⏭ omitida" : "✅ ok";
@@ -133,17 +151,64 @@ export async function runCodeCycle({
     warnings.push(`capas no ejecutadas (no detectadas en el repo o fuera de alcance): ${notRun.join(", ")}`);
   }
 
-  // ── (6) Guarda online: tracker remoto sin HU real → no comenta HU inexistente ─
+  // ── (6) Sink: reporte local SIEMPRE (aunque el destino sea Azure). El modo QA del código no
+  // comenta una HU existente (no hay "WI destino"): el requirementId queda null → publishEvidence
+  // solo escribe el reporte local (md+html) dentro del proyecto. Los hallazgos van a la HU nueva (7).
   const requirementId = caps.network && (!workItemId || workItemId === "local") ? null : workItemId;
-  if (caps.network && !requirementId) {
-    warnings.push(`Tracker remoto '${adapter.name}' sin work item (-w): la evidencia se deja solo en el reporte local.`);
-  }
-
-  // ── (7) Sink: MISMO publishEvidence del E2E (Fase B — cero cambios de contrato) ─
   const report = await adapter.publishEvidence(
     { work_item_id: requirementId, feature_id: featureId, developer },
     { results }
   );
+
+  // ── (7) HU de HALLAZGOS en Azure: SIEMPRE que el tracker sea de red. Cada ejecución deja su
+  // registro en el sprint EN CURSO del proyecto configurado, con incrementador #N (por conteo de
+  // las ya creadas). Con o sin hallazgos. No se relaciona a ninguna HU/Feature. Best-effort: si la
+  // creación falla, la corrida NO se cae (el reporte local ya quedó). El tracker `local` no crea.
+  let findingsWorkItem = null;
+  if (caps.network && typeof adapter.createFindingsWorkItem === "function") {
+    const when = stampNow();
+    const reportPath = (report && (report.local?.htmlPath || report.htmlPath)) || "";
+    say("info", "Registrando la HU de hallazgos en el sprint en curso…");
+    try {
+      findingsWorkItem = await adapter.createFindingsWorkItem({
+        tags: FINDINGS_TAGS,
+        countTag: FINDINGS_COUNT_TAG,
+        makeTitle: (seq) => buildFindingsTitle({ seq, when }),
+        descriptionHtml: renderFindingsDescription({ results, layersRun: toRun, when, reportPath }),
+        attachHtml: reportPath || null,
+      });
+    } catch (e) {
+      findingsWorkItem = { ok: false, reason: e.message };
+    }
+    // (7b) Bitácora "Qué se ejecutó por capa" como COMENTARIO en la Discussion de esa HU (NO en la
+    // Description: ahí va el análisis de hallazgos). Best-effort: si el comentario falla, la HU y su
+    // descripción ya quedaron — no se cae la corrida.
+    if (findingsWorkItem && findingsWorkItem.ok && typeof adapter.commentWorkItem === "function") {
+      try {
+        const html = executedHtml(results, { when, reportPath });
+        if (html) {
+          const c = await adapter.commentWorkItem(findingsWorkItem.id, html);
+          if (!c || !c.ok) warnings.push(`No se pudo comentar la bitácora de ejecución en la HU #${findingsWorkItem.id}: ${(c && c.reason) || "desconocido"}.`);
+        }
+      } catch (e) {
+        warnings.push(`No se pudo comentar la bitácora de ejecución en la HU: ${e.message}.`);
+      }
+    }
+    if (findingsWorkItem && findingsWorkItem.ok) {
+      const where = findingsWorkItem.iterationPath
+        ? ` · sprint: ${findingsWorkItem.iterationPath}`
+        : findingsWorkItem.iterationSkipped
+        ? " · (backlog: ADO no permitió crear en el sprint en curso — falta el permiso «Editar elementos de trabajo en este nodo» de la iteración)"
+        : " · (backlog: no se resolvió el sprint en curso)";
+      const noTags = findingsWorkItem.tagsSkipped ? " · sin tags (falta el permiso «create tag definition» en ADO)" : "";
+      say("result", `HU de hallazgos #${findingsWorkItem.id} creada — «${findingsWorkItem.title}»${where}${noTags}.`);
+    } else {
+      const reason = (findingsWorkItem && findingsWorkItem.reason) || "desconocido";
+      // En vivo (al momento del intento) + en warnings (recap/reporte). El reporte local ya quedó.
+      say("stderr", `No se pudo crear la HU de hallazgos: ${reason} — los hallazgos están en el reporte local.`);
+      warnings.push(`No se pudo crear la HU de hallazgos: ${reason}.`);
+    }
+  }
 
   return {
     ok: true,
@@ -154,6 +219,7 @@ export async function runCodeCycle({
     layersRun: toRun,
     results,
     report,
+    findingsWorkItem,
     warnings,
   };
 }

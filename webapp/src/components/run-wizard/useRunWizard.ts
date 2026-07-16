@@ -27,6 +27,7 @@ export function useRunWizard() {
   // Modo "QA del código": ruta del repo (relativa a CODE_QA_BASE_DIR) + capas a correr (vacío = detectadas).
   const [sourcePath, setSourcePath] = useState("");
   const [layers, setLayers] = useState<CodeLayer[]>([]);
+  const [useDb, setUseDb] = useState(false); // usar la BD configurada (módulo BD) en las pruebas
 
   const steps = mode ? buildSteps(mode) : [];
   const safeIdx = Math.min(idx, Math.max(0, steps.length - 1));
@@ -43,6 +44,9 @@ export function useRunWizard() {
   function chooseMode(m: Mode) {
     setMode(m);
     setIdx(0);
+    // QA del código publica en Azure (crea la HU de hallazgos en el sprint) + reporte local. No hay
+    // opción "Local" en este modo → se fija Azure de entrada (el paso Tracker queda bloqueado a Azure).
+    if (m === "code") setTracker("azure-devops");
   }
 
   async function launch() {
@@ -59,11 +63,13 @@ export function useRunWizard() {
             // Modo "QA del código": ruta del repo + capas (subconjunto o detectadas). Sin URL/pasos.
             let body: Record<string, unknown>;
             if (mode === "code") {
+              // QA del código: NO hay "WI destino". Los hallazgos se plasman en una HU NUEVA que el
+              // motor crea en el sprint en curso (adapter azure) + reporte local. No se envía workItemId.
               body = {
                 mode,
                 sourcePath: sourcePath.trim(),
-                workItemId: workItem.trim() ? workItem.trim() : undefined,
                 layers: layers.length ? layers : undefined,
+                useConfiguredDb: useDb || undefined,
               };
             } else {
               // Si hay pasos, se corre un GUION: la URL es el primer paso (ir_a) y luego los pasos
@@ -195,7 +201,7 @@ export function useRunWizard() {
     mode, setMode, idx, launching, launchError,
     tracker, setTracker, appUrl, setAppUrl,
     workItem, setWorkItem, flow, setFlow, vars, setVars, acs, setAcs,
-    sourcePath, setSourcePath, layers, setLayers,
+    sourcePath, setSourcePath, layers, setLayers, useDb, setUseDb,
     steps, safeIdx, key, back, next, chooseMode, launch,
     saveFlowToHu, loadFlowFromHu, importFlowJson, exportFlowJson,
   };

@@ -178,7 +178,7 @@ export async function run(ctx) {
   assert.strictEqual(cycAdo.report.sink, "dual");
   assert.strictEqual(cycAdo.report.parentCommentId, 77);
   assert.ok(cycAdo.results.some((r) => r.layer === "explore"));
-  assert.strictEqual(path.basename(cycAdo.report.local.dir), "FT-10118__Dev-Nono-Perez"); // FT/dev en la carpeta
+  assert.ok(path.basename(path.dirname(cycAdo.report.local.dir)) === "FT-10118__Dev-Nono-Perez" && /^\d{2}-\d{2}-\d{2}(-\d+)?$/.test(path.basename(cycAdo.report.local.dir)), "FT/dev en el grupo + subcarpeta por hora → no sobreescribe");
   fs.rmSync(repoCyc, { recursive: true, force: true });
   ok("runQaCycle azure: preflight REST + explora + publica la evidencia E2E en la HU (offline)");
 

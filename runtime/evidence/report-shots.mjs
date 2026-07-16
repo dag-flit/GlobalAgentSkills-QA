@@ -50,4 +50,28 @@ export function collectShots(results, dir) {
   return out;
 }
 
-export default { slug, collectShots };
+// Marca de hora local HH-MM-SS (para nombrar la subcarpeta de CADA corrida).
+function timeStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
+// Carpeta de evidencia de UNA corrida: qa-evidence/<fecha>/<grupo>/<hora>. El <grupo> es FT-<feature>__
+// <dev> (o WI-<id> de fallback); la subcarpeta por HORA hace que cada corrida quede en la SUYA y NO
+// sobreescriba las evidencias previas (bug: antes todas caían en el mismo <grupo> y se pisaban). Si dos
+// corridas caen en el mismo segundo, se desambigua con -2/-3… La crea (mkdir) y devuelve la ruta.
+export function evidenceRunDir({ repoRoot, outDir, stamp, featureId, developer, workItemId }) {
+  const segParts = [];
+  if (featureId) segParts.push(`FT-${slug(featureId)}`);
+  if (developer) segParts.push(slug(developer));
+  if (segParts.length === 0) segParts.push(`WI-${workItemId}`);
+  const groupDir = path.join(repoRoot, outDir, stamp, segParts.join("__"));
+  const base = timeStamp();
+  let dir = path.join(groupDir, base);
+  for (let n = 2; fs.existsSync(dir); n++) dir = path.join(groupDir, `${base}-${n}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export default { slug, collectShots, evidenceRunDir };

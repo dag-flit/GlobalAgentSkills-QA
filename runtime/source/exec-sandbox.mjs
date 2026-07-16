@@ -24,7 +24,10 @@ export const DEFAULT_ALLOW = [
 ];
 
 // Timeout por defecto por comando (ms). Ajustable por env CODE_QA_EXEC_TIMEOUT_MS.
-const DEFAULT_TIMEOUT_MS = 180000;
+// 10 min: una capa compilada (p.ej. `dotnet test` con restore+build en frío) supera fácil los
+// 3 min; con el tope viejo se mataba a mitad y se reportaba como "no ejecutable". Sigue acotado
+// (un colgado no bloquea para siempre) y el operador puede bajarlo/subirlo por env.
+const DEFAULT_TIMEOUT_MS = 600000;
 
 // Nombre lógico del comando: basename sin extensión de shim de Windows (.cmd/.exe/.bat).
 // resolveBin puede entregar una ruta absoluta a node_modules/.bin/vitest.cmd; el gate mira

@@ -3,7 +3,7 @@
 // (tool → argv neutro). Aquí vive el resto: resolución de binario, ejecución
 // (inyectable), mapeo a EvidenceObject normalizado. CERO literales de dominio.
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { detectRepo } from "../detect/qa-detect.mjs";
@@ -65,33 +65,74 @@ export function isExecutable(name) {
 // var que el proyecto exporte (DATABASE_URL…) llega a la herramienta sin cablearla.
 // `timeout` (ms, opcional) mata la herramienta si se cuelga: defensa en profundidad para
 // correr QA de código en un server compartido (una gen/escáner colgado no bloquea la corrida).
-export function defaultExec(cmd, args, { cwd, env, timeout } = {}) {
-  // Comando NO resoluble (no instalado / fuera de PATH) → 127 SIN invocar el shell, para que
-  // el runner lo OMITA (skip). Es la vía robusta: en Windows en español, cmd.exe devuelve un
-  // exit ambiguo (1) con mensaje localizado, así que NO podemos fiarnos de él. Como los tests
-  // inyectan su propio `exec`, este chequeo solo afecta a las corridas reales.
-  if (!isExecutable(cmd)) return { code: 127, stdout: "", stderr: "", spawnError: null };
-  const childEnv = env && Object.keys(env).length ? { ...process.env, ...env } : undefined;
-  // Tope de tiempo/salida: un timeout mata el proceso (killSignal) → r.error (ETIMEDOUT) → el
-  // runner lo OMITE (nunca cuelga el ciclo). maxBuffer acota la salida (anti-OOM en el server).
-  const limits = { timeout: timeout && timeout > 0 ? timeout : undefined, killSignal: "SIGKILL", maxBuffer: 32 * 1024 * 1024 };
-  let r;
-  if (process.platform === "win32") {
-    // Windows necesita shell para resolver shims .cmd/.bat, pero el shell NO cita: si la
-    // ruta del binario o un argumento tiene espacios, se parte. Construimos la línea
-    // ya citada y la pasamos como string única (control total del quoting).
-    const line = [cmd, ...args].map(quoteWin).join(" ");
-    r = spawnSync(line, [], { cwd, env: childEnv, encoding: "utf8", shell: true, ...limits });
-  } else {
-    // POSIX: sin shell, el array de args ya respeta espacios; nada que citar.
-    r = spawnSync(cmd, args, { cwd, env: childEnv, encoding: "utf8", shell: false, ...limits });
+// Decodifica la salida de un proceso hijo a texto. Muchas herramientas de Windows (p.ej. `dotnet`
+// en español) escriben en el codepage ANSI (cp1252), NO en UTF-8; decodificar como UTF-8 corrompe
+// los acentos y las comillas « » a «�» (pérdida irreversible). Por eso capturamos BYTES y probamos
+// UTF-8 con validación estricta; si no es UTF-8 válido, caemos a latin1 (cp1252) → acentos correctos.
+export function decodeOutput(buf) {
+  if (buf == null) return "";
+  if (typeof buf === "string") return buf.replace(/�/g, "?"); // un exec inyectado ya puede devolver string
+  try {
+    // UTF-8 válido: puede contener U+FFFD si la HERRAMIENTA ya perdió el carácter aguas arriba
+    // (p.ej. Npgsql mal-decodifica un error de PostgreSQL PRE-autenticación → el acento se pierde
+    // en .NET, no en nuestra captura, y es irrecuperable). Lo normalizamos a "?" para que el
+    // reporte y la HU no muestren cuadros rotos.
+    return new TextDecoder("utf-8", { fatal: true }).decode(buf).replace(/�/g, "?");
+  } catch {
+    return new TextDecoder("latin1").decode(buf);
   }
-  return {
-    code: typeof r.status === "number" ? r.status : 127,
-    stdout: r.stdout || "",
-    stderr: r.stderr || "",
-    spawnError: r.error || null,
-  };
+}
+
+const MAX_OUTPUT = 32 * 1024 * 1024; // tope de salida por proceso (anti-OOM en el server)
+
+// Ejecutor ASÍNCRONO (spawn, NO spawnSync). CRÍTICO: no congela el event loop de Node. Antes, con
+// spawnSync, un subproceso largo (p.ej. `dotnet test`, minutos) bloqueaba el loop y cualquier servicio
+// Node en el mismo proceso quedaba muerto — en particular el TÚNEL SSH (net.createServer + ssh2), que
+// vive del event loop: el subproceso .NET recibía "connection refused" al puerto local del túnel. Con
+// spawn asíncrono el loop sigue girando → el túnel atiende al subproceso → la BD por SSH funciona.
+export function defaultExec(cmd, args, { cwd, env, timeout } = {}) {
+  // Comando NO resoluble (no instalado / fuera de PATH) → 127 SIN invocar el shell, para que el runner
+  // lo OMITA. En Windows en español cmd.exe da un exit ambiguo, así que no nos fiamos de él.
+  if (!isExecutable(cmd)) return Promise.resolve({ code: 127, stdout: "", stderr: "", spawnError: null, timeout: null });
+  const childEnv = env && Object.keys(env).length ? { ...process.env, ...env } : undefined;
+  const to = timeout && timeout > 0 ? timeout : 0;
+  return new Promise((resolve) => {
+    let child;
+    try {
+      // Windows necesita shell para resolver shims .cmd/.bat, pero el shell NO cita: construimos la
+      // línea ya citada (control total del quoting). POSIX: sin shell, el array de args respeta espacios.
+      if (process.platform === "win32") {
+        const line = [cmd, ...args].map(quoteWin).join(" ");
+        child = spawn(line, [], { cwd, env: childEnv, shell: true });
+      } else {
+        child = spawn(cmd, args, { cwd, env: childEnv, shell: false });
+      }
+    } catch (e) {
+      resolve({ code: 127, stdout: "", stderr: "", spawnError: e, timeout: to || null });
+      return;
+    }
+    const outCh = []; const errCh = [];
+    let outLen = 0; let errLen = 0; let over = false; let timedOut = null; let settled = false;
+    let timer = null;
+    const finish = (code, spawnError) => {
+      if (settled) return; settled = true;
+      if (timer) clearTimeout(timer);
+      // Sin `encoding` → Buffers; los decodificamos (utf8 con fallback a latin1) para no romper acentos.
+      resolve({
+        code: typeof code === "number" ? code : 127,
+        stdout: decodeOutput(Buffer.concat(outCh)),
+        stderr: decodeOutput(Buffer.concat(errCh)),
+        // ENOBUFS (buffer excedido) y ETIMEDOUT (timeout) → explainExecFailure los distingue del "no instalado".
+        spawnError: spawnError || (over ? Object.assign(new Error("maxBuffer exceeded"), { code: "ENOBUFS" }) : timedOut),
+        timeout: to || null,
+      });
+    };
+    child.stdout?.on("data", (d) => { outLen += d.length; if (outLen <= MAX_OUTPUT) outCh.push(d); else if (!over) { over = true; child.kill("SIGKILL"); } });
+    child.stderr?.on("data", (d) => { errLen += d.length; if (errLen <= MAX_OUTPUT) errCh.push(d); else if (!over) { over = true; child.kill("SIGKILL"); } });
+    child.on("error", (e) => finish(127, e));
+    child.on("close", (code) => finish(code == null ? 127 : code, null));
+    if (to) timer = setTimeout(() => { timedOut = Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" }); child.kill("SIGKILL"); }, to);
+  });
 }
 
 // Quita secuencias de escape ANSI (colores/estilos) que muchas herramientas (vitest,
@@ -114,15 +155,38 @@ export function summarize(out) {
   return pick.join(" · ").slice(0, 240);
 }
 
+// Traduce un fallo de LANZAMIENTO (spawnError, o exit 127) a una razón ACCIONABLE y precisa.
+// Antes TODO caía en "no instalado / fuera de PATH", que ocultaba las causas reales: un TIMEOUT
+// (herramienta compilada que en frío no termina a tiempo, p.ej. `dotnet test` con restore+build) o
+// la SATURACIÓN del buffer de salida — ambos se veían como "no instalado", desorientando al usuario.
+export function explainExecFailure(out, name) {
+  const err = out.spawnError;
+  if (err) {
+    if (err.code === "ETIMEDOUT") {
+      const s = out.timeout ? Math.round(out.timeout / 1000) : null;
+      return `se agotó el tiempo${s ? ` (timeout ${s}s)` : ""}: la herramienta no terminó a tiempo — sube CODE_QA_EXEC_TIMEOUT_MS o precalienta el build (compila el proyecto una vez antes de correr QA)`;
+    }
+    if (err.code === "ENOBUFS") return "superó el límite de salida (maxBuffer): la herramienta emitió demasiada salida — reduce su verbosidad";
+    return `no se pudo lanzar (${err.code || "error de proceso"})`;
+  }
+  // exit 127 SIN spawnError: rechazo de la allowlist del sandbox, o binario realmente ausente.
+  if (/allowlist/i.test(out.stderr || "")) return String(out.stderr).trim();
+  if (!isExecutable(name)) return "no ejecutable (no instalado / fuera de PATH)";
+  return `no ejecutable (exit 127)${out.stderr ? ` — ${String(out.stderr).slice(0, 160)}` : ""}`;
+}
+
 // Etiqueta de ubicación para distinguir objetivos de la misma capa en el reporte.
 function whereLabel(cwd) {
   return cwd ? ` @ ${cwd}` : "";
 }
 
-// Ejecuta UN objetivo (herramienta + paquete) de una capa → un EvidenceObject.
-function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, workItemId, info, target }) {
+// Ejecuta UN objetivo (herramienta + paquete) de una capa → un EvidenceObject. ASÍNCRONO: `exec` puede
+// devolver una promesa (defaultExec asíncrono) o un valor síncrono (fakes del smoke); `await` sirve a ambos.
+async function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, workItemId, info, target }) {
   const tool = target.tool;
-  const where = whereLabel(target.cwd);
+  // Etiqueta legible del objetivo: un `label` explícito (p.ej. el nombre del proyecto de test en el
+  // fan-out dotnet sin .sln) gana; si no, la ubicación (cwd) del paquete en monorepo.
+  const where = target.label ? ` @ ${target.label}` : whereLabel(target.cwd);
   const base = { layer, work_item_id: workItemId };
   // Directorio de trabajo del objetivo: la raíz o, en monorepo, el subpaquete donde
   // qa-detect ubicó la herramienta. Así vitest/playwright/tsc resuelven su config y el
@@ -131,7 +195,7 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
 
   const spec = tools[tool];
   if (!spec) {
-    return { ...base, status: "skip", narrative: `herramienta '${tool}'${where} sin invocación soportada`, metrics: { tool, cwd: target.cwd } };
+    return { ...base, status: "skip", narrative: `herramienta '${tool}'${where} sin invocación soportada`, metrics: { tool, label: target.label, cwd: target.cwd } };
   }
 
   // El spec puede ser un argv fijo (array) o una función que lo construye desde el
@@ -146,9 +210,9 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
   let skipCodes = [];
   let parseCases = null;
   if (typeof spec === "function") {
-    const resolved = spec({ repoRoot: cwd, profile, env, detection, info: { ...info, tool, cwd: target.cwd }, tool });
+    const resolved = spec({ repoRoot: cwd, profile, env, detection, info: { ...info, tool, cwd: target.cwd }, tool, project: target.project });
     if (!resolved || resolved.skip) {
-      return { ...base, status: "skip", narrative: (resolved && resolved.skip) || `'${tool}'${where} sin configuración suficiente`, metrics: { tool, cwd: target.cwd } };
+      return { ...base, status: "skip", narrative: (resolved && resolved.skip) || `'${tool}'${where} sin configuración suficiente`, metrics: { tool, label: target.label, cwd: target.cwd } };
     }
     argv = Array.isArray(resolved) ? resolved : resolved.argv;
     if (!Array.isArray(resolved)) {
@@ -163,16 +227,17 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
   const bin = resolveBin(repoRoot, name, cwd);
   const command = argv.join(" "); // comando lógico exacto (p.ej. "tsc --noEmit") para la evidencia
   const t0 = Date.now();
-  const out = exec(bin, args, { cwd, env });
+  const out = await exec(bin, args, { cwd, env });
   const ms = Date.now() - t0;
 
-  // No se pudo lanzar el binario (no instalado / fuera de PATH): omitir con aviso.
+  // No concluyó por el LANZAMIENTO (spawnError o exit 127): omitir con la razón REAL (timeout,
+  // buffer, allowlist o binario ausente), no un genérico que confunda "tardó" con "no instalado".
   if (out.spawnError || out.code === 127) {
     return {
       ...base,
       status: "skip",
-      narrative: `${tool}${where} no ejecutable (no instalado / fuera de PATH) — objetivo omitido`,
-      metrics: { tool, cwd: target.cwd, exitCode: out.code, command },
+      narrative: `${tool}${where} ${explainExecFailure(out, name)} — objetivo omitido`,
+      metrics: { tool, label: target.label, cwd: target.cwd, exitCode: out.code, command },
     };
   }
 
@@ -184,7 +249,7 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
       ...base,
       status: "skip",
       narrative: `${tool}${where} no concluyó (exit ${out.code}, error de herramienta) — objetivo omitido${detail ? ` — ${detail}` : ""}`,
-      metrics: { tool, cwd: target.cwd, exitCode: out.code, command, ms },
+      metrics: { tool, label: target.label, cwd: target.cwd, exitCode: out.code, command, ms },
     };
   }
 
@@ -213,7 +278,7 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
       ? `${tool}${where}: ok${casesDetail ? ` — ${casesDetail}` : ""}`
       : `${tool}${where}: exit ${out.code}${casesDetail ? ` — ${casesDetail}` : detail ? ` — ${detail}` : ""}`;
 
-  const ev = { ...base, status, narrative, metrics: { tool, cwd: target.cwd, exitCode: out.code, command, ms } };
+  const ev = { ...base, status, narrative, metrics: { tool, label: target.label, cwd: target.cwd, exitCode: out.code, command, ms } };
   if (hasCases) ev.cases = cases;
   return ev;
 }
@@ -231,7 +296,7 @@ function runTarget({ layer, tools, repoRoot, profile, env, detection, exec, work
  * @param {string} [opts.workItemId]
  * @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]}
  */
-export function runLayer({
+export async function runLayer({
   layer,
   tools,
   repoRoot = process.cwd(),
@@ -250,11 +315,15 @@ export function runLayer({
     return [{ ...base, status: "skip", narrative: info.reason || `sin herramienta para ${layer}`, metrics: { tool: null } }];
   }
 
-  // Objetivos detectados (monorepo-aware); compat: si faltan, deriva uno del primario.
+  // Objetivos detectados (monorepo-aware); compat: si faltan, deriva uno del primario. Se corren de a UNO
+  // (secuencial, como antes: no satura la máquina ni la BD con N builds a la vez), pero con `await` → el
+  // event loop NO se congela entre procesos → el túnel SSH sigue atendiendo al subproceso en curso.
   const targets = info.targets && info.targets.length ? info.targets : [{ tool: info.tool, cwd: info.cwd || "" }];
-  return targets.map((target) =>
-    runTarget({ layer, tools, repoRoot, profile, env, detection: det, exec, workItemId, info, target })
-  );
+  const results = [];
+  for (const target of targets) {
+    results.push(await runTarget({ layer, tools, repoRoot, profile, env, detection: det, exec, workItemId, info, target }));
+  }
+  return results;
 }
 
 export default { runLayer, resolveBin, defaultExec, summarize };

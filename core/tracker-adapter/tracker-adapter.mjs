@@ -91,6 +91,17 @@ export class TrackerAdapter {
   async commentWorkItem(id, html) {
     return { ok: false, reason: `${this.name}: sin soporte de comentarios` };
   }
+
+  /**
+   * Crea una HU de "hallazgos" (modo QA del código) en el proyecto/sprint del tracker, SIN
+   * relacionarla a ningún otro work item. El #N (incrementador) y la iteración en curso los
+   * resuelve el adapter concreto. Default: no soportado (el tracker `local` no crea work items).
+   * @param {object} opts { makeTitle:(seq)=>string, descriptionHtml, tags?, countTag?, attachHtml? }
+   * @returns {Promise<{ok:boolean, id?:string, url?:string, seq?:number, title?:string, reason?:string}>}
+   */
+  async createFindingsWorkItem(opts) {
+    return { ok: false, reason: `${this.name}: no crea work items` };
+  }
 }
 
 export default TrackerAdapter;

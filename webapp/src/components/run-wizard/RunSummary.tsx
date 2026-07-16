@@ -16,19 +16,16 @@ export function RunSummary({ w }: { w: RunWizardCtl }) {
           <ul className="text-sm space-y-1">
             <li><span className="text-muted">Modo:</span> {modeMeta.label}</li>
             <li><span className="text-muted">Tracker:</span> <span className="text-accent">{w.tracker}</span></li>
-            {w.tracker === "azure-devops" && (
-              <li>
-                <span className="text-muted">WI destino:</span>{" "}
-                {w.workItem.trim() ? <span className="font-mono">{w.workItem.trim()}</span> : <span className="text-muted">— (solo reporte local)</span>}
-              </li>
-            )}
             <li><span className="text-muted">Repo:</span> <span className="font-mono">{w.sourcePath.trim() || "—"}</span></li>
             <li><span className="text-muted">Capas:</span> detectadas automáticamente (se omite lo que no aplique)</li>
+            <li><span className="text-muted">BD en pruebas:</span> {w.useDb ? "usar la BD configurada (inyecta la conexión)" : "no (las pruebas usan su propia configuración)"}</li>
+            <li><span className="text-muted">Hallazgos:</span> HU nueva en el sprint en curso (incrementador #N) + reporte local</li>
           </ul>
           <div className="text-sm rounded-lg px-3 py-2 border border-border bg-panel2/40 text-muted">
-            Correré las capas deterministas detectadas sobre el repo local. Las herramientas se
-            ejecutan en un sandbox (solo herramientas de QA, con timeout) y la evidencia queda aislada
-            por tenant. Si el operador definió <code>CODE_QA_BASE_DIR</code>, el análisis se confina a esa base.
+            Correré las capas deterministas detectadas sobre el repo local (sandbox: solo herramientas
+            de QA, con timeout). Los hallazgos se plasman en una <b>HU nueva</b> (User Story, no relacionada
+            a nada) en el <b>sprint en curso</b> del proyecto de Azure, y el <b>reporte local</b> queda dentro
+            del repo analizado. Si el operador definió <code>CODE_QA_BASE_DIR</code>, el análisis se confina a esa base.
           </div>
           {w.launchError && (
             <div className="text-sm rounded-lg px-3 py-2 border border-red-700 bg-red-900/30 text-red-300">{w.launchError}</div>

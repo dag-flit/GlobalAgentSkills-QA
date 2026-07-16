@@ -17,11 +17,15 @@ export function TrackerStep({
   onWorkItem,
   onBack,
   onContinue,
+  lockAzure = false,
 }: {
   workItem?: string;
   onWorkItem?: (v: string) => void;
   onBack?: () => void;
   onContinue?: (t: TrackerName) => void;
+  // QA del código: se publica SIEMPRE en Azure (HU de hallazgos) + reporte local → se oculta la
+  // opción "Local" y se fija Azure como destino (el usuario no puede cambiarlo).
+  lockAzure?: boolean;
 }) {
   const action = useAction();
   const [cfg, setCfg] = useState<AppConfig | null>(null);
@@ -35,6 +39,14 @@ export function TrackerStep({
       .then((c: AppConfig) => setCfg(c))
       .catch(() => setCfg(null));
   }, []);
+
+  // QA del código: forzar Azure como destino (no hay opción Local). Se corre una vez que cargó la
+  // config; el guard (selected !== azure) evita re-render en bucle.
+  useEffect(() => {
+    if (lockAzure && cfg && cfg.tracker.selected !== "azure-devops") {
+      setCfg((c) => ({ ...c!, tracker: { ...c!.tracker, selected: "azure-devops" } }));
+    }
+  }, [lockAzure, cfg]);
 
   if (!cfg) {
     return (
@@ -120,15 +132,23 @@ export function TrackerStep({
       <div className="card space-y-4">
         <div>
           <h2 className="font-semibold">¿Dónde se reportan los resultados?</h2>
-          <p className="text-sm text-muted mt-1">
-            Elige el destino. <b>Local</b> solo deja el reporte en el repo (sin conexión). Los demás
-            comentan en la historia/issue y requieren credenciales.
-          </p>
+          {lockAzure ? (
+            <p className="text-sm text-muted mt-1">
+              <b>QA del código</b> publica en <b>Azure DevOps</b>: crea una <b>HU de hallazgos</b> en el
+              sprint en curso del proyecto configurado y, además, deja el <b>reporte local</b> dentro del
+              repo analizado. Completá las credenciales de Azure.
+            </p>
+          ) : (
+            <p className="text-sm text-muted mt-1">
+              Elige el destino. <b>Local</b> solo deja el reporte en el repo (sin conexión). Los demás
+              comentan en la historia/issue y requieren credenciales.
+            </p>
+          )}
         </div>
 
-        {/* selector */}
-        <div className="grid grid-cols-2 gap-2">
-          {TRACKERS.map((opt) => {
+        {/* selector — en QA del código solo Azure (sin opción Local) */}
+        <div className={`grid ${lockAzure ? "grid-cols-1" : "grid-cols-2"} gap-2`}>
+          {(lockAzure ? TRACKERS.filter((x) => x.id === "azure-devops") : TRACKERS).map((opt) => {
             const active = t.selected === opt.id;
             return (
               <button

@@ -11,10 +11,18 @@ import { makeSandboxedExec, commandName } from "../source/exec-sandbox.mjs";
 import { resolveLocalSource } from "../source/local-source.mjs";
 import { detectRepo } from "../detect/qa-detect.mjs";
 import { runUnitTests } from "../runners/unit.mjs";
+import { runDbTests } from "../runners/db.mjs";
+import { runDbProbeCases } from "./db-probe-suite.mjs";
+import { explainExecFailure } from "../runners/_runner-core.mjs";
 import { parseDotnet } from "../runners/parse-cases.mjs";
 import { runCodeCycle } from "../orchestrator/code-cycle.mjs";
 import { explainFailure, explainLayerFailure } from "../evidence/failure-explain.mjs";
 import { culpritRef, attributeFailures } from "../source/git-blame.mjs";
+import { runFindingsCases } from "./findings-suite.mjs";
+import { decodeOutput } from "../runners/_runner-core.mjs";
+import { validateProjectPath, looksLikeProject } from "../source/validate-project.mjs";
+import { buildDbEnv } from "../source/db-env.mjs";
+import { AzureDevOpsAdapter } from "../../adapters/trackers/azure-devops/azure-devops-adapter.mjs";
 
 // Crea un repo de juguete (Node con eslint + vitest) dentro de un directorio base efímero.
 function makeFixture() {
@@ -82,7 +90,7 @@ export async function run(ctx) {
         { title: "resta", status: "failed", duration: 5, ancestorTitles: ["calc"], failureMessages: ["esperaba 2"] },
       ] }],
     });
-    const unitEv = runUnitTests({ repoRoot: repo, detection: det, exec: () => ({ code: 1, stdout: vitestJson, stderr: "" }) });
+    const unitEv = await runUnitTests({ repoRoot: repo, detection: det, exec: () => ({ code: 1, stdout: vitestJson, stderr: "" }) });
     assert.strictEqual(unitEv.length, 1);
     assert.strictEqual(unitEv[0].layer, "unit");
     assert.strictEqual(unitEv[0].status, "fail", "exit 1 → fail");
@@ -98,7 +106,7 @@ export async function run(ctx) {
         { title: "roto", status: "failed", ancestorTitles: ["s"], failureMessages: ["boom"] },
       ] }],
     });
-    const ev0 = runUnitTests({ repoRoot: repo, detection: det, exec: () => ({ code: 0, stdout: vitest0Fail, stderr: "" }) });
+    const ev0 = await runUnitTests({ repoRoot: repo, detection: det, exec: () => ({ code: 0, stdout: vitest0Fail, stderr: "" }) });
     assert.strictEqual(ev0[0].status, "fail", "exit 0 con un TC en rojo → la capa FALLA, no 'pass'");
     ok("QA de código: veredicto por casos (un TC en rojo hace fallar la capa aunque el exit sea 0)");
 
@@ -110,7 +118,7 @@ export async function run(ctx) {
         { status: "failed", name: "src/roto.test.ts", message: "Cannot find module './missing'", assertionResults: [] },
       ],
     });
-    const evSuite = runUnitTests({ repoRoot: repo, detection: det, exec: () => ({ code: 1, stdout: suiteFail, stderr: "" }) });
+    const evSuite = await runUnitTests({ repoRoot: repo, detection: det, exec: () => ({ code: 1, stdout: suiteFail, stderr: "" }) });
     assert.strictEqual(evSuite[0].status, "fail");
     const failed = evSuite[0].cases.filter((c) => c.status === "fail");
     assert.strictEqual(failed.length, 1, "el archivo/suite que no cargó aparece como 1 caso fallido");
@@ -118,13 +126,70 @@ export async function run(ctx) {
     assert.ok(evSuite[0].cases.some((c) => c.status === "pass"), "las aserciones que sí corrieron siguen visibles");
     ok("QA de código: una suite que no carga (import roto) se surface como caso fallido, no queda invisible");
 
+    // (4e) razón ACCIONABLE ante un fallo de lanzamiento: timeout / maxBuffer / allowlist / ausente
+    // se distinguen (antes TODO decía "no instalado / fuera de PATH", ocultando el timeout real de un
+    // `dotnet test` en frío). El runner de unit propaga la razón precisa en la narrativa del skip.
+    const timedOut = { code: 127, stdout: "", stderr: "", spawnError: { code: "ETIMEDOUT" }, timeout: 600000 };
+    assert.ok(/se agot.*tiempo.*600s/i.test(explainExecFailure(timedOut, "dotnet")), "ETIMEDOUT → 'se agotó el tiempo (timeout 600s)', no 'no instalado'");
+    assert.ok(/maxBuffer/.test(explainExecFailure({ code: 127, stderr: "", spawnError: { code: "ENOBUFS" } }, "dotnet")), "ENOBUFS → menciona maxBuffer");
+    assert.ok(/allowlist/.test(explainExecFailure({ code: 127, stderr: "comando 'curl' fuera de la allowlist", spawnError: null }, "curl")), "127 con stderr de allowlist → esa razón");
+    assert.ok(/no instalado/.test(explainExecFailure({ code: 127, stderr: "", spawnError: null }, "zzz-binario-inexistente")), "127 real (binario ausente) → 'no instalado / fuera de PATH'");
+    const evTO = await runUnitTests({ repoRoot: repo, detection: det, exec: () => timedOut });
+    assert.strictEqual(evTO[0].status, "skip", "timeout → capa omitida (no rompe el ciclo)");
+    assert.ok(/se agot.*tiempo/i.test(evTO[0].narrative), "la narrativa del skip lleva la razón real (timeout), no 'no instalado'");
+    ok("QA de código: fallo de lanzamiento se explica con precisión (timeout/maxBuffer/allowlist/ausente ya no se confunden)");
+
+    // (4f) capa db con conexión inyectada pero repo solo con migrations/: el skip ACLARA que la
+    // conexión alimenta las pruebas de integración (capa unit), no una capa db aparte.
+    fs.mkdirSync(path.join(repo, "migrations"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "migrations", "0001_init.sql"), "CREATE TABLE t();", "utf8");
+    const detDb = detectRepo({ repoRoot: repo });
+    assert.strictEqual(detDb.layers.db.enabled, true, "migrations/ enciende la capa db (tool=migrations)");
+    const dbNoConn = await runDbTests({ repoRoot: repo, detection: detDb, exec: () => ({ code: 0, stdout: "", stderr: "" }), env: {} });
+    assert.ok(/sin runner db standalone/.test(dbNoConn[0].narrative), "sin conexión → mensaje clásico (añade pgtap/prisma)");
+    const dbConn = await runDbTests({ repoRoot: repo, detection: detDb, exec: () => ({ code: 0, stdout: "", stderr: "" }), env: { DATABASE_URL: "postgres://u:p@localhost/db" } });
+    assert.strictEqual(dbConn[0].status, "skip");
+    assert.ok(/integraci.n de la capa unit/.test(dbConn[0].narrative), "con conexión (pero sin sonda pg) → aclara que va a las pruebas de integración (capa unit)");
+    fs.rmSync(path.join(repo, "migrations"), { recursive: true, force: true });
+    ok("QA de código: capa db con conexión pero solo migrations/ → el skip aclara dónde se usa la conexión (capa unit)");
+
+    // (4f') SONDA DIRECTA a Postgres (conectividad + estructura + migraciones código↔base). En su propio
+    // archivo para no pasar el guardrail de 400 líneas de esta suite (patrón explore-login).
+    await runDbProbeCases(ctx);
+
+    // (4g) sin .sln, la capa unit corre TODOS los proyectos de test .NET (no solo el primero): antes
+    // se saltaban en silencio los demás (pérdida de cobertura). Cada proyecto → un objetivo etiquetado.
+    const dnetBase = fs.mkdtempSync(path.join(os.tmpdir(), "qa-dotnet-multi-"));
+    fs.mkdirSync(path.join(dnetBase, "svc", "A.Tests"), { recursive: true });
+    fs.mkdirSync(path.join(dnetBase, "svc", "B.Tests"), { recursive: true });
+    fs.writeFileSync(path.join(dnetBase, "svc", "A.Tests", "A.Tests.csproj"), "<Project></Project>", "utf8");
+    fs.writeFileSync(path.join(dnetBase, "svc", "B.Tests", "B.Tests.csproj"), "<Project></Project>", "utf8");
+    const detMulti = detectRepo({ repoRoot: dnetBase });
+    assert.strictEqual(detMulti.layers.unit.enabled, true);
+    assert.strictEqual(detMulti.layers.unit.tool, "dotnet-test", "repo .NET puro → unit=dotnet-test");
+    const seenProj = [];
+    const evMulti = await runUnitTests({
+      repoRoot: dnetBase, detection: detMulti,
+      exec: (cmd, args) => { seenProj.push(args.find((a) => /\.csproj$/i.test(a))); return { code: 0, stdout: "Passed! - Failed: 0, Passed: 1", stderr: "" }; },
+    });
+    assert.strictEqual(evMulti.length, 2, "un objetivo por proyecto de test (corre los 2, no solo 1)");
+    assert.ok(evMulti.every((e) => e.layer === "unit"));
+    const narrMulti = evMulti.map((e) => e.narrative);
+    assert.ok(narrMulti.some((n) => /@ A\.Tests/.test(n)) && narrMulti.some((n) => /@ B\.Tests/.test(n)), "cada objetivo se etiqueta con su proyecto");
+    assert.strictEqual(new Set(seenProj).size, 2, "dotnet test se invocó con cada .csproj por separado");
+    fs.rmSync(dnetBase, { recursive: true, force: true });
+    ok("QA de código: sin .sln, la capa unit corre TODOS los proyectos de test .NET (no solo el primero)");
+
     // (5) runCodeCycle end-to-end con tracker LOCAL + exec fake → reporte + capas corridas.
     const passExec = () => ({ code: 0, stdout: "", stderr: "" });
     const cycle = await runCodeCycle({ sourcePath: "myrepo", baseDir: base, env: {}, workItemId: "local", exec: passExec });
     assert.strictEqual(cycle.ok, true);
     assert.strictEqual(cycle.tracker, "local");
     assert.deepStrictEqual(cycle.layersRun, ["static", "unit", "security"], "corre las capas detectadas en alcance");
-    assert.ok(cycle.results.every((r) => r.status === "pass"), "exit 0 en todas → pass");
+    // Exit 0 en todas → SIN fallos. La seguridad emite varios objetos (SAST + secretos + SCA): con un exec
+    // fake vacío, SCA/secretos pueden quedar en `skip` accionable (p.ej. sin lockfile), lo que es correcto.
+    assert.ok(cycle.results.every((r) => r.status !== "fail"), "exit 0 en todas → ningún fallo");
+    assert.ok(["static", "unit"].every((l) => cycle.results.find((r) => r.layer === l)?.status === "pass"), "las capas static y unit pasan con exit 0");
     assert.ok(fs.existsSync(cycle.report.htmlPath), "el sink local escribe el reporte html");
     assert.ok(cycle.warnings.some((w) => /api|db/.test(w)), "avisa las capas no detectadas (api/db)");
     ok("QA de código: runCodeCycle de punta a punta (fuente confinada → detección → capas → sink local)");
@@ -173,7 +238,7 @@ export async function run(ctx) {
     // vía runner: exit 1 + salida dotnet → capa unit con casos reales (ya no caseless).
     fs.writeFileSync(path.join(repo, "Foo.Tests.csproj"), "<Project></Project>", "utf8"); // destino localizable
     const det2 = { layers: { unit: { enabled: true, tool: "dotnet-test", cwd: "", targets: [{ tool: "dotnet-test", cwd: "" }] } } };
-    const evRun = runUnitTests({ repoRoot: repo, detection: det2, exec: () => ({ code: 1, stdout: dotnetCompile, stderr: "" }) });
+    const evRun = await runUnitTests({ repoRoot: repo, detection: det2, exec: () => ({ code: 1, stdout: dotnetCompile, stderr: "" }) });
     assert.strictEqual(evRun[0].status, "fail");
     assert.ok(Array.isArray(evRun[0].cases) && evRun[0].cases.length === 1, "el runner de unit cuelga el caso de dotnet (ya no queda mudo)");
     ok("QA de código: parser de dotnet test (compilación + prueba fallida con archivo:línea; runner ya no queda caseless)");
@@ -222,6 +287,89 @@ export async function run(ctx) {
     assert.deepStrictEqual(onlyUnit.layersRun, ["unit"], "layers=['unit'] corre solo unit");
     assert.ok(onlyUnit.results.every((r) => r.layer === "unit"), "ninguna otra capa se ejecutó");
     ok("QA de código: runCodeCycle respeta el subconjunto de capas pedido (solo unit)");
+
+    // (7) HU de hallazgos — render PURO. Extraído a findings-suite.mjs (guardrail de 400 líneas).
+    runFindingsCases(ctx);
+
+    // (7b) encoding: la salida de herramientas de Windows (dotnet en español) viene en cp1252/latin1;
+    // decodeOutput la arregla (UTF-8 válido se respeta; bytes latin1 → acentos y « » correctos).
+    const latin1 = Buffer.from([0x61, 0x75, 0x74, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x63, 0x69, 0xf3, 0x6e]); // "autenticación" (ó=0xF3)
+    assert.strictEqual(decodeOutput(latin1), "autenticación", "cp1252/latin1 → acentos correctos");
+    assert.strictEqual(decodeOutput(Buffer.from("autenticación", "utf8")), "autenticación", "UTF-8 válido se respeta");
+    assert.strictEqual(decodeOutput(Buffer.from([0xab, 0x70, 0x6f, 0x73, 0x74, 0x67, 0x72, 0x65, 0x73, 0xbb])), "«postgres»", "« » de Windows se decodifican bien");
+    assert.strictEqual(decodeOutput("ya string"), "ya string", "un string ya decodificado pasa igual");
+    // U+FFFD ya presente en UTF-8 válido (la herramienta perdió el acento aguas arriba, p.ej. Npgsql
+    // pre-auth) → se normaliza a "?" para no mostrar cuadros rotos en el reporte/HU.
+    assert.strictEqual(decodeOutput(Buffer.from("autenticaci�n", "utf8")), "autenticaci?n", "U+FFFD irrecuperable → '?'");
+    ok("QA de código: decodeOutput arregla el mojibake (cp1252/latin1 de Windows → texto correcto; UTF-8 intacto; U+FFFD→?)");
+
+    // (8) adapter azure createFindingsWorkItem con cliente FALSO: cuenta #N (2 existentes → #3),
+    // resuelve el sprint en curso y crea la User Story con Title/Description/Tags/IterationPath.
+    let created = null;
+    const fakeClient = {
+      queryByWiql: async () => ({ status: 200, json: { workItems: [{ id: 1 }, { id: 2 }] } }),
+      currentIteration: async () => ({ status: 200, json: { value: [{ path: "Proj\\Sprint 5" }] } }),
+      createWorkItem: async (type, ops) => { created = { type, ops }; return { status: 200, json: { id: 777 } }; },
+      uploadAttachment: async () => ({ status: 201, json: { url: "http://att/1" } }),
+      patchWorkItem: async () => ({ status: 200, json: {} }),
+      workItemWebUrl: (id) => `http://web/${id}`,
+    };
+    const az = new AzureDevOpsAdapter({ profile: {}, env: {}, adoClient: fakeClient });
+    const fwi = await az.createFindingsWorkItem({ makeTitle: (seq) => `T #${seq}`, descriptionHtml: "<p>x</p>", tags: "QualityOps; Hallazgos-QA", countTag: "QualityOps" });
+    assert.strictEqual(fwi.ok, true);
+    assert.strictEqual(fwi.seq, 3, "cuenta las 2 existentes → #3");
+    assert.strictEqual(fwi.id, "777");
+    assert.strictEqual(fwi.iterationPath, "Proj\\Sprint 5", "usa el sprint en curso");
+    assert.strictEqual(created.type, "User Story", "crea una HU (User Story)");
+    const byPath = Object.fromEntries(created.ops.map((o) => [o.path, o.value]));
+    assert.strictEqual(byPath["/fields/System.Title"], "T #3", "el título lleva el #N");
+    assert.ok(byPath["/fields/System.IterationPath"] === "Proj\\Sprint 5" && /Hallazgos-QA/.test(byPath["/fields/System.Tags"]), "setea sprint + tags");
+    ok("QA de código: adapter azure crea la HU de hallazgos (conteo #N + sprint en curso + User Story con tags/iteración)");
+
+    // (8b) degradación de campos con permiso especial: si crear CON tags da 403 (TF401289 «create tag
+    // definition», el caso REAL de FLIT) pero SIN tags funciona, la HU se crea igual, SIN tags y
+    // CONSERVANDO el sprint. Marca `tagsSkipped` y deja `iterationSkipped=false`.
+    let attempts = 0;
+    const fakeClientTag = {
+      queryByWiql: async () => ({ status: 200, json: { workItems: [] } }),
+      currentIteration: async () => ({ status: 200, json: { value: [{ path: "Proj\\Sprint 9" }] } }),
+      createWorkItem: async (_type, ops) => {
+        attempts++;
+        const hasTags = ops.some((o) => o.path === "/fields/System.Tags");
+        return hasTags ? { status: 403, json: { message: "TF401289: create tags" } } : { status: 200, json: { id: 888 } };
+      },
+      uploadAttachment: async () => ({ status: 201, json: { url: "u" } }),
+      patchWorkItem: async () => ({ status: 200, json: {} }),
+      workItemWebUrl: (id) => `http://web/${id}`,
+    };
+    const az2 = new AzureDevOpsAdapter({ profile: {}, env: {}, adoClient: fakeClientTag });
+    const fwi2 = await az2.createFindingsWorkItem({ makeTitle: (s) => `T #${s}`, descriptionHtml: "<p>x</p>", tags: "QualityOps; Hallazgos-QA" });
+    assert.strictEqual(fwi2.ok, true, "con tags 403 pero sin tags OK → la HU se crea igual");
+    assert.strictEqual(fwi2.id, "888");
+    assert.strictEqual(fwi2.tagsSkipped, true, "marca que se creó sin tags (falta permiso de crear tags)");
+    assert.strictEqual(fwi2.iterationSkipped, false, "conserva el sprint (no fue el problema)");
+    assert.strictEqual(fwi2.iterationPath, "Proj\\Sprint 9", "el sprint se mantiene");
+    assert.strictEqual(attempts, 2, "intentó con tags y reintentó sin ellos (conservando el sprint)");
+    ok("QA de código: HU de hallazgos degrada campos con permiso especial (tags TF401289 → crea sin tags, conserva sprint)");
+
+    // (9) validación de la ruta: un proyecto real (con package.json) pasa; un texto cualquiera o una
+    // carpeta vacía NO → el asistente no deja avanzar (fix: antes cualquier string dejaba continuar).
+    assert.strictEqual(validateProjectPath({ sourcePath: repo, baseDir: "", env: {} }).ok, true, "carpeta con package.json → es un proyecto");
+    assert.strictEqual(validateProjectPath({ sourcePath: "X-no-existe-zzz", baseDir: "", env: {} }).ok, false, "un texto que no es ruta → rechazado");
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-empty-"));
+    assert.strictEqual(looksLikeProject(emptyDir).ok, false, "carpeta vacía no parece un proyecto");
+    fs.rmSync(emptyDir, { recursive: true, force: true });
+    ok("QA de código: validación de ruta (proyecto real pasa; texto inválido o carpeta vacía no deja avanzar)");
+
+    // (10) buildDbEnv: arma las vars de conexión desde la BD configurada (URL para la capa db +
+    // ConnectionStrings__Core en formato Npgsql para las pruebas .NET; cita el password especial).
+    const dbe = buildDbEnv({ engine: "postgres", host: "localhost", port: 5432, database: "flit_dev", user: "postgres", password: "p@ss w;ord" });
+    assert.strictEqual(dbe.DATABASE_URL, "postgresql://postgres:p%40ss%20w%3Bord@localhost:5432/flit_dev", "DATABASE_URL con user/pass URL-encoded");
+    assert.ok(/Host=localhost;Port=5432;Database=flit_dev;Username=postgres;Password='p@ss w;ord'/.test(dbe.ConnectionStrings__Core), "Npgsql cita el password con ; y espacio");
+    const dbeSsl = buildDbEnv({ engine: "postgres", host: "h", port: 5432, database: "d", user: "u", password: "x", ssl: true, sslAllowSelfSigned: true });
+    assert.ok(/sslmode=require/.test(dbeSsl.DATABASE_URL) && /SSL Mode=Require;Trust Server Certificate=true/.test(dbeSsl.ConnectionStrings__Core), "SSL se refleja en URL y Npgsql");
+    assert.deepStrictEqual(buildDbEnv({ host: "", user: "" }), {}, "sin host/user → no inyecta nada");
+    ok("QA de código: buildDbEnv arma DATABASE_URL + ConnectionStrings__Core (Npgsql) desde la BD configurada");
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }

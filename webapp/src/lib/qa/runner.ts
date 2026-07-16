@@ -7,8 +7,10 @@ import { trackerEnv } from "./tracker";
 import { emitEvent, endRun } from "@/lib/events";
 import { saveRun } from "@/lib/runStore";
 import { currentTenantId, runInTenant } from "@/lib/db/tenantContext";
-import { isStopRequested, clearStop } from "@/lib/procRegistry";
+import { isStopRequested, clearStop, markActive, markDone } from "@/lib/procRegistry";
+import { startHeartbeat, stopHeartbeat } from "@/lib/qa/heartbeat";
 import { runFeatureFanout } from "./fanout";
+import { setupConfiguredDb, type DbInjection } from "./dbInject";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
 
 export interface RunInput {
@@ -23,6 +25,7 @@ export interface RunInput {
   layers?: string[]; // subconjunto de capas static/unit/api/db/security (vacío = detectadas)
   featureId?: string; // FT padre (traza la carpeta de evidencia)
   developer?: string; // dev responsable (traza la carpeta de evidencia)
+  useConfiguredDb?: boolean; // inyectar la BD configurada (módulo BD) al entorno de las pruebas
 }
 
 /**
@@ -102,7 +105,15 @@ export async function startRun(input: RunInput): Promise<RunRecord> {
   // La corrida es fire-and-forget tras responder: re-abre el contexto de tenant con un
   // snapshot, para que saveRun/eventos en background queden scopeados por RLS al tenant dueño.
   const tenantId = currentTenantId();
-  void runInTenant(tenantId, () => execute(record, input, cfg));
+  // Este proceso pasa a ser DUEÑO de la corrida: la marca activa y late su heartbeat mientras corre.
+  // Si el proceso muere, markDone/stopHeartbeat no llegan a correr → el heartbeat se congela y la
+  // reconciliación perezosa la cerrará como huérfana (en vez de quedar `running` para siempre).
+  markActive(id);
+  const beat = startHeartbeat(id, tenantId);
+  void runInTenant(tenantId, () => execute(record, input, cfg)).finally(() => {
+    stopHeartbeat(beat);
+    markDone(id);
+  });
   return record;
 }
 
@@ -271,6 +282,7 @@ async function execute(record: RunRecord, input: RunInput, cfg: AppConfig): Prom
 async function executeCode(record: RunRecord, input: RunInput, cfg: AppConfig): Promise<void> {
   const id = record.id;
   const tracker = cfg.tracker.selected;
+  let dbInjection: DbInjection | null = null; // conexión + sonda de BD (si se pidió); se cierra en el finally
   try {
     // runCodeCycle se re-exporta desde orchestrator.mjs (ya en la allowlist de importKit) → no se
     // amplía la superficie de kit.ts; el grafo interno del motor se resuelve por import nativo.
@@ -279,6 +291,24 @@ async function executeCode(record: RunRecord, input: RunInput, cfg: AppConfig): 
     emitEvent(id, "info", "Resolviendo perfil y entorno…");
     const profile = await buildProfile(tracker);
     const env = await buildEnv(cfg);
+
+    // BD configurada (opt-in): inyecta la conexión del módulo de BD al entorno de las pruebas → las
+    // pruebas de integración (.NET) conectan y se activa la capa `db`. Con SSH abre un túnel (puerto
+    // local real) y apunta ahí; se cierra en el finally. Sin BD por defecto → aviso, sigue sin inyectar.
+    // La contraseña va SOLO al entorno del proceso hijo (necesario para conectar); nunca al navegador.
+    if (input.useConfiguredDb) {
+      try {
+        dbInjection = await setupConfiguredDb(cfg);
+        if (dbInjection) {
+          Object.assign(env, dbInjection.env); // vars de conexión → pruebas de integración (capa unit)
+          emitEvent(id, "info", dbInjection.info);
+        } else {
+          emitEvent(id, "stderr", "Se pidió usar la BD configurada, pero no hay una conexión por defecto con host/usuario en el módulo de BD.");
+        }
+      } catch (e: any) {
+        emitEvent(id, "stderr", `No se pudo preparar la BD configurada: ${describeError(e)} — las pruebas usarán su propia configuración.`);
+      }
+    }
 
     if (isStopRequested(id)) {
       emitEvent(id, "error", "Detenido por el usuario.");
@@ -302,6 +332,7 @@ async function executeCode(record: RunRecord, input: RunInput, cfg: AppConfig): 
       featureId: input.featureId,
       developer: input.developer,
       layers,
+      pgQuery: dbInjection?.pgQuery, // sonda directa a Postgres para la capa db (undefined si no hay BD)
       // Progreso en vivo por capa (la corrida es bloqueante; sin esto la UI parece colgada).
       emit: (lvl: string, msg: string) => emitEvent(id, lvl as any, msg),
     });
@@ -340,6 +371,7 @@ async function executeCode(record: RunRecord, input: RunInput, cfg: AppConfig): 
     await saveRun(record);
     emitEvent(id, "error", `Error: ${record.error}`);
   } finally {
+    await dbInjection?.close(); // cierra el cliente pg de la sonda + el túnel SSH (best-effort interno)
     clearStop(id);
     await endRun(id);
   }

@@ -16,7 +16,19 @@ function firstLine(s) {
 }
 
 /**
- * @param {{name?:string, message?:string}} tc  caso fallido
+ * Etiquetas del bloque explicativo según el ESTADO del caso. Un caso que pasó no "falló" (sería
+ * absurdo titular «Qué pasó» en verde) y uno omitido tampoco. Compartidas por HU/MD/HTML y
+ * espejadas en la webapp → las 4 superficies dicen lo mismo en los 4 escenarios.
+ * @param {string} status  pass | fail | skip
+ */
+export function explainLabels(status) {
+  if (status === "pass") return { plain: "✔ Qué se validó", action: "👉 Sugerencia" };
+  if (status === "fail") return { plain: "🧩 Qué pasó", action: "👉 Qué hacer" };
+  return { plain: "ℹ️ Qué significa", action: "👉 Qué hacer" };
+}
+
+/**
+ * @param {{name?:string, message?:string, plain?:string, action?:string}} tc  caso
  * @param {{layer?:string, tool?:string}} [ctx]
  * @returns {{category:string, plain:string, action?:string}|null}
  */
@@ -25,6 +37,13 @@ export function explainFailure(tc = {}, ctx = {}) {
   const msg = String(tc.message || "");
   const hay = `${name}\n${msg}`;
   const layer = ctx.layer || "";
+
+  // 0) El caso YA trae su explicación (la emiten los checks declarativos de BD: ellos saben qué
+  //    validaron y qué significa) → se deja pasar tal cual. Cualquier check nuevo que emita
+  //    `plain`/`action` se ve igual en HU, MD, HTML y UX sin repetir su texto acá.
+  if (tc.plain) {
+    return { category: "declared", plain: String(tc.plain), action: tc.action ? String(tc.action) : undefined };
+  }
 
   // 1) Dependencia/módulo que no se puede importar (falta instalar o ruta rota). Cubre también
   //    la "suite que no se ejecutó" (nuestro caso sintético trae el error de import en el mensaje).

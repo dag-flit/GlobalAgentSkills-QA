@@ -9,6 +9,14 @@ export interface FailureExplanation {
   action?: string;
 }
 
+// Etiquetas del bloque explicativo según el ESTADO del caso (espejo de failure-explain.mjs). Un caso
+// que pasó no "falló" (titular «Qué pasó» en verde sería absurdo) y uno omitido tampoco.
+export function explainLabels(status?: string): { plain: string; action: string } {
+  if (status === "pass") return { plain: "✔ Qué se validó", action: "👉 Sugerencia" };
+  if (status === "fail") return { plain: "🧩 Qué pasó", action: "👉 Qué hacer" };
+  return { plain: "ℹ️ Qué significa", action: "👉 Qué hacer" };
+}
+
 function firstLine(s: string): string {
   return (
     String(s || "")
@@ -20,13 +28,20 @@ function firstLine(s: string): string {
 }
 
 export function explainFailure(
-  tc: { name?: string; message?: string | null },
+  tc: { name?: string; message?: string | null; plain?: string | null; action?: string | null },
   ctx: { layer?: string; tool?: string } = {},
 ): FailureExplanation | null {
   const name = String(tc.name || "");
   const msg = String(tc.message || "");
   const hay = `${name}\n${msg}`;
   const layer = ctx.layer || "";
+
+  // 0) El caso YA trae su explicación (la emiten los checks declarativos de BD: ellos saben qué
+  //    validaron y qué significa) → se deja pasar tal cual. Cualquier check nuevo que emita
+  //    `plain`/`action` se ve igual en HU, MD, HTML y UX sin repetir su texto acá.
+  if (tc.plain) {
+    return { category: "declared", plain: String(tc.plain), action: tc.action ? String(tc.action) : undefined };
+  }
 
   // 1) Dependencia/módulo que no se puede importar (falta instalar o ruta rota).
   const m = hay.match(

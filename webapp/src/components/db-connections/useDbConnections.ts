@@ -72,24 +72,30 @@ export function useDbConnections() {
   }
 
   function makeDefault() {
-    if (!selected) return;
-    setCfg((c) => ({
-      ...c!,
-      databases: c!.databases.map((d) => ({ ...d, isDefault: d.id === selected.id })),
-    }));
-    setSavedMsg(null);
-    action.notify(`«${selected.name || "(sin nombre)"}» marcada como default — recuerda Guardar`);
+    if (!selected || !cfg) return;
+    // Marcar por defecto PERSISTE al instante (un solo clic): antes solo cambiaba el estado en
+    // memoria y exigía "Guardar" aparte → al recargar volvía al default persistido. Bug corregido.
+    const next: AppConfig = {
+      ...cfg,
+      databases: cfg.databases.map((d) => ({ ...d, isDefault: d.id === selected.id })),
+    };
+    setCfg(next);
+    void save(next, `«${selected.name || "(sin nombre)"}» marcada como default`);
   }
 
-  async function save() {
+  // `override` permite guardar una config recién calculada sin depender del estado async (React
+  // no actualiza `cfg` de inmediato). `successMsg` personaliza el aviso (p.ej. al marcar default).
+  async function save(override?: AppConfig, successMsg = "Conexiones guardadas correctamente") {
+    const payload = override ?? cfg;
+    if (!payload) return;
     setSaving(true);
     setSavedMsg(null);
     await action
-      .run({ loading: "Guardando conexiones…", success: "Conexiones guardadas correctamente" }, async () => {
+      .run({ loading: "Guardando conexiones…", success: successMsg }, async () => {
         const r = await fetch("/api/config", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(cfg),
+          body: JSON.stringify(payload),
         });
         if (!r.ok) throw new Error("No se pudo guardar la configuración");
         const updated: AppConfig = await r.json();

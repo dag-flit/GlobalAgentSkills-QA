@@ -1,4 +1,4 @@
-import { LAYER_INFO, STATUS_TXT, layerNarrative, artifactUrl } from "./helpers";
+import { LAYER_INFO, STATUS_TXT, layerNarrative, artifactUrl, friendlyFile } from "./helpers";
 import { CaseList } from "./CaseList";
 import { explainLayerFailure } from "./failureExplain";
 
@@ -18,14 +18,30 @@ export function RunResults({
     fail: results.filter((r) => r.status === "fail").length,
     skip: results.filter((r) => r.status === "skip").length,
   };
+  // Distingue CAPAS (objetivos) de PRUEBAS (casos): antes se veía "5 fallos" (capas) y "7 hallazgos"
+  // (pruebas) sin aclarar que miden cosas distintas. Las advertencias del linter van como sugerencias.
+  const allCases = results.flatMap((r: any) => (Array.isArray(r.cases) ? r.cases : []));
+  const caseP = allCases.filter((c: any) => c.status === "pass").length;
+  const caseF = allCases.filter((c: any) => c.status === "fail").length;
+  const warn = results
+    .filter((r) => r.layer === "static")
+    .flatMap((r: any) => (Array.isArray(r.cases) ? r.cases : []))
+    .filter((c: any) => c.status === "skip").length;
   return (
     <div className="card space-y-3">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="font-semibold text-sm">Resultados</h2>
         <span className="text-xs text-muted">
-          ✅ {counts.pass} · ❌ {counts.fail} · ⏭ {counts.skip}
+          Capas: <span className="text-green-300">✅ {counts.pass}</span> · <span className="text-red-300">❌ {counts.fail}</span> · ⏭ {counts.skip}
         </span>
+        <span className="text-xs text-muted">
+          Pruebas: <span className="text-green-300">✅ {caseP}</span> · <span className="text-red-300">❌ {caseF}</span>
+        </span>
+        {warn > 0 && <span className="text-xs text-amber-300">💡 {warn} sugerencia(s)</span>}
       </div>
+      <p className="text-[11px] text-muted -mt-1">
+        Una <b>capa</b> es un objetivo (p. ej. un proyecto de test); una <b>prueba</b> es un caso dentro de la capa.
+      </p>
       <div className="space-y-2">
         {results.map((r, i) => {
           const info = LAYER_INFO[r.layer] || { label: r.layer, desc: "" };
@@ -38,11 +54,15 @@ export function RunResults({
             <div key={i} className="rounded-lg border border-border bg-panel2/30 p-3 space-y-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-sm">{info.label}</span>
+                {/* Objetivo puntual (proyecto de test .NET, sonda de BD…): cada tarjeta = un comando. */}
+                {r.metrics?.label && (
+                  <span className="badge bg-accent/15 text-accent text-[10px] font-medium">🎯 {r.metrics.label}</span>
+                )}
                 <span className={`badge ${st.cls} text-[10px]`}>{st.label}</span>
                 {r.metrics?.tool && (
                   <span className="badge bg-panel2 text-muted text-[10px]">
                     {r.metrics.tool}
-                    {r.metrics?.cwd ? ` · ${r.metrics.cwd}` : ""}
+                    {!r.metrics?.label && r.metrics?.cwd ? ` · ${r.metrics.cwd}` : ""}
                   </span>
                 )}
               </div>
@@ -110,7 +130,8 @@ export function RunResults({
                     {r.blame ? (
                       <div className="text-[11px] text-sky-200/80">
                         <span className="font-semibold">👤 Último en modificar </span>
-                        <code className="break-all">{r.blame.line ? `${r.blame.file}:${r.blame.line}` : r.blame.file}</code>
+                        {friendlyFile(r.blame.file)}{" "}
+                        <code className="break-all">{r.blame.line ? `${String(r.blame.file).replace(/\\/g, "/")}:${r.blame.line}` : String(r.blame.file).replace(/\\/g, "/")}</code>
                         {": "}{r.blame.author}{r.blame.date ? ` (${r.blame.date})` : ""}
                       </div>
                     ) : (

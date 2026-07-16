@@ -6,6 +6,8 @@
 // conexión o el tooling, se OMITE con un aviso accionable (nunca aborta el ciclo).
 
 import { runLayer } from "./_runner-core.mjs";
+import { probePostgres, countMigrationsInCode } from "./db-probe.mjs";
+import { scanDeclaredRls } from "./db-declared.mjs";
 
 // Variables de conexión soportadas (orden de preferencia). Cablear aquí NO una URL, sino
 // SOLO los NOMBRES de var que el kit reconoce; el valor vive en el entorno del proyecto.
@@ -62,12 +64,44 @@ const TOOLS = {
     return ["prisma", "migrate", "status"];
   },
   // migrations/ y testcontainers no tienen runner standalone: se omiten con aviso accionable.
-  migrations: () => ({ skip: "solo carpeta migrations/: sin runner db standalone — añade pgtap/prisma + conexión en env para activar db" }),
+  // Si HAY conexión inyectada (toggle «usar BD configurada»), se aclara que esa conexión NO alimenta
+  // esta capa —no hay runner de BD que ejecutar— sino las pruebas de integración de la capa `unit`
+  // (p.ej. .NET leyendo ConnectionStrings): así el usuario no cree que «marqué BD y no hizo nada».
+  migrations: ({ env }) => ({
+    skip: dbUrl(env)
+      ? "conexión detectada, pero el repo solo trae migrations/ (sin runner de BD como pgtap/prisma): la conexión se inyecta en las pruebas de integración de la capa unit, no como una capa db aparte"
+      : "solo carpeta migrations/: sin runner db standalone — añade pgtap/prisma + conexión en env para activar db",
+  }),
   testcontainers: () => ({ skip: "testcontainers corre dentro de la capa unit, no como check db aparte" }),
 };
 
-/** @returns {import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]} */
-export function runDbTests(opts = {}) {
+// Cuando la capa `db` se resolvería a `migrations` (no hay pgtap/prisma REAL que correr) PERO llega una
+// sonda de Postgres inyectada (`pgQuery`), en vez de OMITIR se hace una VALIDACIÓN DIRECTA a la base:
+// conecta, verifica estructura y contrasta migraciones código↔base (ver db-probe.mjs). Cumple el objetivo
+// del usuario: "conectarme a Postgres directamente y evaluar la BD". pgtap/prisma reales → los corre runLayer.
+async function maybeProbePostgres(opts) {
+  const { detection, repoRoot = process.cwd(), env = {}, pgQuery, workItemId, profile = {} } = opts;
+  if (typeof pgQuery !== "function") return null; // sin sonda inyectada → comportamiento previo (skip)
+  if (detection?.layers?.db?.tool !== "migrations") return null; // pgtap/prisma → runLayer los ejecuta
+  if (!dbUrl(env)) return null; // sin conexión → skip normal (mensaje consciente de la conexión)
+  const migrationsInCode = countMigrationsInCode(repoRoot);
+  // El criterio sale del CÓDIGO del repo probado, no del kit ni de una config del usuario: se lee qué
+  // declara sobre su base (RLS/policies en su DDL o migraciones) y la sonda contrasta base↔código —
+  // igual que el conteo de migraciones. Si el repo no declara nada, el check no aplica y se omite.
+  const declared = { rls: scanDeclaredRls(repoRoot) };
+  const res = await probePostgres({ query: pgQuery, migrationsInCode, profile, declared });
+  const okCount = res.cases.filter((c) => c.status === "pass").length;
+  const undecl = res.cases.filter((c) => c.status === "skip").length;
+  const narrative = res.connected
+    ? `Conexión directa a PostgreSQL: ${okCount} verificación(es) OK${res.status === "fail" ? " · con hallazgos" : ""}${undecl ? ` · ${undecl} sin declarar/omitida(s)` : ""}`
+    : "No se pudo conectar a PostgreSQL";
+  return [{ layer: "db", work_item_id: workItemId, status: res.status, narrative, cases: res.cases, metrics: { tool: "postgres-probe", cwd: "" } }];
+}
+
+/** @returns {Promise<import("../../core/tracker-adapter/tracker-adapter.mjs").EvidenceObject[]>} */
+export async function runDbTests(opts = {}) {
+  const probe = await maybeProbePostgres(opts);
+  if (probe) return probe;
   return runLayer({ layer: "db", tools: TOOLS, ...opts });
 }
 

@@ -103,7 +103,7 @@ export function ConnectionEditor({ c }: { c: DbConnectionsCtl }) {
         <button className="btn-ghost" onClick={c.runTest} disabled={c.test.status === "testing"}>
           🔌 Probar conexión
         </button>
-        <button className="btn-primary" onClick={c.save} disabled={c.saving}>
+        <button className="btn-primary" onClick={() => c.save()} disabled={c.saving}>
           {c.saving ? "Guardando…" : "Guardar"}
         </button>
         <button className="btn-ghost" onClick={c.makeDefault} disabled={selected.isDefault}>

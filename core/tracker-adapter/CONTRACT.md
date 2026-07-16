@@ -14,11 +14,21 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 | `getChildren(id)` | HU **hijas** de un Feature (para el fan-out por HU) | `[]` (local no tiene jerarquía) |
 | `publishEvidence(target, payload)` | Entrega la evidencia normalizada | Reporte `md`+`html` en `qa-evidence/` |
 | `commentWorkItem(id, html)` | Publica un comentario HTML en un WI (p.ej. el **brief PR-driven**) | `{ok:false}` (sin Discussion) |
+| `createFindingsWorkItem(opts)` | Crea una **HU de hallazgos** (modo QA del código) sin relacionarla a nada, en el sprint en curso | `{ok:false}` (local no crea work items) |
 
 > **`commentWorkItem(id, html)`** — usado por el flujo **QA guiado por PR** para dejar el brief de
 > validación (qué probar) como comentario en la HU. `azure-devops` lo postea en la Discussion
 > (`addComment`); `local` devuelve `{ok:false, reason}` (no tiene comentarios). No entrega evidencia:
 > es texto/HTML de contexto para el equipo.
+
+> **`createFindingsWorkItem(opts)`** — usado por el modo **QA del código** (`azure-devops`). Cada
+> ejecución crea una **HU (User Story) nueva** con los hallazgos de las capas, **sin relacionarla** a
+> ninguna HU/Feature, en el **proyecto del tracker** y el **sprint en curso** (resuelto por
+> `currentIteration`). El título lleva un **incrementador `#N`** por conteo de las ya creadas (por tag
+> `QualityOps`, vía WIQL). `opts` = `{ makeTitle:(seq)=>string, descriptionHtml, tags?, countTag?, attachHtml? }`.
+> Devuelve `{ok, id, url, seq, title, iterationPath, attached}`. `local` devuelve `{ok:false}` (no crea
+> work items) — este modo se usa solo con Azure. El **reporte local** se sigue escribiendo por
+> `publishEvidence` (dentro del proyecto analizado), aunque el destino sea Azure.
 
 > **Fan-out de Feature:** cuando el WI destino es un **Feature**, la webapp lee sus **HU hijas** con
 > `getChildren(id)` y corre el guion guardado de cada HU, publicando evidencia en cada una. `getWorkItem`

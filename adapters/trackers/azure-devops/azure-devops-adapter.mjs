@@ -97,6 +97,110 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
       : { ok: false, reason: `ADO ${res.status}` };
   }
 
+  // Crea una HU de "hallazgos" (modo QA del código) SIN relacionarla a nada, en el proyecto del
+  // tracker y en el SPRINT EN CURSO (resuelto de ADO). El incrementador #N sale del conteo de las
+  // HU ya creadas por el agente (por tag → robusto entre reinicios). Best-effort en cada paso: un
+  // fallo de conteo/iteración/adjunto NO aborta la creación; solo la creación en sí puede fallar.
+  async createFindingsWorkItem({
+    type = "User Story",
+    tags = "QualityOps; Hallazgos-QA",
+    countTag = "QualityOps",
+    makeTitle,
+    descriptionHtml = "",
+    attachHtml = null,
+  } = {}) {
+    // (1) Incrementador #N: cuántas HU de hallazgos existen ya. Se cuenta por el TÍTULO (token de
+    // marca), NO por tag: crear/leer tags requiere un permiso especial de ADO («create tag definition»)
+    // que puede faltar; el título siempre está disponible y es igual de distintivo.
+    let seq = 1;
+    try {
+      const q = `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.Title] CONTAINS '${countTag}'`;
+      const res = await this.client.queryByWiql(q);
+      seq = (((res.json && res.json.workItems) || []).length) + 1;
+    } catch {
+      /* conteo best-effort: si falla, seq=1 (mejor crear que abortar) */
+    }
+    const title = String(typeof makeTitle === "function" ? makeTitle(seq) : `Hallazgos QA de código #${seq}`).slice(0, 255);
+
+    // (2) Sprint en curso (best-effort). Sin sprint activo → el WI queda en el backlog.
+    let iterationPath = null;
+    try {
+      const it = await this.client.currentIteration();
+      iterationPath = (it.json && it.json.value && it.json.value[0] && it.json.value[0].path) || null;
+    } catch {
+      /* sin iteración → backlog */
+    }
+
+    // (3) Crear la HU (JSON-Patch). Description acepta HTML. Title/Description SIEMPRE van; los campos
+    // que requieren PERMISOS ESPECIALES se degradan si ADO los rechaza (403/401), para que la HU se
+    // cree igual y no se pierdan los hallazgos:
+    //   • System.Tags → permiso «create tag definition» (TF401289) — puede faltar.
+    //   • System.IterationPath → permiso «Editar elementos de trabajo en este nodo» del sprint.
+    // Se intenta con todo, y ante 403/401 se quita primero el tag y luego la iteración.
+    const baseOps = [
+      { op: "add", path: "/fields/System.Title", value: title },
+      { op: "add", path: "/fields/System.Description", value: this._supervisionPrefix() + String(descriptionHtml || "") },
+    ];
+    const tagsOp = tags ? { op: "add", path: "/fields/System.Tags", value: tags } : null;
+    const iterOp = iterationPath ? { op: "add", path: "/fields/System.IterationPath", value: iterationPath } : null;
+    const plans = [
+      { ops: [...baseOps, ...(iterOp ? [iterOp] : []), ...(tagsOp ? [tagsOp] : [])], iter: !!iterOp, tags: !!tagsOp },
+      { ops: [...baseOps, ...(iterOp ? [iterOp] : [])], iter: !!iterOp, tags: false }, // sin tags
+      { ops: [...baseOps], iter: false, tags: false }, // sin tags ni sprint (backlog)
+    ];
+
+    const is2xx = (r) => r.status >= 200 && r.status < 300 && r.json && r.json.id;
+    let res = null;
+    let used = plans[0];
+    let prevOpsLen = -1;
+    for (const plan of plans) {
+      if (plan.ops.length === prevOpsLen) continue; // salta intentos idénticos (sin campo que quitar)
+      prevOpsLen = plan.ops.length;
+      res = await this.client.createWorkItem(type, plan.ops);
+      used = plan;
+      if (is2xx(res)) break;
+      if (res.status !== 403 && res.status !== 401) break; // otro error → no tiene sentido degradar
+    }
+    const iterationSkipped = Boolean(iterOp) && is2xx(res) && !used.iter;
+    const tagsSkipped = Boolean(tagsOp) && is2xx(res) && !used.tags;
+    if (iterationSkipped) iterationPath = null;
+
+    const id = res && res.json && res.json.id;
+    if (!is2xx(res)) {
+      const apiMsg = (res && (res.json?.message || res.json?.value?.Message)) || "";
+      const st = res ? res.status : "?";
+      const hint =
+        st === 401 || st === 403
+          ? ` — la cuenta/PAT no puede crear el work item en '${this.client.project}' ni con los campos mínimos. Revisá el scope «Work Items (Read, write & manage)» del PAT y el permiso «Editar elementos de trabajo en este nodo» del Área raíz del proyecto.`
+          : st === 404
+          ? ` — no se encontró el proyecto/tipo. ¿Existe el tipo '${type}' en el proceso del proyecto '${this.client.project}'?`
+          : st === 400
+          ? ` — la creación fue rechazada${apiMsg ? `: ${apiMsg}` : " (revisá el tipo de work item)"}.`
+          : "";
+      return { ok: false, reason: `ADO ${st}${hint}${apiMsg ? ` [ADO: ${apiMsg}]` : ""}`, seq, title };
+    }
+
+    // (4) Adjuntar el reporte HTML autocontenido a la HU (best-effort).
+    let attached = false;
+    if (attachHtml) {
+      try {
+        if (fs.existsSync(attachHtml)) {
+          const up = await this.client.uploadAttachment(path.basename(attachHtml), fs.readFileSync(attachHtml));
+          const url = up.json && up.json.url;
+          if (url) {
+            const rel = await this.client.patchWorkItem(id, [
+              { op: "add", path: "/relations/-", value: { rel: "AttachedFile", url, attributes: { comment: "Reporte QualityOps (autocontenido)" } } },
+            ]);
+            attached = rel.status >= 200 && rel.status < 300;
+          }
+        }
+      } catch {
+        /* adjunto best-effort: la HU ya quedó creada con los hallazgos en la Description */
+      }
+    }
+    return { ok: true, id: String(id), url: this.client.workItemWebUrl(id), seq, title, iterationPath, iterationSkipped, tagsSkipped, attached };
+  }
+
   async publishEvidence(target, payload) {
     const results = Array.isArray(payload && payload.results) ? payload.results : [];
     const parentId = (target && target.work_item_id) || (payload && payload.work_item_id) || null;

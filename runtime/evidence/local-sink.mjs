@@ -4,77 +4,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { renderCoverageMd, renderCoverageHtml } from "./ac-coverage.mjs";
-import { toolDescription, interpretLayer } from "./layer-explain.mjs";
-import { explainFailure, explainLayerFailure } from "./failure-explain.mjs";
+import { toolDescription, interpretLayer, describeEvidence, evidenceItems, evidenceLayers, notVerifiedCases, techDetail } from "./layer-explain.mjs";
+import { warningsMd, warningsHtml } from "./lint-explain.mjs";
+import { explainLayerFailure, explainLabels } from "./failure-explain.mjs";
+import { executedMd } from "./report-executed.mjs";
 import { planMd, planHtml } from "./report-plan.mjs";
-import { slug, collectShots } from "./report-shots.mjs";
+import { collectShots, evidenceRunDir } from "./report-shots.mjs";
+// El detalle POR CASO (md + html) vive en report-cases.mjs: una sola regla de presentación para
+// ambos formatos, y este archivo queda dentro del guardrail de 400 líneas.
+import { casesMd, casesHtml, esc, caseWhere, blameAt } from "./report-cases.mjs";
 
 function todayStamp(tz) {
   // tz reservado para F1 (locale.timezone); por ahora fecha ISO local
   return new Date().toISOString().slice(0, 10);
-}
-
-function esc(s) {
-  return String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-}
-
-// Etiqueta de ubicación del objetivo (monorepo) para el encabezado de detalle de TC.
-function caseWhere(r) {
-  return r.metrics?.cwd ? ` @ ${esc(r.metrics.cwd)}` : "";
-}
-// Recuento ✅/❌/⏭ de una lista de TC.
-function caseCounts(cases) {
-  const c = (s) => cases.filter((x) => x.status === s).length;
-  return `✅ ${c("pass")} · ❌ ${c("fail")} · ⏭ ${c("skip")}`;
-}
-// Render HTML del detalle paso a paso. Embebe la captura de CADA paso (línea de tiempo del
-// flujo) usando el mapa src→rel; los `src` embebidos se marcan en `embedded` para no repetirlos
-// luego en la galería del pie.
-function casesHtml(results, byFile = {}, embedded = new Set()) {
-  const withCases = results.filter((r) => Array.isArray(r.cases) && r.cases.length);
-  if (!withCases.length) return "";
-  const blocks = withCases
-    .map((r) => {
-      const items = r.cases
-        .map((tc) => {
-          const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : r.layer === "static" ? "⚠" : "⏭";
-          const d = typeof tc.duration === "number" ? ` <small style="color:#888">(${tc.duration} ms)</small>` : "";
-          // Explicación en lenguaje llano (qué pasó / qué hacer) para no técnicos, antes del detalle.
-          const ex = tc.status === "fail" ? explainFailure(tc, { layer: r.layer, tool: r.metrics?.tool }) : null;
-          const blameLine = tc.blame
-            ? `<div style="color:#555;margin-top:2px">👤 <b>Último en modificar</b> <code>${esc(
-                tc.blame.line ? `${tc.blame.file}:${tc.blame.line}` : tc.blame.file
-              )}</code>: ${esc(tc.blame.author)}${tc.blame.date ? ` <small>(${esc(tc.blame.date)})</small>` : ""}</div>`
-            : tc.status === "fail"
-              ? `<div style="color:#888;margin-top:2px">👤 Sin responsable: el error no señala un archivo/línea del repo, no hay a quién atribuirlo automáticamente.</div>`
-              : "";
-          const human =
-            ex || tc.status === "fail"
-              ? `<div style="margin:2px 0 4px 1.4rem;font-size:.9em">${
-                  ex ? `<div><b>🧩 Qué pasó:</b> ${esc(ex.plain)}</div>` : ""
-                }${ex && ex.action ? `<div style="color:#0a5"><b>👉 Qué hacer:</b> ${esc(ex.action)}</div>` : ""}${blameLine}</div>`
-              : "";
-          const msg =
-            tc.status === "fail" && tc.message
-              ? `${human}<div style="color:#b00020;margin:2px 0 6px 1.4rem;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:.8em"><b style="color:#888">Detalle técnico:</b> ${esc(
-                  String(tc.message).split(/\r?\n/).slice(0, 3).join("\n")
-                )}</div>`
-              : human;
-          const uri = tc.file && byFile[tc.file];
-          let img = "";
-          if (uri) {
-            embedded.add(tc.file);
-            img = `<div style="margin:.3rem 0 .7rem 1.4rem"><img src="${uri}" alt="${esc(tc.name)}" loading="lazy" style="max-width:560px;width:100%;border:1px solid #ccc;border-radius:6px"></div>`;
-          }
-          return `<li style="margin:.35rem 0">${ic} ${esc(tc.name)}${d}${msg}${img}</li>`;
-        })
-        .join("");
-      return `<details open style="margin:.5rem 0"><summary><b>${esc(r.layer)} — ${esc(
-        r.metrics?.tool ?? ""
-      )}</b>${caseWhere(r)} · ${caseCounts(r.cases)}</summary><ul style="margin:.4rem 0;list-style:none;padding-left:.4rem">${items}</ul></details>`;
-    })
-    .join("");
-  return `<h2>Detalle del flujo (paso a paso)</h2>${blocks}`;
 }
 
 // Línea "qué se ejecutó": comando exacto + duración + código de salida, desde las métricas.
@@ -100,16 +42,9 @@ function execLine(r) {
 export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local", featureId, developer, plan, results = [] }) {
   const outDir = (profile.evidence && profile.evidence.output_dir) || "qa-evidence";
   const stamp = todayStamp(profile.locale && profile.locale.timezone);
-  // Subcarpeta del test: se nombra netamente con el Feature (FT-<feature>) y el dev (slug),
-  // p.ej. `FT-10118__Dev-Nono-Perez`. Así, al correr pruebas de distintos devs sobre el
-  // mismo feature, cada corrida queda en su propia carpeta trazable y no se pisan.
-  // Fallback: si no llega ni FT ni dev, se usa WI-<id> para que la carpeta nunca quede sin nombre.
-  const segParts = [];
-  if (featureId) segParts.push(`FT-${slug(featureId)}`);
-  if (developer) segParts.push(slug(developer));
-  if (segParts.length === 0) segParts.push(`WI-${workItemId}`);
-  const dir = path.join(repoRoot, outDir, stamp, segParts.join("__"));
-  fs.mkdirSync(dir, { recursive: true });
+  // Carpeta de ESTA corrida: qa-evidence/<fecha>/<FT-feature__dev | WI-id>/<hora>. La subcarpeta por
+  // hora hace que cada corrida quede en la suya y NO sobreescriba las evidencias previas (ver report-shots).
+  const dir = evidenceRunDir({ repoRoot, outDir, stamp, featureId, developer, workItemId });
 
   // Capturas: se copian a <dir>/capturas/ para que la evidencia sea autocontenida.
   const shots = collectShots(results, dir);
@@ -125,21 +60,21 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   const allCases = results.flatMap((r) => (Array.isArray(r.cases) ? r.cases : []));
   const stepPass = allCases.filter((c) => c.status === "pass").length;
   const stepFail = allCases.filter((c) => c.status === "fail").length;
+  const warnCount = results.filter((r) => r.layer === "static").flatMap((r) => (Array.isArray(r.cases) ? r.cases : [])).filter((c) => c.status === "skip").length;
   const failed = fail > 0 || stepFail > 0;
   const unitWord = results.some((r) => r.layer === "explore") ? "paso" : "prueba";
   const caselessFails = results.filter(
     (r) => r.status === "fail" && !(Array.isArray(r.cases) && r.cases.some((c) => c.status === "fail")),
   );
+  // Veredicto con números CLAROS y ETIQUETADOS: distingue CAPAS (objetivos) de PRUEBAS (casos) — antes se
+  // mezclaban (p.ej. "5 fallos" [capas] vs "7 hallazgos" [pruebas]) y confundía. Las advertencias aparte.
+  const sugg = warnCount ? ` · 💡 ${warnCount} sugerencia(s)` : "";
   let verdictTxt;
   if (!failed) {
-    verdictTxt = `✅ PASÓ${allCases.length ? ` — ${stepPass}/${allCases.length} ${unitWord}(s) ok` : ""}`;
+    verdictTxt = `✅ PASÓ — ${pass} de ${total} capa(s) OK${stepPass ? `, ${stepPass} ${unitWord}(s) en verde` : ""}${sugg}`;
   } else {
-    const parts = [];
-    if (stepFail > 0) parts.push(`${stepFail} de ${allCases.length} ${unitWord}(s) con problemas`);
-    if (caselessFails.length) {
-      parts.push(`capa(s) con fallo: ${caselessFails.map((r) => `${r.layer}${r.metrics?.tool ? ` (${r.metrics.tool})` : ""}`).join(", ")}`);
-    }
-    verdictTxt = `❌ FALLÓ — ${parts.join(" · ") || "revisá el detalle"}`;
+    const caseless = caselessFails.length ? ` (incluye ${caselessFails.length} capa[s] que fallaron sin desglose por ${unitWord})` : "";
+    verdictTxt = `❌ FALLÓ — ${fail} de ${total} capa(s) con hallazgos · ${stepFail} ${unitWord}(s) en rojo${caseless}${sugg}`;
   }
 
   // ---- Markdown ----
@@ -157,7 +92,8 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   md.push("");
   md.push(`**Veredicto:** ${verdictTxt}`);
   md.push("");
-  md.push(`**Resumen:** ${total} total · ✅ ${pass} pass · ❌ ${fail} fail · ⏭ ${skip} skip`);
+  md.push(`**Resumen por capa:** ${total} capa(s) · ✅ ${pass} pasaron · ❌ ${fail} con hallazgos · ⏭ ${skip} omitidas`);
+  md.push(`**Pruebas:** ✅ ${stepPass} en verde · ❌ ${stepFail} en rojo${warnCount ? `  ·  💡 ${warnCount} sugerencia(s)` : ""}`);
   md.push("");
   // Cobertura de criterios de aceptación (matriz AC ↔ pasos) — cuando el guion la declara.
   for (const r of results) if (r.coverage) for (const line of renderCoverageMd(r.coverage)) md.push(line);
@@ -170,6 +106,47 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
     md.push(`| ${esc(r.layer)} | ${esc(r.tc_id ?? "—")} | ${icon} ${r.status} | ${esc(r.narrative ?? "")} |`);
   }
   md.push("");
+  // EVIDENCIA (positivo), no solo los fallos. Incluye las capas en rojo que igual validaron cosas
+  // adentro (evidencia parcial) → todo ítem que una capa cubre queda plasmado, como en la HU.
+  const evLayers = evidenceLayers(results);
+  if (evLayers.length) {
+    md.push("---");
+    md.push("## ✅ Evidencia — lo que se validó correctamente");
+    md.push("");
+    for (const r of evLayers) {
+      const { partial, passed, lead } = describeEvidence(r);
+      const head = `**${esc(r.layer)}**${r.metrics?.tool ? ` (${esc(r.metrics.tool)})` : ""}${r.metrics?.label ? ` · ${esc(r.metrics.label)}` : ""}${partial ? " _(evidencia parcial)_" : ""}`;
+      md.push(`- ${head} — ${esc(lead)}`);
+      // Cada verificación COMPLETA (sin recortar) + su detalle técnico — misma regla que la HU.
+      for (const c of evidenceItems(passed)) {
+        md.push(`  - ✅ ${esc(c.name)}${c.plain ? ` — ${esc(c.plain)}` : ""}`);
+        if (c.message) md.push(`    - 🔎 _Detalle técnico:_ ${esc(techDetail(c.message))}`);
+      }
+    }
+    md.push("");
+  }
+  // Sugerencias (advertencias del linter) descritas en lenguaje claro — como en la HU.
+  for (const line of warningsMd(results)) md.push(line);
+
+  // ⏭ No verificado: lo que NO se comprobó o quedó como sugerencia (misma sección que la HU). Sin
+  // esto, un check así (p.ej. «Índices en llaves foráneas», que es de la capa db y NO del linter)
+  // solo aparecía enterrado en el detalle por capa y no tenía lugar propio en el reporte.
+  const notVer = notVerifiedCases(results);
+  if (notVer.length) {
+    md.push("---");
+    md.push(`## ⏭ No verificado (${notVer.length})`);
+    md.push("");
+    md.push("_Puntos que NO se comprobaron o que quedan como sugerencia. No cuentan como hallazgo: o el criterio no aplica a este proyecto, o no se pudo verificar._");
+    md.push("");
+    for (const { c, r } of notVer) {
+      const L = explainLabels("skip");
+      md.push(`- ⏭ **${esc(c.name)}** — _${esc(r.layer)}_`);
+      md.push(`  - **${L.plain}:** ${esc(c.plain)}`);
+      if (c.action) md.push(`  - **${L.action}:** ${esc(c.action)}`);
+      if (c.message) md.push(`  - 🔎 _Detalle técnico:_ ${esc(String(c.message).split(/\r?\n/).slice(0, 2).join(" ⏎ "))}`);
+    }
+    md.push("");
+  }
 
   // ---- Capas con FALLO sin desglose por prueba (caseless): misma claridad 🧩/👉 que los TC ----
   // (dotnet-test/tsc/redocly salen ≠0 sin JSON por caso → no aparecen en el detalle de TC de abajo).
@@ -187,8 +164,8 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
         if (ex.action) md.push(`- 👉 **Qué hacer:** ${esc(ex.action)}`);
       }
       if (r.blame) {
-        const at = r.blame.line ? `${r.blame.file}:${r.blame.line}` : r.blame.file;
-        md.push(`- 👤 **Último en modificar** \`${esc(at)}\`: ${esc(r.blame.author)}${r.blame.date ? ` _(${esc(r.blame.date)})_` : ""}`);
+        const bl = blameAt(r.blame);
+        md.push(`- 👤 **Último en modificar** ${esc(bl.friendly)} \`${esc(bl.exact)}\`: ${esc(r.blame.author)}${r.blame.date ? ` _(${esc(r.blame.date)})_` : ""}`);
       } else {
         md.push(`- 👤 _Sin responsable: la herramienta no dejó un archivo/línea en el error, no hay a quién atribuirlo automáticamente._`);
       }
@@ -197,54 +174,11 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
     }
   }
 
-  // ---- Detalle por capa: los TC ejecutados por debajo de cada capa ----
-  const withCases = results.filter((r) => Array.isArray(r.cases) && r.cases.length);
-  if (withCases.length) {
-    md.push("## Detalle de pruebas (TC ejecutados)");
-    md.push("");
-    for (const r of withCases) {
-      md.push(`### ${esc(r.layer)} — ${esc(r.metrics?.tool ?? "")}${caseWhere(r)}  ·  ${caseCounts(r.cases)}`);
-      md.push("");
-      for (const tc of r.cases) {
-        // En static, "skip" = advertencia del linter (no un test saltado) → ⚠ para no confundir.
-        const ic = tc.status === "pass" ? "✅" : tc.status === "fail" ? "❌" : r.layer === "static" ? "⚠" : "⏭";
-        const d = typeof tc.duration === "number" ? ` _(${tc.duration} ms)_` : "";
-        md.push(`- ${ic} ${esc(tc.name)}${d}`);
-        if (tc.status === "fail") {
-          // Explicación en lenguaje llano (qué pasó / qué hacer) ANTES del detalle técnico.
-          const ex = explainFailure(tc, { layer: r.layer, tool: r.metrics?.tool });
-          if (ex) {
-            md.push(`  - 🧩 **Qué pasó:** ${esc(ex.plain)}`);
-            if (ex.action) md.push(`  - 👉 **Qué hacer:** ${esc(ex.action)}`);
-          }
-          if (tc.blame) {
-            const at = tc.blame.line ? `${tc.blame.file}:${tc.blame.line}` : tc.blame.file;
-            md.push(`  - 👤 **Último en modificar** \`${esc(at)}\`: ${esc(tc.blame.author)}${tc.blame.date ? ` _(${esc(tc.blame.date)})_` : ""}`);
-          } else {
-            md.push(`  - 👤 _Sin responsable: el error no señala un archivo/línea del repo, así que no hay a quién atribuirlo automáticamente._`);
-          }
-          if (tc.message) {
-            md.push(`  - ⚠ _Detalle técnico:_ ${esc(String(tc.message).split(/\r?\n/).slice(0, 3).join(" ⏎ "))}`);
-          }
-        }
-      }
-      md.push("");
-    }
-  }
+  // ---- Detalle por capa: los casos ejecutados por debajo de cada capa (ver report-cases.mjs) ----
+  for (const line of casesMd(results)) md.push(line);
 
-  // ---- Qué se ejecutó por capa (comando exacto + duración) ----
-  const execd = results.filter((r) => r.metrics?.command);
-  if (execd.length) {
-    md.push("## Qué se ejecutó por capa");
-    md.push("");
-    for (const r of execd) {
-      md.push(`- **${esc(r.layer)}** (${esc(r.metrics.tool ?? "")}): \`${esc(r.metrics.command)}\` · ${(r.metrics.ms / 1000).toFixed(1)} s · exit ${r.metrics.exitCode}`);
-      const desc = toolDescription(r.metrics.tool, r.layer);
-      if (desc) md.push(`  - _Qué hace:_ ${esc(desc)}.`);
-      md.push(`  - _Resultado:_ ${esc(interpretLayer(r))}`);
-    }
-    md.push("");
-  }
+  // ---- Qué se ejecutó por capa (bitácora) — compartido con el comentario de la HU (report-executed) ----
+  for (const line of executedMd(results)) md.push(line);
 
   // ---- Capturas (referencias a las imágenes copiadas a capturas/) ----
   if (shots.length) {
@@ -294,8 +228,8 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
               )}</div>`
             : "";
           const blameB = r.blame
-            ? `<div style="color:#555;margin-top:2px">👤 <b>Último en modificar</b> <code>${esc(
-                r.blame.line ? `${r.blame.file}:${r.blame.line}` : r.blame.file
+            ? `<div style="color:#555;margin-top:2px">👤 <b>Último en modificar</b> ${esc(blameAt(r.blame).friendly)} <code>${esc(
+                blameAt(r.blame).exact
               )}</code>: ${esc(r.blame.author)}${r.blame.date ? ` <small>(${esc(r.blame.date)})</small>` : ""}</div>`
             : `<div style="color:#888;margin-top:2px">👤 Sin responsable: la herramienta no dejó un archivo/línea en el error, no hay a quién atribuirlo automáticamente.</div>`;
           return `<div style="margin:.5rem 0;padding:.4rem .6rem;border:1px solid #f0c9c9;border-radius:6px;background:#fdf2f2"><b>❌ ${esc(
@@ -326,15 +260,57 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   const wiHtml =
     workItemId && workItemId !== "local" ? `<p><b>WI destino:</b> ${esc(workItemId)}</p>` : "";
   const coverageBlock = results.filter((r) => r.coverage).map((r) => renderCoverageHtml(r.coverage)).join("");
+  // EVIDENCIA (positivo), no solo los fallos — misma regla que el md y la HU (evidenceLayers).
+  const passedHtml = evLayers.length
+    ? `<h2>✅ Evidencia — lo que se validó correctamente</h2>${evLayers
+        .map((r) => {
+          const { partial, passed, lead } = describeEvidence(r);
+          const tool = r.metrics?.tool ? ` — ${esc(r.metrics.tool)}` : "";
+          const label = r.metrics?.label ? ` · ${esc(r.metrics.label)}` : "";
+          const tag = partial ? ` <small style="color:#8a6d3b">(evidencia parcial)</small>` : "";
+          const evi = evidenceItems(passed);
+          const items = evi.length
+            ? `<ul style="margin:.3rem 0 0 1.1rem">${evi
+                .map((c) => {
+                  const det = c.message ? `<div class="muted">🔎 Detalle técnico: <code>${esc(techDetail(c.message))}</code></div>` : "";
+                  return `<li>✅ ${esc(c.name)}${c.plain ? ` — ${esc(c.plain)}` : ""}${det}</li>`;
+                })
+                .join("")}</ul>`
+            : "";
+          return `<div class="evi"><b>✅ ${esc(r.layer)}</b>${tool}${label}${tag}<br>${esc(lead)}${items}</div>`;
+        })
+        .join("")}`
+    : "";
+  // ⏭ No verificado (misma sección y misma selección que la HU y el md).
+  const notVerHtml = notVer.length
+    ? `<h2>⏭ No verificado (${notVer.length})</h2><p class="muted">Puntos que NO se comprobaron o que quedan como sugerencia. No cuentan como hallazgo: o el criterio no aplica a este proyecto, o no se pudo verificar.</p>${notVer
+        .map(({ c, r }) => {
+          const L = explainLabels("skip");
+          const act = c.action ? `<div style="color:#0a5"><b>${L.action}:</b> ${esc(c.action)}</div>` : "";
+          const det = c.message ? `<div class="muted">🔎 Detalle técnico: ${esc(String(c.message).split(/\r?\n/).slice(0, 2).join(" ⏎ "))}</div>` : "";
+          return `<div class="nov"><b>⏭ ${esc(c.name)}</b> <small class="muted">— ${esc(r.layer)}</small><div><b>${L.plain}:</b> ${esc(c.plain)}</div>${act}${det}</div>`;
+        })
+        .join("")}`
+    : "";
+
+  const CSS =
+    "body{font-family:system-ui,Arial,sans-serif;max-width:920px;margin:2rem auto;color:#222;padding:0 1rem;line-height:1.5}" +
+    "h1{font-size:1.6rem;margin:.2rem 0}h2{font-size:1.15rem;margin:1.6rem 0 .6rem;padding-bottom:.3rem;border-bottom:2px solid #e2e6ea}" +
+    "hr{border:none;border-top:1px solid #e2e6ea;margin:1.2rem 0}code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:.85em}" +
+    ".evi{border:1px solid #cbe8d5;background:#f2faf5;border-radius:8px;padding:8px 12px;margin:8px 0}" +
+    ".warn{border:1px solid #f0e2b6;background:#fdf9ec;border-radius:8px;padding:8px 12px;margin:8px 0}.muted{color:#888;font-size:.85em}" +
+    ".nov{border:1px solid #d7dbe0;background:#fafbfc;border-radius:8px;padding:8px 12px;margin:8px 0}";
   const html = `<!doctype html><meta charset="utf-8">
 <title>Reporte QA local</title>
-<body style="font-family:system-ui,Arial,sans-serif;max-width:900px;margin:2rem auto;color:#222">
+<style>${CSS}</style>
+<body>
 <h1>Reporte QA local</h1>
 <p><b>Fecha:</b> ${stamp} · <b>Proyecto:</b> ${esc(profile.project?.name ?? "auto")} · <b>Tracker:</b> local</p>
 ${wiHtml}
 ${featureId || developer ? `<p>${[featureId ? `<b>Feature (FT):</b> ${esc(featureId)}` : null, developer ? `<b>Desarrollador:</b> ${esc(developer)}` : null].filter(Boolean).join(" · ")}</p>` : ""}
 ${verdictHtml}
-<p><b>Resumen:</b> ${total} total · ✅ ${pass} pass · ❌ ${fail} fail · ⏭ ${skip} skip</p>
+<p><b>Resumen por capa:</b> ${total} capa(s) · ✅ ${pass} pasaron · ❌ ${fail} con hallazgos · ⏭ ${skip} omitidas<br>
+<b>Pruebas:</b> ✅ ${stepPass} en verde · ❌ ${stepFail} en rojo${warnCount ? ` · 💡 ${warnCount} sugerencia(s)` : ""}</p>
 ${coverageBlock}
 ${planHtml(plan, results)}
 <table style="border-collapse:collapse;width:100%">
@@ -343,6 +319,9 @@ ${planHtml(plan, results)}
     .join("")}</tr></thead>
 <tbody>${rows.replace(/<td>/g, '<td style="border:1px solid #ccc;padding:6px 8px">')}</tbody>
 </table>
+${passedHtml}
+${warningsHtml(results)}
+${notVerHtml}
 ${caselessBlock}
 ${casesBlock}
 ${shotsHtml}
