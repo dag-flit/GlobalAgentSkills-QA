@@ -114,3 +114,67 @@ export interface AppConfig {
 }
 
 export const SECRET_MASK = "••••••••";
+
+// ---------- Test de Regresión (sistemas + catálogo de selectores) ----------
+
+// Un elemento del catálogo, expresado en el vocabulario robusto de localización (espeja
+// explore-steps.resolveLocator): by ∈ role|label|text|placeholder|testid. `role`+`name` para
+// getByRole; el resto usa `value`.
+export interface SelectorElement {
+  alias: string;
+  by: string;
+  role?: string;
+  name?: string;
+  value?: string;
+}
+export interface SelectorCatalogPage {
+  route: string;
+  name: string;
+  elements: SelectorElement[];
+}
+export interface SelectorCatalog {
+  baseUrl?: string;
+  authMode?: string;
+  pages: SelectorCatalogPage[];
+}
+
+export type RegressionAuthMode = "none" | "login";
+
+// Un SISTEMA a probar por regresión. Multi-sistema por tenant. `password` es secreto (cifrado en
+// reposo; enmascarado al enviarlo al navegador). `catalog` es el último escaneo (solo selectores).
+export interface RegressionTarget {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authMode: RegressionAuthMode;
+  username: string;
+  password: string;
+  catalog?: SelectorCatalog | null;
+  updatedAt?: string;
+}
+
+// Un PASO de una prueba de regresión. Los pasos que tocan un elemento referencian un `alias` del
+// catálogo (no el selector crudo → robustez: el selector vive UNA vez). Los campos libres
+// (valor/texto/ruta/nombre) son opcionales según la operación. El compilador (Fase 3) resuelve
+// `alias` → localizador usando el catálogo del sistema.
+export interface RegressionStep {
+  op: string;
+  alias?: string;
+  valor?: string;
+  texto?: string;
+  ruta?: string;
+  nombre?: string;
+}
+export interface RegressionTest {
+  id: string;
+  name: string;
+  steps: RegressionStep[];
+}
+// Una SUITE de regresión (colección de pruebas) atada a un sistema. Reusa el patrón `flows` (jsonb).
+export interface RegressionSuite {
+  id: string;
+  targetId: string;
+  name: string;
+  tests: RegressionTest[];
+  updatedAt?: string;
+}

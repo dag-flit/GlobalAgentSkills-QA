@@ -1,6 +1,6 @@
 import { encryptSecret, decryptSecret } from "@/lib/security/secretsCrypto";
 import { currentTenantId } from "./tenantContext";
-import type { DbConnection, TrackerConfig } from "@/lib/types";
+import type { DbConnection, TrackerConfig, RegressionTarget } from "@/lib/types";
 
 // Cifra/descifra los campos SECRETOS de la config en la frontera con la BD. El resto del
 // código (config.ts, rutas, UI) trabaja con texto plano en memoria. AAD = `<tenantId>:<campo>`
@@ -27,7 +27,13 @@ function mapTracker(t: TrackerConfig, fn: (v: string, aad: string) => string): T
   };
 }
 
+function mapRegression(t: RegressionTarget, fn: (v: string, aad: string) => string): RegressionTarget {
+  return { ...t, password: fn(t.password ?? "", aad(`regression:${t.id}:password`)) };
+}
+
 export const encryptDb = (db: DbConnection) => mapDb(db, encryptSecret);
 export const decryptDb = (db: DbConnection) => mapDb(db, decryptSecret);
 export const encryptTracker = (t: TrackerConfig) => mapTracker(t, encryptSecret);
 export const decryptTracker = (t: TrackerConfig) => mapTracker(t, decryptSecret);
+export const encryptRegressionTarget = (t: RegressionTarget) => mapRegression(t, encryptSecret);
+export const decryptRegressionTarget = (t: RegressionTarget) => mapRegression(t, decryptSecret);

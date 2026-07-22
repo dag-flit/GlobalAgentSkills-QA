@@ -60,7 +60,10 @@ export function stepLabel(step, idx) {
 // Resuelve un Locator de Playwright a partir de una estrategia AMIGABLE (`por`) + el valor (`en`),
 // para no depender de selectores CSS técnicos. Determinista. Estrategias:
 //   etiqueta → getByLabel · placeholder → getByPlaceholder · texto → getByText ·
-//   boton → getByRole(rol|button, {name}) · css (default) → locator(css)  ← compat con lo previo.
+//   boton/role → getByRole(rol|button, {name}) · testid → getByTestId ·
+//   css (default) → locator(css)  ← compat con lo previo.
+// El vocabulario espeja el `by` del catálogo de regresión (harvest.mjs) → el catálogo se enchufa al
+// runner sin traducción.
 function resolveLocator(page, args, ctx) {
   const value = interpolate(args.en ?? args.selector ?? "", ctx);
   if (!value) return null;
@@ -77,6 +80,9 @@ function resolveLocator(page, args, ctx) {
     case "rol":
     case "role":
       return page.getByRole(args.rol || "button", { name: value });
+    case "testid":
+    case "test-id":
+      return page.getByTestId(value);
     default:
       return page.locator(value); // css (o sin `por`) → compatibilidad hacia atrás
   }

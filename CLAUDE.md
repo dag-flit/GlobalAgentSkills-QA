@@ -265,6 +265,55 @@ happy-path del dev.
   tsc 0, line-budget 0. **Pendiente:** el usuario valida el flujo unificado con Azure (detección real + andamiaje
   + publicar + correr) contra un PR/Feature real (p.ej. #150 / Feature 10618).
 
+### MÓDULO NUEVO: Test de Regresión (Playwright) — Fase 1 HECHA (2026-07-21)
+
+Módulo **separado** para definir pruebas de regresión con Playwright y re-correrlas tras cada release.
+Requiere el **catálogo de selectores** del sistema. Decisiones del usuario: catálogo por **CRAWL en
+runtime** (NO parsear el código: el accessible name real solo existe en el árbol de accesibilidad;
+CSS Tailwind hasheado es inútil) vía botón **"Escanear sistema"** en la webapp; **multi-sistema** (el
+catálogo es POR sistema, el módulo se reutiliza); **con login / sin login**; **credenciales cifradas**
+(AES-256-GCM, secretsMapper). NO revive el "teatro" de E2E: lo que se descartó fue la **IA que adivinaba
+qué probar**; **leer selectores ≠ IA** (lo hacía recon.mjs). El escáner solo INVENTARÍA lo que hay; el
+humano manda las pruebas. Determinista, sin IA. Detalle en [[test-regresion-modulo]].
+- **Motor:** `runtime/regression/harvest.mjs` (PURO: elige el selector más robusto role+nombre>etiqueta>
+  testid>texto>placeholder, alias sin acentos, dedup) + `runtime/regression/scan.mjs` (navegador
+  INYECTABLE, login opcional reusando `STEPS.login`, recorre rutas, lee el DOM visible por `page.evaluate`
+  → catálogo por página). Offline-testable. Suite `runtime/smoke/regression-suite.mjs` (+6, navegador falso).
+- **Webapp:** migración `0008_regression_targets.sql` (tenant_id + FORCE RLS, patrón 0003; **aplicada**);
+  `regressionTargetsRepo.ts` (withTenant + clave cifrada/descifrada por `secretsMapper`); `regressionScan.ts`
+  (puente: `importKit` scan.mjs + Playwright, credenciales descifradas → vars efímeras, nunca al navegador);
+  allowlist `kit.ts` += `runtime/regression/scan.mjs`; zod `regressionTargetSchema`/`regressionScanSchema`;
+  rutas `GET/PUT/DELETE /api/regression/targets` (enmascara clave con SECRET_MASK, preserva secreto) y
+  `POST /api/regression/scan`; página **`/regression`** (alta de sistemas + "Escanear sistema" + tabla del
+  catálogo); enlace en `AppShell` (grupo Flujo). Tipos `RegressionTarget`/`SelectorCatalog` en `types.ts`.
+- **Gates F1:** smoke **100/100**, tsc 0, line-budget 0. **Nada commiteado.** Fase 1 **VALIDADA** por el
+  usuario (escaneó FLIT → 16 selectores; fix: catálogo vacío `{}` sin `pages` reventaba CatalogView).
+- **Fase 2 HECHA (constructor de suites, SOLO webapp):** suite = colección de pruebas; prueba = pasos; los
+  pasos que tocan un elemento **referencian un ALIAS** del catálogo (no el selector crudo → robustez).
+  Migración `0009_regression_suites.sql` (tenant_id + FORCE RLS; **aplicada**); `regressionSuitesRepo.ts`;
+  zod `regressionSuiteSchema`; ruta `GET/PUT/DELETE /api/regression/suites`; `lib/qa/regressionSteps.ts`
+  (STEP_TYPES + `aliasOptions`); componentes `regression/SuiteBuilder.tsx` + `TestSteps.tsx` (desplegable
+  de alias del catálogo); cableado en `/regression`. Login automático para sistemas con login. tsc 0,
+  budget 0, smoke 100.
+- **Endurecimiento Fase 2 (tokens de credencial + selector buscable):** un paso `escribir`/`seleccionar` en
+  sistema con login ofrece botones 🔐 Usuario/🔐 Clave que insertan `${QA_USER}`/`${QA_PASS}` (el valor real
+  NUNCA queda en la prueba ni en la interfaz; lo resuelve el runner desde el target cifrado). Selector de
+  elementos BUSCABLE (`regression/AliasPicker.tsx`, filtra por nombre/tipo/página, agrupa por página, ícono+tipo)
+  reemplaza el `<select>` plano. Constructor de suites/pruebas rediseñado a acordeón (suite›pruebas›pasos) con
+  indicador de cambios sin guardar.
+- **Fase 3 EN CURSO — runner de regresión (Increment 3 hecho):** `testid` agregado a `resolveLocator`.
+  `runtime/regression/compile.mjs` (PURO): `compileTest({test,catalog,login})` → `{flow,warnings}` (mapea
+  by→por, arranca en baseUrl, verificaciones tolerantes a SPA `verificar_visible→esperar`/`verificar_texto→
+  esperar_texto`; **detección de REGRESIÓN**: alias ausente del catálogo → warning + paso centinela que falla).
+  **Login automático DETERMINISTA** (sin toggle): una prueba que escribe `${QA_USER}`/`${QA_PASS}` ES la del
+  login → no se antepone login; las demás corren autenticadas. Evidencia: `runtime/regression/report.mjs`
+  (HTML autocontenido, capturas+video en data-URI, lector inyectado); `lib/qa/regressionRun.ts` (carpeta por
+  corrida bajo `data/tenants/<tenant>/regression-evidence/…`, `recordVideo`+captura por paso, `only:testId`).
+  `/api/artifacts` acota += la carpeta de regresión del tenant. UI `SuiteRunner.tsx`: correr toda la suite o
+  una prueba + veredicto por prueba/paso + visor de evidencia. smoke 106, tsc 0, budget 0. **Falta:** botón
+  «Publicar en ADO» (HU «Regresión — suite/prueba» con evidencia) + PRO (anti-flaky, aserciones ricas UI,
+  histórico+tendencia, programar corridas). **Reiniciar `npm run dev`** al tocar el motor.
+
 ## Invariantes (no romper)
 
 1. **Local-first para explore:** ningún paso de red es obligatorio. Con `tracker: local` la

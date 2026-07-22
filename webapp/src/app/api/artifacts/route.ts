@@ -3,6 +3,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { listRuns } from "@/lib/runStore";
 import { withTenantScope } from "@/lib/auth/route";
+import { tenantDir } from "@/lib/paths";
 import { isWithin } from "@/lib/security/paths";
 
 export const runtime = "nodejs";
@@ -19,17 +20,18 @@ const TYPES: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
 };
 
-// Raíces permitidas = los repoRoot de los runs DEL TENANT ACTIVO. listRuns corre dentro de
-// withTenantScope → RLS solo devuelve los runs del tenant, así que un tenant nunca puede
-// pedir evidencia de otro (antes se permitía todo DATA_DIR → fuga cross-tenant).
-async function allowedRoots(): Promise<string[]> {
+// Raíces permitidas = los repoRoot de los runs DEL TENANT ACTIVO + la carpeta de evidencia de
+// regresión del tenant (módulo Test de Regresión, que no usa la tabla `runs`). Ambas quedan acotadas
+// al tenant → un tenant nunca puede pedir evidencia de otro (antes se permitía todo DATA_DIR → fuga).
+async function allowedRoots(tenantId: string): Promise<string[]> {
   const roots = new Set<string>();
   for (const r of await listRuns()) if (r.repoRoot) roots.add(path.resolve(r.repoRoot));
+  roots.add(path.resolve(path.join(tenantDir(tenantId), "regression-evidence")));
   return [...roots];
 }
 
-async function isAllowed(target: string): Promise<boolean> {
-  const roots = await allowedRoots();
+async function isAllowed(target: string, tenantId: string): Promise<boolean> {
+  const roots = await allowedRoots(tenantId);
   return roots.some((root) => isWithin(root, target));
 }
 
@@ -38,8 +40,8 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const p = url.searchParams.get("path");
   if (!p) return new NextResponse("Falta 'path'", { status: 400 });
-  return withTenantScope(async () => {
-    if (!(await isAllowed(p))) return new NextResponse("Ruta no permitida", { status: 403 });
+  return withTenantScope(async (auth) => {
+    if (!(await isAllowed(p, auth.tenantId))) return new NextResponse("Ruta no permitida", { status: 403 });
     if (!fs.existsSync(p) || !fs.statSync(p).isFile()) {
       return new NextResponse("No encontrado", { status: 404 });
     }

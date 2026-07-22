@@ -160,3 +160,48 @@ export const loginSchema = z.object({
 });
 
 export const switchTenantSchema = z.object({ tenantId: z.uuid() });
+
+// ---------- Test de Regresión ----------
+
+// Guardar un SISTEMA a probar. `password` viaja enmascarado si ya estaba guardado (la ruta lo
+// preserva). auth_mode='none' → username/password se ignoran (público, sin credenciales).
+export const regressionTargetSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  baseUrl: z.string().min(1),
+  authMode: z.enum(["none", "login"]),
+  username: z.string().default(""),
+  password: z.string().default(""),
+});
+
+// Escanear un sistema por id. `routes` (opcional) = rutas a catalogar (una por página); sin ellas
+// se escanea solo la URL base. Efímeras (no se persisten en esta fase).
+export const regressionScanSchema = z.object({
+  id: z.string().min(1),
+  routes: z
+    .array(z.object({ route: z.string(), name: z.string().optional() }))
+    .optional(),
+});
+
+// Guardar una SUITE de regresión (colección de pruebas). Un paso es { op, ...campos string } — los
+// campos variables (alias/valor/texto/ruta/nombre) llegan por catchall como strings.
+const regressionStepSchema = z.object({ op: z.string().min(1) }).catchall(z.string());
+const regressionTestSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  steps: z.array(regressionStepSchema),
+});
+export const regressionSuiteSchema = z.object({
+  targetId: z.string().min(1),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  tests: z.array(regressionTestSchema),
+});
+
+// Correr una SUITE de regresión (por sistema + suite). Abre el navegador, compila cada prueba contra
+// el catálogo vigente y la ejecuta. Las credenciales del sistema (cifradas) se resuelven en el server.
+export const regressionRunSchema = z.object({
+  targetId: z.string().min(1),
+  suiteId: z.string().min(1),
+  testId: z.string().min(1).optional(), // correr una sola prueba de la suite (si se omite, corre todas)
+});
