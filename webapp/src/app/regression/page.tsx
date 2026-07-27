@@ -207,7 +207,7 @@ export default function RegressionPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <button className="btn-primary" onClick={() => openScan(t)}>🔍 Escanear sistema</button>
+                <button className="btn-primary" onClick={() => openScan(t)}>Escanear sistema</button>
                 <button className="btn-ghost" onClick={() => editTarget(t)}>Editar</button>
                 <button className="btn-ghost text-red-300" onClick={() => remove(t.id)}>Eliminar</button>
               </div>

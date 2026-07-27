@@ -19,6 +19,7 @@ const ALLOWED = new Set<string>([
   "runtime/regression/compile.mjs", // compila prueba+catálogo → flow del motor (Test de Regresión) — regressionRun.ts
   "runtime/runners/explore-flow.mjs", // ejecutor del guion de pasos (corre el flow compilado) — regressionRun.ts
   "runtime/regression/report.mjs", // reporte autocontenido de la corrida de regresión — regressionRun.ts
+  "runtime/regression/findings.mjs", // Description de la HU de regresión al publicar en ADO — regressionPublish.ts
 ]);
 
 /**

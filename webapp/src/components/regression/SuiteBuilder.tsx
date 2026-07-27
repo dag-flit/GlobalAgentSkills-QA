@@ -143,7 +143,13 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
         {/* Pruebas de la suite */}
         <div className="space-y-1.5">
           <div className="text-[11px] font-medium text-muted uppercase tracking-wide">Pruebas de esta suite</div>
-          {draft.tests.length === 0 && <p className="text-[11px] text-muted">Sin pruebas todavía. Agregá la primera abajo.</p>}
+          {/* Nueva prueba (arriba: la acción de crear va encima de la lista) */}
+          <div className="flex items-center gap-2 rounded-md border border-dashed border-border p-2">
+            <span className="text-[11px] text-muted shrink-0">Nueva prueba:</span>
+            <input className="input h-7 text-[12px] flex-1 max-w-[260px]" placeholder="Ej: Logueo Correcto, Ver Reportes…" value={testName} onChange={(e) => setTestName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTest()} />
+            <button className="btn-primary text-[12px]" onClick={addTest} disabled={!testName.trim()}>＋ Agregar prueba</button>
+          </div>
+          {draft.tests.length === 0 && <p className="text-[11px] text-muted">Sin pruebas todavía. Agregá la primera arriba.</p>}
           <div className="space-y-1">
             {draft.tests.map((t) => {
               const sel = testId === t.id;
@@ -159,18 +165,12 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
               );
             })}
           </div>
-          {/* Nueva prueba */}
-          <div className="flex items-center gap-2 rounded-md border border-dashed border-border p-2">
-            <span className="text-[11px] text-muted shrink-0">Nueva prueba:</span>
-            <input className="input h-7 text-[12px] flex-1 max-w-[260px]" placeholder="Ej: Logueo Correcto, Ver Reportes…" value={testName} onChange={(e) => setTestName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTest()} />
-            <button className="btn-primary text-[12px]" onClick={addTest} disabled={!testName.trim()}>＋ Agregar prueba</button>
-          </div>
         </div>
 
         {/* Pasos de la prueba seleccionada */}
         {test ? (
           <div className="rounded-lg border border-accent/40 bg-panel2/20 p-3 space-y-2">
-            <div className="text-[12px] font-medium flex items-center gap-1.5"><span>🎬</span> Pasos de «{test.name}»</div>
+            <div className="text-[12px] font-medium">Pasos de «{test.name}»</div>
             <TestSteps steps={test.steps} aliases={aliases} onChange={(steps) => updateTestSteps(test.id, steps)} secrets={target.authMode === "login"} />
           </div>
         ) : (
@@ -184,7 +184,7 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
         {/* Correr la suite (usa la versión GUARDADA) */}
         {!isNewDraft && (
           <div className="rounded-lg border border-border p-3 space-y-2">
-            <div className="text-[12px] font-medium flex items-center gap-1.5"><span>🧪</span> Ejecutar</div>
+            <div className="text-[12px] font-medium">Ejecutar</div>
             <SuiteRunner targetId={target.id} suiteId={draft.id} tests={draft.tests.map((t) => ({ id: t.id, name: t.name }))} disabled={dirty} />
           </div>
         )}

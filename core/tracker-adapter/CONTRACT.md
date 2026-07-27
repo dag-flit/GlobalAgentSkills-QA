@@ -25,8 +25,11 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 > ejecución crea una **HU (User Story) nueva** con los hallazgos de las capas, **sin relacionarla** a
 > ninguna HU/Feature, en el **proyecto del tracker** y el **sprint en curso** (resuelto por
 > `currentIteration`). El título lleva un **incrementador `#N`** por conteo de las ya creadas (por tag
-> `QualityOps`, vía WIQL). `opts` = `{ makeTitle:(seq)=>string, descriptionHtml, tags?, countTag?, attachHtml? }`.
-> Devuelve `{ok, id, url, seq, title, iterationPath, attached}`. `local` devuelve `{ok:false}` (no crea
+> `QualityOps`, vía WIQL). `opts` = `{ makeTitle:(seq)=>string, descriptionHtml, tags?, countTag?, attachHtml?, attachFiles? }`
+> (`attachFiles`: rutas extra a adjuntar como archivos — p.ej. las capturas PNG por paso de una corrida
+> de regresión, para verlas directo en ADO sin abrir el reporte HTML). También lo usa el módulo de
+> **Test de Regresión** (una HU por prueba con su evidencia; `countTag` propio → conteo `#N` aislado).
+> Devuelve `{ok, id, url, seq, title, iterationPath, attached, attachedFiles}`. `local` devuelve `{ok:false}` (no crea
 > work items) — este modo se usa solo con Azure. El **reporte local** se sigue escribiendo por
 > `publishEvidence` (dentro del proyecto analizado), aunque el destino sea Azure.
 

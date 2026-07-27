@@ -15,7 +15,7 @@ import type { RegressionTarget, RegressionSuite, RegressionTest } from "@/lib/ty
 
 export interface StepResult { name: string; status: "pass" | "fail"; message?: string | null; duration?: number }
 export interface TestRunResult { id: string; name: string; status: "pass" | "fail"; steps: number; warnings: string[]; cases: StepResult[] }
-export interface SuiteRunResult { ok: boolean; suite: string; tests: TestRunResult[]; passed: number; failed: number; reportPath?: string; message?: string }
+export interface SuiteRunResult { ok: boolean; suite: string; tests: TestRunResult[]; passed: number; failed: number; reportPath?: string; runId?: string; message?: string }
 
 interface RunOpts { evidenceBase?: string; only?: string }
 
@@ -59,24 +59,32 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
   }
 
   // Carpeta de evidencia de ESTA corrida (aislada por tenant vía evidenceBase). Subcarpeta por prueba.
-  const runDir = opts.evidenceBase ? path.join(opts.evidenceBase, slug(target.id), slug(suite.name), `${Date.now()}`) : "";
+  // El basename (Date.now) es el `runId`: identifica la corrida para el «Publicar en ADO» sin exponer
+  // rutas al cliente (el server reconstruye la carpeta desde tenant + target + suite + runId).
+  const runId = `${Date.now()}`;
+  const ranAt = stamp();
+  const runDir = opts.evidenceBase ? path.join(opts.evidenceBase, slug(target.id), slug(suite.name), runId) : "";
   if (runDir) fs.mkdirSync(runDir, { recursive: true });
 
   const browser = await chromium.launch();
   const tests: TestRunResult[] = [];
   const forReport: any[] = [];
+  const manifestTests: any[] = []; // por prueba: qué se corrió + dónde quedó su reporte (para publicar)
   try {
     for (const test of chosen) {
       const login = target.authMode === "login" && !usesCredentials(test);
       const { flow, warnings } = compileTest({ test, catalog, login });
       const warnMsgs: string[] = (warnings ?? []).map((w: any) => w.message);
 
-      const testDir = runDir ? path.join(runDir, slug(test.name)) : "";
+      const testSlug = slug(test.name);
+      const testDir = runDir ? path.join(runDir, testSlug) : "";
       if (testDir) fs.mkdirSync(testDir, { recursive: true });
 
-      const context = await browser.newContext(testDir ? { recordVideo: { dir: testDir, size: { width: 1280, height: 720 } } } : {});
+      // Sin grabación de video: en headless salía en blanco de forma intermitente (el dashboard
+      // post-login no pinta en el compositor). La evidencia visual es la captura por paso (siempre
+      // funciona) y el reporte arma con ellas una reproducción paso a paso. Sesión limpia por prueba.
+      const context = await browser.newContext();
       const page = await context.newPage();
-      const videoHandle = testDir && typeof page.video === "function" ? page.video() : null;
       let cases: any[] = [];
       try {
         const r = await runFlow({ page, steps: flow, evidenceDir: testDir || undefined, env: process.env, vars, timeout: 15000 });
@@ -86,26 +94,27 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
       } finally {
         await context.close().catch(() => {});
       }
-      let videoPath = "";
-      if (videoHandle) {
-        try {
-          videoPath = await videoHandle.path();
-        } catch {
-          /* video no disponible */
-        }
-      }
 
       const failed = warnMsgs.length > 0 || cases.some((c) => c.status === "fail");
       const status = failed ? "fail" : "pass";
-      tests.push({
-        id: test.id,
-        name: test.name,
-        status,
-        steps: flow.length,
-        warnings: warnMsgs,
-        cases: cases.map((c) => ({ name: c.name, status: c.status, message: c.message ?? null, duration: c.duration })),
-      });
-      forReport.push({ name: test.name, status, warnings: warnMsgs, video: videoPath, cases });
+      const simpleCases = cases.map((c) => ({ name: c.name, status: c.status, message: c.message ?? null, duration: c.duration }));
+      tests.push({ id: test.id, name: test.name, status, steps: flow.length, warnings: warnMsgs, cases: simpleCases });
+      const reportEntry = { name: test.name, status, warnings: warnMsgs, cases };
+      forReport.push(reportEntry);
+
+      // Reporte autocontenido POR PRUEBA (para adjuntarlo a su HU al publicar en ADO — el destino es
+      // «por prueba individual»). Best-effort: si falla, la publicación adjunta lo que haya.
+      let reportRel = "";
+      if (testDir) {
+        try {
+          const html = buildRegressionReport({ system: target.name, suite: suite.name, tests: [reportEntry], stamp: ranAt });
+          fs.writeFileSync(path.join(testDir, "report.html"), html, "utf8");
+          reportRel = `${testSlug}/report.html`;
+        } catch {
+          /* el reporte por prueba es best-effort */
+        }
+      }
+      manifestTests.push({ id: test.id, name: test.name, status, steps: flow.length, warnings: warnMsgs, cases: simpleCases, dir: testSlug, report: reportRel });
     }
   } finally {
     await browser.close().catch(() => {});
@@ -114,14 +123,21 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
   let reportPath = "";
   if (runDir) {
     try {
-      const html = buildRegressionReport({ system: target.name, suite: suite.name, tests: forReport, stamp: stamp() });
+      const html = buildRegressionReport({ system: target.name, suite: suite.name, tests: forReport, stamp: ranAt });
       reportPath = path.join(runDir, "report.html");
       fs.writeFileSync(reportPath, html, "utf8");
     } catch {
       /* el reporte es best-effort: el veredicto igual se devuelve */
     }
+    // Manifiesto de la corrida: lo lee «Publicar en ADO» para crear una HU por prueba con su evidencia.
+    try {
+      const manifest = { system: target.name, suite: suite.name, stamp: ranAt, tests: manifestTests };
+      fs.writeFileSync(path.join(runDir, "manifest.json"), JSON.stringify(manifest), "utf8");
+    } catch {
+      /* sin manifiesto no se podrá publicar, pero el veredicto + reporte igual se devuelven */
+    }
   }
 
   const passed = tests.filter((t) => t.status === "pass").length;
-  return { ok: true, suite: suite.name, tests, passed, failed: tests.length - passed, reportPath: reportPath || undefined };
+  return { ok: true, suite: suite.name, tests, passed, failed: tests.length - passed, reportPath: reportPath || undefined, runId: runDir ? runId : undefined };
 }

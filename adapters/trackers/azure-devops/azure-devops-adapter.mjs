@@ -108,6 +108,7 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     makeTitle,
     descriptionHtml = "",
     attachHtml = null,
+    attachFiles = [], // archivos extra a adjuntar (p.ej. capturas PNG de la corrida de regresión)
   } = {}) {
     // (1) Incrementador #N: cuántas HU de hallazgos existen ya. Se cuenta por el TÍTULO (token de
     // marca), NO por tag: crear/leer tags requiere un permiso especial de ADO («create tag definition»)
@@ -180,25 +181,32 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
       return { ok: false, reason: `ADO ${st}${hint}${apiMsg ? ` [ADO: ${apiMsg}]` : ""}`, seq, title };
     }
 
-    // (4) Adjuntar el reporte HTML autocontenido a la HU (best-effort).
+    // (4) Adjuntar evidencia a la HU (best-effort): el reporte HTML autocontenido + los archivos
+    // extra (p.ej. capturas PNG por paso de la regresión, para verlas directo en ADO sin abrir el HTML).
     let attached = false;
-    if (attachHtml) {
-      try {
-        if (fs.existsSync(attachHtml)) {
-          const up = await this.client.uploadAttachment(path.basename(attachHtml), fs.readFileSync(attachHtml));
-          const url = up.json && up.json.url;
-          if (url) {
-            const rel = await this.client.patchWorkItem(id, [
-              { op: "add", path: "/relations/-", value: { rel: "AttachedFile", url, attributes: { comment: "Reporte QualityOps (autocontenido)" } } },
-            ]);
-            attached = rel.status >= 200 && rel.status < 300;
-          }
-        }
-      } catch {
-        /* adjunto best-effort: la HU ya quedó creada con los hallazgos en la Description */
-      }
+    if (attachHtml) attached = await this._attachFileTo(id, attachHtml, "Reporte QualityOps (autocontenido)");
+    let attachedFiles = 0;
+    for (const f of Array.isArray(attachFiles) ? attachFiles : []) {
+      if (await this._attachFileTo(id, f, "Evidencia de regresión (captura por paso)")) attachedFiles++;
     }
-    return { ok: true, id: String(id), url: this.client.workItemWebUrl(id), seq, title, iterationPath, iterationSkipped, tagsSkipped, attached };
+    return { ok: true, id: String(id), url: this.client.workItemWebUrl(id), seq, title, iterationPath, iterationSkipped, tagsSkipped, attached, attachedFiles };
+  }
+
+  // Sube UN archivo y lo enlaza como AttachedFile a la HU. Best-effort: devuelve false si no existe,
+  // no sube o no enlaza (nunca lanza → la HU ya creada no se pierde por un adjunto).
+  async _attachFileTo(id, filePath, comment) {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return false;
+      const up = await this.client.uploadAttachment(path.basename(filePath), fs.readFileSync(filePath));
+      const url = up.json && up.json.url;
+      if (!url) return false;
+      const rel = await this.client.patchWorkItem(id, [
+        { op: "add", path: "/relations/-", value: { rel: "AttachedFile", url, attributes: { comment: comment || "" } } },
+      ]);
+      return rel.status >= 200 && rel.status < 300;
+    } catch {
+      return false;
+    }
   }
 
   async publishEvidence(target, payload) {

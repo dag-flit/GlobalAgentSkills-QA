@@ -205,3 +205,13 @@ export const regressionRunSchema = z.object({
   suiteId: z.string().min(1),
   testId: z.string().min(1).optional(), // correr una sola prueba de la suite (si se omite, corre todas)
 });
+
+// Publicar en ADO la evidencia de una corrida YA ejecutada. `runId` = basename de la carpeta de la
+// corrida (Date.now(), solo dígitos); el server reconstruye la ruta (no se aceptan rutas del cliente).
+// Sin `testId` publica una HU por CADA prueba de la corrida (alcance «por prueba individual»).
+export const regressionPublishSchema = z.object({
+  targetId: z.string().min(1),
+  suiteId: z.string().min(1),
+  runId: z.string().regex(/^\d+$/),
+  testId: z.string().min(1).optional(),
+});

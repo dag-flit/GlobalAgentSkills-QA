@@ -8,6 +8,7 @@ import { pickStrategy, buildElements, slugAlias } from "../regression/harvest.mj
 import { scanSelectors } from "../regression/scan.mjs";
 import { compileTest } from "../regression/compile.mjs";
 import { buildRegressionReport } from "../regression/report.mjs";
+import { renderRegressionFindings, regressionTitle } from "../regression/findings.mjs";
 import { STEPS } from "../runners/explore-steps.mjs";
 
 // Catálogo de referencia para los casos del compilador (formas reales del harvest).
@@ -211,24 +212,54 @@ export async function run(ctx) {
   assert.strictEqual(navs[1].url, "https://app.test/?m=reportes");
   ctx.ok("compileTest: ir_a con ruta relativa se une a la URL base");
 
-  // 12) buildRegressionReport: HTML autocontenido con capturas (data-URI) y video; lector inyectado.
-  const reader = (f) => Buffer.from(/\.webm$/i.test(f) ? "VIDEOBYTES" : "PNGBYTES");
+  // 12) buildRegressionReport: HTML autocontenido con capturas (data-URI) + reproducción paso a paso
+  // (slideshow) construida con ellas; SIN video (salía en blanco en headless). Lector inyectado.
+  const reader = (f) => Buffer.from(/\.png$/i.test(f) ? "PNGBYTES" : "");
   const html = buildRegressionReport({
     system: "Flit Dev",
     suite: "Login",
     stamp: "2026-07-22 10:00:00",
     reader,
     tests: [
-      { name: "Logueo Correcto", status: "pass", warnings: [], video: "/x/video.webm", cases: [{ name: "1. clic Ingresar", status: "pass", file: "/x/paso-1.png" }] },
-      { name: "Logueo Fallido", status: "fail", warnings: ["el elemento «x» ya no está"], video: "", cases: [{ name: "2. verificar", status: "fail", message: "no visible", file: "" }] },
+      { name: "Logueo Correcto", status: "pass", warnings: [], cases: [{ name: "1. clic Ingresar", status: "pass", file: "/x/paso-1.png" }] },
+      { name: "Logueo Fallido", status: "fail", warnings: ["el elemento «x» ya no está"], cases: [{ name: "2. verificar", status: "fail", message: "no visible", file: "" }] },
     ],
   });
   assert.match(html, /Logueo Correcto/);
   assert.match(html, /✗ 1 en rojo · 1\/2 OK/); // veredicto
   assert.match(html, /data:image\/png;base64,/); // captura embebida
-  assert.match(html, /data:video\/webm;base64,/); // video embebido
+  assert.ok(!/<video/.test(html), "ya no incrusta video (salía en blanco en headless)");
+  assert.match(html, /class="player"/); // reproductor paso a paso (para la prueba con capturas)
+  assert.match(html, /Reproducir/); // control de reproducción
+  assert.match(html, /data-cap=/); // el paso lleva su leyenda para la reproducción
   assert.match(html, /ya no está/); // warning de regresión
-  ctx.ok("buildRegressionReport: HTML autocontenido con capturas+video embebidos y veredicto");
+  ctx.ok("buildRegressionReport: capturas embebidas + reproducción paso a paso (sin video) y veredicto");
+
+  // 13) renderRegressionFindings: Description de la HU (estilo en línea para ADO) de UNA prueba.
+  const okDesc = renderRegressionFindings({
+    system: "Flit Dev", suite: "Login", stamp: "2026-07-22 10:00:00", url: "https://dev.flitsas.online",
+    test: { name: "Logueo Correcto", status: "pass", warnings: [], cases: [{ name: "1. clic Ingresar", status: "pass" }] },
+  });
+  assert.match(okDesc, /La prueba de regresión pasó/);
+  assert.match(okDesc, /Logueo Correcto/);
+  assert.match(okDesc, /URL probada/); // la URL de ejecución queda en la Description
+  assert.match(okDesc, /dev\.flitsas\.online/);
+  assert.ok(/style="[^"]*background/.test(okDesc), "el estilo va EN LÍNEA (ADO descarta hojas de estilo)");
+  assert.ok(!/<style/.test(okDesc), "no usa <style> (ADO lo descartaría)");
+  const badDesc = renderRegressionFindings({
+    system: "Flit Dev", suite: "Login",
+    test: { name: "Logueo Fallido", status: "fail", warnings: ["el elemento «x» ya no está"], cases: [{ name: "2. verificar", status: "fail", message: "no visible" }] },
+  });
+  assert.match(badDesc, /La prueba de regresión falló/);
+  assert.match(badDesc, /no visible/); // el mensaje de error del paso
+  assert.match(badDesc, /ya no está/); // el aviso de regresión
+  ctx.ok("renderRegressionFindings: Description con veredicto, URL, pasos y avisos (estilo en línea, sin <style>)");
+
+  // 14) regressionTitle: prefijo estable propio + suite/prueba + fecha·hora + #N (como QA del código).
+  const title = regressionTitle({ suite: "Login", test: "Logueo Correcto", stamp: "2026-07-22 10:00:00", seq: 1 });
+  assert.strictEqual(title, "Regresión E2E (QualityOps) — Login / Logueo Correcto — 2026-07-22 10:00:00 #1");
+  assert.match(regressionTitle({ suite: "S", test: "T" }), /^Regresión E2E \(QualityOps\) — S \/ T$/); // sin seq → sin #N
+  ctx.ok("regressionTitle: marcador propio + fecha·hora + #N (conteo específico, no cuenta ítems ajenos)");
 }
 
 export default { run };
