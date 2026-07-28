@@ -20,6 +20,13 @@ function vulnAction(pkg, fix) {
   return `Actualizá «${pkg}» a una versión corregida${fix ? ` (${fix})` : ""}. Si es una dependencia transitiva (la trae otra), actualizá la que la incluye o fijá una versión segura. No la ignores por ser "de otro paquete": corre con tu app.`;
 }
 const firstLine = (s) => String(s || "").split(/\r?\n/)[0].trim();
+// Una vuln DETECTADA que no bloquea (severidad menor) es una SUGERENCIA: se encontró y se reporta, pero
+// no reprueba. La marca `kind:"suggestion"` la separa de «No verificado» (lo que NO se pudo comprobar) →
+// las 14 vulns medias dejan de leerse como "pruebas saltadas". Solo aplica a los casos `skip`.
+function tagSuggestions(cases) {
+  for (const c of cases) if (c && c.status === "skip") c.kind = "suggestion";
+  return cases;
+}
 function pickJson(text) {
   if (!text) return null;
   try { return JSON.parse(String(text)); } catch { /* intenta recortar */ }
@@ -49,7 +56,7 @@ export function parseNpmAudit(out, { failOn } = { failOn: new Set(["critical", "
         plain: vulnPlain(name, sev, titles[0] || ""), action: vulnAction(name, fix),
       });
     }
-    return cases;
+    return tagSuggestions(cases);
   }
   if (j.advisories && typeof j.advisories === "object") {
     for (const a of Object.values(j.advisories)) {
@@ -59,7 +66,7 @@ export function parseNpmAudit(out, { failOn } = { failOn: new Set(["critical", "
         plain: vulnPlain(a.module_name, a.severity, a.title || ""), action: vulnAction(a.module_name, a.patched_versions ? `versión parcheada: ${a.patched_versions}` : ""),
       });
     }
-    return cases;
+    return tagSuggestions(cases);
   }
   return cases; // JSON válido sin vulnerabilidades → [] (pass)
 }
@@ -80,7 +87,7 @@ export function parseDotnetVulnerable(out, { failOn } = { failOn: new Set(["crit
       plain: vulnPlain(pkg, sev, ""), action: vulnAction(pkg, "actualizá el paquete NuGet a una versión no afectada"),
     });
   }
-  return cases;
+  return tagSuggestions(cases);
 }
 
 /** pip-audit --format json → `{dependencies:[{name,version,vulns:[{id,fix_versions,description}]}]}` o array. */
@@ -101,7 +108,7 @@ export function parsePipAudit(out, { failOn } = { failOn: new Set(["critical", "
       });
     }
   }
-  return cases;
+  return tagSuggestions(cases);
 }
 
 export default { parseNpmAudit, parseDotnetVulnerable, parsePipAudit };

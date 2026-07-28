@@ -13,7 +13,9 @@ import path from "node:path";
 import { runDeclaredChecks } from "./db-checks.mjs";
 
 // Nombres de tabla de control de migraciones más comunes por ecosistema (el primero que exista gana).
-const TRACKING_TABLES = ["__EFMigrationsHistory", "flyway_schema_history", "_prisma_migrations", "schema_migrations", "pgmigrations", "changelog"];
+// Drizzle usa `__drizzle_migrations` (por defecto en el esquema `drizzle`): como la búsqueda es por
+// `information_schema.tables` sin fijar esquema, se encuentra igual y el conteo usa su `table_schema` real.
+const TRACKING_TABLES = ["__EFMigrationsHistory", "flyway_schema_history", "_prisma_migrations", "__drizzle_migrations", "schema_migrations", "pgmigrations", "changelog"];
 
 function msg(e) {
   return String((e && e.message) || e || "error").replace(/\s+/g, " ").trim();

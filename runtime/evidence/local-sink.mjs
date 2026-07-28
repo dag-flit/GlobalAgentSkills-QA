@@ -4,15 +4,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { renderCoverageMd, renderCoverageHtml } from "./ac-coverage.mjs";
-import { toolDescription, interpretLayer, describeEvidence, evidenceItems, evidenceLayers, notVerifiedCases, techDetail } from "./layer-explain.mjs";
+import { toolDescription, interpretLayer, describeEvidence, evidenceItems, evidenceLayers, notVerifiedCases, suggestionCases, techDetail } from "./layer-explain.mjs";
 import { warningsMd, warningsHtml } from "./lint-explain.mjs";
-import { explainLayerFailure, explainLabels } from "./failure-explain.mjs";
+import { explainLayerFailure } from "./failure-explain.mjs";
 import { executedMd } from "./report-executed.mjs";
 import { planMd, planHtml } from "./report-plan.mjs";
 import { collectShots, evidenceRunDir } from "./report-shots.mjs";
 // El detalle POR CASO (md + html) vive en report-cases.mjs: una sola regla de presentación para
-// ambos formatos, y este archivo queda dentro del guardrail de 400 líneas.
-import { casesMd, casesHtml, esc, caseWhere, blameAt } from "./report-cases.mjs";
+// ambos formatos, y este archivo queda dentro del guardrail de 400 líneas. `skipSection*` renderiza
+// las dos secciones de casos omitidos (💡 sugerencias de seguridad · ⏭ no verificado) con una regla.
+import { casesMd, casesHtml, esc, caseWhere, blameAt, skipSectionMd, skipSectionHtml } from "./report-cases.mjs";
+
+// Intros de las dos secciones de casos omitidos (compartidas con la HU → mismo texto en las 4 rutas).
+const SUGG_INTRO = "Hallazgos reales pero que NO bloquean la certificación: se detectaron y se reportan como sugerencia (p.ej. vulnerabilidades de dependencia de severidad media/baja, o licencias a revisar). Conviene atenderlas; no reprueban.";
+const NOVER_INTRO = "Puntos que NO se pudieron comprobar. No cuentan como hallazgo: o el criterio no aplica a este proyecto (el kit no lo asume por su cuenta), o faltó un requisito para verificarlos.";
 
 function todayStamp(tz) {
   // tz reservado para F1 (locale.timezone); por ahora fecha ISO local
@@ -61,6 +66,11 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   const stepPass = allCases.filter((c) => c.status === "pass").length;
   const stepFail = allCases.filter((c) => c.status === "fail").length;
   const warnCount = results.filter((r) => r.layer === "static").flatMap((r) => (Array.isArray(r.cases) ? r.cases : [])).filter((c) => c.status === "skip").length;
+  // Sugerencias = advertencias del linter (static) + hallazgos no bloqueantes (SCA media/baja, licencias).
+  // Se cuentan JUNTAS en el veredicto para que 14 vulns medias NO se lean como pruebas saltadas.
+  const secSugg = suggestionCases(results);
+  const notVer = notVerifiedCases(results);
+  const suggCount = warnCount + secSugg.length;
   const failed = fail > 0 || stepFail > 0;
   const unitWord = results.some((r) => r.layer === "explore") ? "paso" : "prueba";
   const caselessFails = results.filter(
@@ -68,7 +78,7 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   );
   // Veredicto con números CLAROS y ETIQUETADOS: distingue CAPAS (objetivos) de PRUEBAS (casos) — antes se
   // mezclaban (p.ej. "5 fallos" [capas] vs "7 hallazgos" [pruebas]) y confundía. Las advertencias aparte.
-  const sugg = warnCount ? ` · 💡 ${warnCount} sugerencia(s)` : "";
+  const sugg = suggCount ? ` · 💡 ${suggCount} sugerencia(s)` : "";
   let verdictTxt;
   if (!failed) {
     verdictTxt = `✅ PASÓ — ${pass} de ${total} capa(s) OK${stepPass ? `, ${stepPass} ${unitWord}(s) en verde` : ""}${sugg}`;
@@ -93,7 +103,7 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
   md.push(`**Veredicto:** ${verdictTxt}`);
   md.push("");
   md.push(`**Resumen por capa:** ${total} capa(s) · ✅ ${pass} pasaron · ❌ ${fail} con hallazgos · ⏭ ${skip} omitidas`);
-  md.push(`**Pruebas:** ✅ ${stepPass} en verde · ❌ ${stepFail} en rojo${warnCount ? `  ·  💡 ${warnCount} sugerencia(s)` : ""}`);
+  md.push(`**Pruebas:** ✅ ${stepPass} en verde · ❌ ${stepFail} en rojo${suggCount ? `  ·  💡 ${suggCount} sugerencia(s)` : ""}`);
   md.push("");
   // Cobertura de criterios de aceptación (matriz AC ↔ pasos) — cuando el guion la declara.
   for (const r of results) if (r.coverage) for (const line of renderCoverageMd(r.coverage)) md.push(line);
@@ -125,28 +135,15 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
     }
     md.push("");
   }
-  // Sugerencias (advertencias del linter) descritas en lenguaje claro — como en la HU.
+  // Sugerencias del LINTER (advertencias) descritas en lenguaje claro — como en la HU.
   for (const line of warningsMd(results)) md.push(line);
-
-  // ⏭ No verificado: lo que NO se comprobó o quedó como sugerencia (misma sección que la HU). Sin
-  // esto, un check así (p.ej. «Índices en llaves foráneas», que es de la capa db y NO del linter)
-  // solo aparecía enterrado en el detalle por capa y no tenía lugar propio en el reporte.
-  const notVer = notVerifiedCases(results);
-  if (notVer.length) {
-    md.push("---");
-    md.push(`## ⏭ No verificado (${notVer.length})`);
-    md.push("");
-    md.push("_Puntos que NO se comprobaron o que quedan como sugerencia. No cuentan como hallazgo: o el criterio no aplica a este proyecto, o no se pudo verificar._");
-    md.push("");
-    for (const { c, r } of notVer) {
-      const L = explainLabels("skip");
-      md.push(`- ⏭ **${esc(c.name)}** — _${esc(r.layer)}_`);
-      md.push(`  - **${L.plain}:** ${esc(c.plain)}`);
-      if (c.action) md.push(`  - **${L.action}:** ${esc(c.action)}`);
-      if (c.message) md.push(`  - 🔎 _Detalle técnico:_ ${esc(String(c.message).split(/\r?\n/).slice(0, 2).join(" ⏎ "))}`);
-    }
-    md.push("");
-  }
+  // 💡 Sugerencias de SEGURIDAD: hallazgos detectados que NO bloquean (SCA media/baja, licencias a
+  // revisar). Sección PROPIA para que no se lean como pruebas saltadas (antes caían en «No verificado»).
+  for (const line of skipSectionMd({ title: "💡 Sugerencias de seguridad", icon: "💡", intro: SUGG_INTRO, items: secSugg })) md.push(line);
+  // ⏭ No verificado: lo que NO se pudo comprobar (misma sección que la HU). Sin esto, un check así
+  // (p.ej. «Índices en llaves foráneas», de la capa db y NO del linter) solo aparecía enterrado en el
+  // detalle por capa. Ya NO incluye las sugerencias (tienen su sección arriba).
+  for (const line of skipSectionMd({ title: "⏭ No verificado", icon: "⏭", intro: NOVER_INTRO, items: notVer })) md.push(line);
 
   // ---- Capas con FALLO sin desglose por prueba (caseless): misma claridad 🧩/👉 que los TC ----
   // (dotnet-test/tsc/redocly salen ≠0 sin JSON por caso → no aparecen en el detalle de TC de abajo).
@@ -281,17 +278,10 @@ export function writeLocalReport({ repoRoot, profile = {}, workItemId = "local",
         })
         .join("")}`
     : "";
-  // ⏭ No verificado (misma sección y misma selección que la HU y el md).
-  const notVerHtml = notVer.length
-    ? `<h2>⏭ No verificado (${notVer.length})</h2><p class="muted">Puntos que NO se comprobaron o que quedan como sugerencia. No cuentan como hallazgo: o el criterio no aplica a este proyecto, o no se pudo verificar.</p>${notVer
-        .map(({ c, r }) => {
-          const L = explainLabels("skip");
-          const act = c.action ? `<div style="color:#0a5"><b>${L.action}:</b> ${esc(c.action)}</div>` : "";
-          const det = c.message ? `<div class="muted">🔎 Detalle técnico: ${esc(String(c.message).split(/\r?\n/).slice(0, 2).join(" ⏎ "))}</div>` : "";
-          return `<div class="nov"><b>⏭ ${esc(c.name)}</b> <small class="muted">— ${esc(r.layer)}</small><div><b>${L.plain}:</b> ${esc(c.plain)}</div>${act}${det}</div>`;
-        })
-        .join("")}`
-    : "";
+  // 💡 Sugerencias de seguridad (.warn amarillo) + ⏭ No verificado (.nov gris) — misma selección y
+  // texto que la HU y el md. skipSectionHtml aplica la regla ÚNICA a ambas.
+  const secSuggHtml = skipSectionHtml({ title: "💡 Sugerencias de seguridad", icon: "💡", intro: SUGG_INTRO, items: secSugg, cls: "warn" });
+  const notVerHtml = skipSectionHtml({ title: "⏭ No verificado", icon: "⏭", intro: NOVER_INTRO, items: notVer, cls: "nov" });
 
   const CSS =
     "body{font-family:system-ui,Arial,sans-serif;max-width:920px;margin:2rem auto;color:#222;padding:0 1rem;line-height:1.5}" +
@@ -321,6 +311,7 @@ ${planHtml(plan, results)}
 </table>
 ${passedHtml}
 ${warningsHtml(results)}
+${secSuggHtml}
 ${notVerHtml}
 ${caselessBlock}
 ${casesBlock}

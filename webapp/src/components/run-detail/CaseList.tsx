@@ -9,7 +9,7 @@ import { lintRuleHelp, friendlyFile, groupLintWarnings } from "./helpers";
 interface Blame { author: string; email?: string | null; date?: string | null; file: string; line?: number | null }
 // `plain`/`action`: explicación que emite el propio check (los declarativos de BD la traen). Si está,
 // se muestra SIEMPRE — pase, falle u omita — igual que en el reporte md/html y en la HU.
-interface Case { name: string; status: string; duration?: number | null; message?: string | null; blame?: Blame | null; plain?: string | null; action?: string | null }
+interface Case { name: string; status: string; duration?: number | null; message?: string | null; blame?: Blame | null; plain?: string | null; action?: string | null; kind?: string | null }
 
 // Deriva { group, trail, test } del nombre de un caso, según cómo lo nombra cada herramienta:
 //  • unit (vitest/jest): "Suite › subsuite › test" → agrupa por la suite (primer segmento).
@@ -103,12 +103,15 @@ export function CaseList({ cases, layer, tool }: { cases: Case[]; layer?: string
                 const { trail, test } = splitName(c.name);
                 // En static, un caso "skip" es una ADVERTENCIA del linter (no un test saltado).
                 const warn = layer === "static" && c.status === "skip";
+                // Un skip marcado kind:"suggestion" (SCA media/baja, licencias) es una SUGERENCIA
+                // detectada, no una prueba saltada → 💡 ámbar, para que no se lea como "omitida".
+                const suggestion = c.status === "skip" && c.kind === "suggestion";
                 // Regla de lint (eslint/ruff): separa ubicación + regla y traduce qué significa.
                 const lr = layer === "static" ? lintRuleHelp(c.name) : null;
-                const icon = warn ? "⚠" : ICON[c.status] ?? "•";
-                const iconColor = warn ? "text-amber-300" : COLOR[c.status] ?? "text-muted";
+                const icon = warn ? "⚠" : suggestion ? "💡" : ICON[c.status] ?? "•";
+                const iconColor = warn || suggestion ? "text-amber-300" : COLOR[c.status] ?? "text-muted";
                 return (
-                  <li key={i} className={`px-2 py-1.5 text-xs ${c.status === "fail" ? "bg-red-950/20" : warn ? "bg-amber-950/10" : ""}`}>
+                  <li key={i} className={`px-2 py-1.5 text-xs ${c.status === "fail" ? "bg-red-950/20" : warn || suggestion ? "bg-amber-950/10" : ""}`}>
                     <div className="flex items-start gap-2">
                       <span className={`${iconColor} mt-0.5`} title={warn ? "advertencia" : c.status}>{icon}</span>
                       <div className="min-w-0">

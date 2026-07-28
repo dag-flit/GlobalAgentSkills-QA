@@ -11,6 +11,7 @@ import { isStopRequested, clearStop, markActive, markDone } from "@/lib/procRegi
 import { startHeartbeat, stopHeartbeat } from "@/lib/qa/heartbeat";
 import { runFeatureFanout } from "./fanout";
 import { setupConfiguredDb, type DbInjection } from "./dbInject";
+import { describeError, runId } from "./runnerUtils";
 import type { AppConfig, RunMode, RunRecord } from "@/lib/types";
 
 export interface RunInput {
@@ -26,28 +27,6 @@ export interface RunInput {
   featureId?: string; // FT padre (traza la carpeta de evidencia)
   developer?: string; // dev responsable (traza la carpeta de evidencia)
   useConfiguredDb?: boolean; // inyectar la BD configurada (módulo BD) al entorno de las pruebas
-}
-
-/**
- * Mensaje de error legible que NO pierde la causa real. `fetch` (undici) lanza un escueto
- * "fetch failed" y esconde el motivo en `e.cause` (p.ej. ECONNRESET, ENOTFOUND, ETIMEDOUT).
- * Lo desempaquetamos para que el reporte/consola muestren el código real y sea diagnosticable.
- */
-function describeError(e: any): string {
-  const msg = String(e?.message ?? e);
-  const cause = e?.cause;
-  if (cause) {
-    const code = cause.code ?? cause.errno;
-    const cmsg = cause.message ?? String(cause);
-    const detail = [code, cmsg && cmsg !== msg ? cmsg : null].filter(Boolean).join(" · ");
-    if (detail) return `${msg} (${detail})`;
-  }
-  return msg;
-}
-
-function runId(): string {
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  return `${ts}-${Math.floor(Math.random() * 10000)}`;
 }
 
 function titleFor(input: RunInput): string {
@@ -334,6 +313,19 @@ async function executeCode(record: RunRecord, input: RunInput, cfg: AppConfig): 
     const layers = Array.isArray(input.layers) && input.layers.length ? input.layers : undefined;
     emitEvent(id, "info", `Analizando código en «${input.sourcePath}»… (detectando capas y corriendo sus herramientas — las pruebas grandes pueden tardar minutos)`);
 
+    // Espacio de trabajo AISLADO: para NO instalar dependencias en el repo CERTIFICADO, las capas que
+    // las necesitan (static/unit/security) corren sobre una copia efímera del repo con las deps
+    // instaladas FUERA (data/tenants/<tenant>/workspace). Repo Node con lockfile → materializa; .NET /
+    // sin lockfile → el motor devuelve null y se analiza el repo en su lugar (camino intacto). Best-effort:
+    // si el preparador no se puede inicializar, la corrida sigue sobre el repo tal cual.
+    let prepareWorkspace: unknown;
+    try {
+      const { makeCodeWorkspacePreparer } = await import("./workspace");
+      prepareWorkspace = await makeCodeWorkspacePreparer({ tenantId: currentTenantId(), env });
+    } catch (e: any) {
+      emitEvent(id, "stderr", `No se pudo inicializar el espacio de trabajo aislado: ${describeError(e)} — se analizará el repo en su lugar (sin instalar en él).`);
+    }
+
     // Sin `evidenceRoot` → el motor escribe la evidencia DENTRO del proyecto analizado
     // (<proyecto>/qa-evidence/<fecha>/…), como el modo local-first: queda junto al repo y trazable.
     const summary = await runCodeCycle({
@@ -345,6 +337,7 @@ async function executeCode(record: RunRecord, input: RunInput, cfg: AppConfig): 
       developer: input.developer,
       layers,
       pgQuery: dbInjection?.pgQuery, // sonda directa a Postgres para la capa db (undefined si no hay BD)
+      prepareWorkspace, // materializa el repo fuera de la ruta certificada (Node); .NET/sin lockfile → null
       // Progreso en vivo por capa (la corrida es bloqueante; sin esto la UI parece colgada).
       emit: (lvl: string, msg: string) => emitEvent(id, lvl as any, msg),
     });

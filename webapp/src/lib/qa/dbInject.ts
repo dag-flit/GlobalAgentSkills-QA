@@ -21,8 +21,14 @@ export interface DbInjection {
  * SOLO al proceso hijo / a la sonda; nunca al navegador.
  */
 export async function setupConfiguredDb(cfg: AppConfig): Promise<DbInjection | null> {
+  // La corrida usa la conexión PREDETERMINADA (o la primera). Si NO es la que el usuario configuró
+  // (p.ej. quedó como predeterminada la sembrada «Local Postgres» sin clave), la sonda fallará con un
+  // error de driver críptico ("client password must be a string" = clave ausente). Lo detectamos y lo
+  // avisamos nombrando la conexión, para que el usuario vea que la predeterminada no es la correcta.
   const db: DbConnection | undefined = cfg.databases.find((d) => d.isDefault) ?? cfg.databases[0];
   if (!db || !db.host || !db.user) return null;
+  const password = typeof db.password === "string" ? db.password : ""; // coerción defensiva (pg exige string)
+  const hasPwd = password.length > 0;
 
   const resolved = await resolveTarget(db); // abre el túnel SSH si la conexión lo tiene activado
   const tunnel: Tunnel | undefined = resolved.tunnel;
@@ -35,7 +41,7 @@ export async function setupConfiguredDb(cfg: AppConfig): Promise<DbInjection | n
     port: resolved.port,
     database: db.database,
     user: db.user,
-    password: db.password,
+    password,
     ssl: db.ssl,
     sslAllowSelfSigned: db.sslAllowSelfSigned,
   });
@@ -52,7 +58,7 @@ export async function setupConfiguredDb(cfg: AppConfig): Promise<DbInjection | n
           host: resolved.host,
           port: resolved.port,
           user: db.user,
-          password: db.password,
+          password,
           database: db.database,
           ssl: db.ssl ? { rejectUnauthorized: !db.sslAllowSelfSigned } : undefined,
           connectionTimeoutMillis: 12000,
@@ -65,7 +71,10 @@ export async function setupConfiguredDb(cfg: AppConfig): Promise<DbInjection | n
     };
   }
 
-  const info = `Usando la BD configurada «${db.name}» (${db.host}:${db.port}/${db.database}${db.ssh?.enabled ? " · vía SSH" : ""}) en las pruebas.`;
+  const pwdWarn = hasPwd
+    ? ""
+    : ` ⚠ Esta conexión NO tiene contraseña: si la BD la requiere, la sonda fallará. La corrida usa la conexión marcada como PREDETERMINADA — verificá en Ajustes › BD que la predeterminada sea la que configuraste (probar «Probar conexión» ahí, no en tu app).`;
+  const info = `Usando la BD configurada «${db.name}» (${db.host}:${db.port}/${db.database}${db.ssh?.enabled ? " · vía SSH" : ""})${hasPwd ? "" : " SIN contraseña"} en las pruebas.${pwdWarn}`;
   const close = async () => {
     try { await pgClient?.end(); } catch { /* cierre del cliente pg best-effort */ }
     try { tunnel?.close(); } catch { /* cierre del túnel SSH best-effort */ }

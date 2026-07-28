@@ -149,6 +149,9 @@ function buildCases(byClass, { total, proprietary, deny }) {
     cases.push({
       name: `Dependencias con licencia ${klass === "strong" ? "copyleft fuerte" : klass === "weak" ? "copyleft débil" : "no declarada"}`,
       status: hard ? "fail" : "skip",
+      // Una licencia a revisar que NO bloquea es una SUGERENCIA (detectada, no reprueba) → va a su
+      // propia sección, no a «No verificado». Un conflicto duro (fail) es un hallazgo, no lleva marca.
+      ...(hard ? {} : { kind: "suggestion" }),
       message: list.join("\n"),
       plain: `${hits.length} dependencia(s) ${CLASS_PLAIN[klass]}${posture} Afecta a: ${where}.`,
       action: CLASS_ACTION[klass],

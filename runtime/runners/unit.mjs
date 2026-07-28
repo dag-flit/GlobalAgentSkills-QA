@@ -7,9 +7,31 @@
 // de tracker. Emite el objeto normalizado; el sink (local por defecto) decide el destino.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { runLayer } from "./_runner-core.mjs";
 import { parseJestLike, parseDotnet } from "./parse-cases.mjs";
+
+// vitest/jest con `--reporter=json` escriben el JSON a STDOUT, MEZCLADO con los `console.log`/stderr de
+// las propias pruebas → el JSON queda contaminado y el parser no puede extraer los casos (se pierde el
+// desglose prueba-por-prueba). Fix: escribir el reporte a un ARCHIVO (`--outputFile`) y leerlo limpio.
+// Fallback: si el archivo no existe (la herramienta murió antes de escribirlo, o un exec fake en el smoke),
+// se cae a `out.stdout` → comportamiento previo intacto. El archivo va a un temporal (no toca el repo).
+function jsonReporterSpec(argvBase, label) {
+  const file = path.join(os.tmpdir(), `qa-${label}-${Date.now()}-${Math.floor(Math.random() * 1e9)}.json`);
+  return {
+    argv: [...argvBase, `--outputFile=${file}`],
+    parseCases: (out, ctx) => {
+      let json = out.stdout;
+      try {
+        const f = fs.readFileSync(file, "utf8");
+        if (f && f.trim()) json = f;
+      } catch { /* archivo ausente → usa stdout (fallback) */ }
+      try { fs.unlinkSync(file); } catch { /* best-effort */ }
+      return parseJestLike({ ...out, stdout: json }, ctx);
+    },
+  };
+}
 
 // Escanea el árbol (acotado) y recolecta la solución (.sln) y TODOS los proyectos de test
 // (*.csproj con Test/Tests). En monorepos el .csproj puede vivir en backend/services/… → no
@@ -66,8 +88,8 @@ function expandDotnetTargetsForUnit(detection, repoRoot) {
 // nada) → parseJestLike. dotnet no trae JSON nativo, pero SÍ parseamos su salida de consola
 // (errores de compilación + pruebas fallidas) → parseDotnet. pytest queda con el resumen de texto.
 const TOOLS = {
-  vitest: () => ({ argv: ["vitest", "run", "--reporter=json"], parseCases: parseJestLike }),
-  jest: () => ({ argv: ["jest", "--json"], parseCases: parseJestLike }),
+  vitest: () => jsonReporterSpec(["vitest", "run", "--reporter=json"], "vitest"),
+  jest: () => jsonReporterSpec(["jest", "--json"], "jest"),
   pytest: ["pytest"],
   // función: si el objetivo trae un `project` explícito (fan-out sin .sln), lo corre; si no,
   // localiza el .sln/primer .csproj bajo la cwd. Sin destino localizable → skip con aviso, no aborta.

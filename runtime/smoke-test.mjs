@@ -14,6 +14,7 @@ import * as fanoutSuite from "./smoke/fanout-suite.mjs";
 import * as prSuite from "./smoke/pr-suite.mjs";
 import * as codeSuite from "./smoke/code-suite.mjs";
 import * as regressionSuite from "./smoke/regression-suite.mjs";
+import * as workspaceSuite from "./smoke/workspace-suite.mjs";
 import * as dotnetStaticSuite from "./smoke/dotnet-static-suite.mjs";
 import * as secretSuite from "./smoke/secret-scan-suite.mjs";
 import * as scaSuite from "./smoke/sca-suite.mjs";
@@ -21,7 +22,7 @@ import * as licenseSuite from "./smoke/license-scan-suite.mjs";
 import * as axeSuite from "./smoke/axe-suite.mjs";
 import * as openapiDiffSuite from "./smoke/openapi-diff-suite.mjs";
 
-const EXPECTED = 108;
+const EXPECTED = 118;
 
 console.log("== smoke test (kit acotado a exploración E2E) ==\n");
 
@@ -33,6 +34,7 @@ await fanoutSuite.run(ctx);
 await prSuite.run(ctx);
 await codeSuite.run(ctx);
 await regressionSuite.run(ctx);
+await workspaceSuite.run(ctx);
 await dotnetStaticSuite.run(ctx);
 await secretSuite.run(ctx);
 await scaSuite.run(ctx);

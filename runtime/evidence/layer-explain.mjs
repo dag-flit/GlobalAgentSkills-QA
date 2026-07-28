@@ -201,16 +201,34 @@ export function techDetail(m, maxLines = 3) {
 }
 
 /**
- * Casos OMITIDOS que traen su propia explicación → "no verificado". NO son hallazgos: o el criterio
- * no aplica al proyecto, o quedó como sugerencia, o no se pudo comprobar. El filtro por `plain` deja
- * fuera el ruido (advertencias del linter y tests saltados, que tienen su propia sección).
+ * Casos OMITIDOS que traen su propia explicación → "no verificado". NO son hallazgos y NO se pudieron
+ * comprobar: o el criterio no aplica al proyecto (p.ej. RLS no declarado), o faltó un requisito
+ * (herramienta ausente, sin lockfile). El filtro por `plain` deja fuera el ruido (advertencias del
+ * linter y tests saltados). EXCLUYE las SUGERENCIAS (`kind:"suggestion"`): esas SÍ se detectaron pero
+ * no bloquean (vulns de severidad media/baja, licencias a revisar) → tienen su sección propia
+ * (`suggestionCases`), para que no se lean como pruebas saltadas.
  * Compartido por HU/MD/HTML → el mismo ítem se ve en las 4 rutas (invariante 8).
  * @returns {Array<{c:object, r:object}>}
  */
 export function notVerifiedCases(results = []) {
   const out = [];
   for (const r of results) {
-    for (const c of Array.isArray(r.cases) ? r.cases : []) if (c.status === "skip" && c.plain) out.push({ c, r });
+    for (const c of Array.isArray(r.cases) ? r.cases : []) if (c.status === "skip" && c.plain && c.kind !== "suggestion") out.push({ c, r });
+  }
+  return out;
+}
+
+/**
+ * SUGERENCIAS: hallazgos DETECTADOS que NO bloquean (se marcan `kind:"suggestion"` en su runner —
+ * vulnerabilidades de dependencia de severidad media/baja, licencias a revisar). Se muestran en su
+ * propia sección «💡 Sugerencias de seguridad», separadas de «No verificado» (lo que no se pudo
+ * comprobar) y de los hallazgos que sí reprueban. Compartido por HU/MD/HTML/UX (invariante 8).
+ * @returns {Array<{c:object, r:object}>}
+ */
+export function suggestionCases(results = []) {
+  const out = [];
+  for (const r of results) {
+    for (const c of Array.isArray(r.cases) ? r.cases : []) if (c.status === "skip" && c.plain && c.kind === "suggestion") out.push({ c, r });
   }
   return out;
 }

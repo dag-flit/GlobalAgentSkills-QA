@@ -6,7 +6,7 @@
 
 import { explainFailure, explainLayerFailure, explainLabels } from "./failure-explain.mjs";
 import { groupWarnings, friendlyFile } from "./lint-explain.mjs";
-import { describeEvidence, evidenceItems, evidenceLayers, notVerifiedCases, techDetail } from "./layer-explain.mjs";
+import { describeEvidence, evidenceItems, evidenceLayers, notVerifiedCases, suggestionCases, techDetail } from "./layer-explain.mjs";
 
 // Prefijo estable del título (base del conteo #N). NO cambiar sin migrar el conteo por tag.
 export const TITLE_PREFIX = "Hallazgos QA de código (QualityOps Framework)";
@@ -146,24 +146,37 @@ function evidenceCard(r) {
   return box(inner, { bg: "#f2faf5", border: partial ? "#e0d6b6" : "#cbe8d5" });
 }
 
-// Sección "no verificado": casos OMITIDOS que traen su propia explicación (los checks declarativos la
-// emiten). NO son hallazgos: o el proyecto no declaró ese criterio, o no se pudo comprobar. Sin esto
-// un check «no declarado» quedaba invisible en la HU aunque sí salía en el reporte local. El filtro por
-// `plain` deja fuera el ruido (advertencias del linter, tests saltados), que ya tienen su propia sección.
-function notVerifiedSection(results) {
-  const rows = notVerifiedCases(results); // misma selección que el reporte md/html
+// Sección genérica de casos OMITIDOS con explicación (una regla para «Sugerencias de seguridad» y
+// «No verificado»; solo cambian rótulo/intro/color). `rows` = [{c,r}] ya seleccionados.
+function skipSection(rows, { title, intro, bg, border }) {
   if (!rows.length) return "";
   const L = explainLabels("skip");
-  let html =
-    sectionBar(`⏭ No verificado (${rows.length})`) +
-    `<p style="color:#666;margin:2px 0 6px">Puntos que NO se comprobaron o que quedan como sugerencia. No cuentan como hallazgo: o el proyecto no declaró ese criterio (el kit no lo asume por su cuenta), o no se pudo verificar.</p>`;
+  let html = sectionBar(title) + `<p style="color:#666;margin:2px 0 6px">${esc(intro)}</p>`;
   for (const { c, r } of rows) {
-    let inner = `<p style="margin:2px 0"><strong>⏭ ${esc(c.name)}</strong> <small style="color:#888">— ${esc(layerLabel(r.layer))}</small></p>`;
+    let inner = `<p style="margin:2px 0"><strong>${esc(c.name)}</strong> <small style="color:#888">— ${esc(layerLabel(r.layer))}</small></p>`;
     inner += `<p style="margin:2px 0">${L.plain}: ${esc(c.plain)}</p>`;
     if (c.action) inner += `<p style="margin:2px 0;color:#0a5">${L.action}: ${esc(c.action)}</p>`;
-    html += box(inner);
+    html += box(inner, bg ? { bg, border } : undefined);
   }
   return html;
+}
+// 💡 Sugerencias de SEGURIDAD: hallazgos DETECTADOS que NO bloquean (SCA media/baja, licencias a
+// revisar). Antes caían en «No verificado» y se leían como pruebas saltadas → ahora tienen sección propia.
+function securitySuggestionsSection(results) {
+  return skipSection(suggestionCases(results), {
+    title: `💡 Sugerencias de seguridad (${suggestionCases(results).length})`,
+    intro: "Hallazgos reales pero que NO bloquean la certificación: se detectaron y se reportan como sugerencia (p.ej. vulnerabilidades de dependencia de severidad media/baja, o licencias a revisar). Conviene atenderlas; no reprueban.",
+    bg: "#fdf9ec", border: "#f0e2b6",
+  });
+}
+// ⏭ No verificado: casos que NO se pudieron comprobar (los checks declarativos lo emiten). NO son
+// hallazgos: o el proyecto no declaró ese criterio, o faltó un requisito. Sin esto un check «no
+// declarado» quedaba invisible en la HU. Ya NO incluye las sugerencias (tienen su sección arriba).
+function notVerifiedSection(results) {
+  return skipSection(notVerifiedCases(results), {
+    title: `⏭ No verificado (${notVerifiedCases(results).length})`,
+    intro: "Puntos que NO se pudieron comprobar. No cuentan como hallazgo: o el proyecto no declaró ese criterio (el kit no lo asume por su cuenta), o faltó un requisito para verificarlos.",
+  });
 }
 
 // Tarjeta de UN hallazgo (caso fallido), humanizada + en rojo: qué pasó / qué hacer / autor / detalle.
@@ -191,7 +204,10 @@ export function renderFindingsDescription({ results = [], layersRun = [], when =
   // Números CLAROS y ETIQUETADOS: CAPAS (objetivos, p.ej. cada proyecto de test) ≠ PRUEBAS (casos). Antes
   // se mezclaban ("N hallazgos" tomaba pruebas o capas indistintamente) y por eso 5 vs 7 confundía.
   const warnCount = results.filter((r) => r.layer === "static").flatMap((r) => (Array.isArray(r.cases) ? r.cases : [])).filter((c) => c.status === "skip").length;
-  const sugg = warnCount ? ` · 💡 ${warnCount} sugerencia(s)` : "";
+  // Sugerencias = advertencias del linter + hallazgos no bloqueantes (SCA media/baja, licencias) → se
+  // cuentan JUNTAS para que las vulns medias no se lean como pruebas saltadas (mismo criterio que el md).
+  const suggCount = warnCount + suggestionCases(results).length;
+  const sugg = suggCount ? ` · 💡 ${suggCount} sugerencia(s)` : "";
   const verdictBox = s.hasFindings
     ? box(`❌ <strong>FALLÓ</strong> — ${s.layerFails} capa(s) con hallazgos · ${s.caseFails} prueba(s) en rojo${sugg}. <br><small style="color:#8a1020">Una «capa» es un objetivo (p.ej. un proyecto de test); una «prueba» es un caso dentro de la capa.</small>`, { bg: "#fdecea", border: "#f5c6cb" })
     : box(`✅ <strong>Sin hallazgos</strong> — ${s.layers} capa(s) ejecutada(s), todo en verde${sugg}.`, { bg: "#e7f6ec", border: "#b6e0c2" });
@@ -209,8 +225,9 @@ export function renderFindingsDescription({ results = [], layersRun = [], when =
     ? sectionBar("✅ Evidencia — lo que se validó correctamente") + evLayers.map(evidenceCard).join("")
     : "";
 
-  // Sugerencias (advertencias del linter) — positivas, junto a la evidencia.
-  const suggestions = suggestionsSection(results);
+  // Sugerencias del LINTER (advertencias) + Sugerencias de SEGURIDAD (SCA media/baja, licencias) —
+  // positivas, junto a la evidencia. Separadas de «No verificado» para no leerse como pruebas saltadas.
+  const suggestions = suggestionsSection(results) + securitySuggestionsSection(results);
 
   // Hallazgos: capas/casos en rojo, cada uno en su tarjeta.
   let findings = sectionBar("❌ Hallazgos");

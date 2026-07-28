@@ -44,9 +44,14 @@ function detectScaTargets(repoRoot, { listDir, exists } = {}) {
   // ¿Un package.json cae bajo un workspace pnpm? (mismo dir o descendiente de una raíz pnpm). Un lock en la
   // raíz cubre todo el árbol. Los sub-paquetes cubiertos NO emiten npm-audit → sin ruido de "skip sin lock".
   const coveredByPnpm = (dir) => pnpmRoots.some((root) => dir === root || (root === "" ? true : dir.startsWith(root + "/")));
+  // Igual para npm workspaces: hay UN solo package-lock.json (la raíz) y `npm audit` de ese dir audita
+  // TODO el árbol de workspaces. Un sub-paquete SIN lock propio pero bajo un ancestro que SÍ lo tiene queda
+  // cubierto → no se emite objetivo (evita el falso "necesita lockfile" en apps/api, apps/web, etc.).
+  const npmLockRoots = npm.filter((n) => n.hasNpmLock).map((n) => n.cwd);
+  const coveredByNpmLock = (dir) => npmLockRoots.some((root) => root !== dir && (root === "" ? true : dir.startsWith(root + "/")));
   for (const n of npm) {
     if (n.hasNpmLock) targets.push({ tool: "npm-audit", cwd: n.cwd, label: `${n.cwd || "raíz"} (npm)`, hasLock: true });
-    else if (!coveredByPnpm(n.cwd)) targets.push({ tool: "npm-audit", cwd: n.cwd, label: `${n.cwd || "raíz"} (npm)`, hasLock: false });
+    else if (!coveredByPnpm(n.cwd) && !coveredByNpmLock(n.cwd)) targets.push({ tool: "npm-audit", cwd: n.cwd, label: `${n.cwd || "raíz"} (npm)`, hasLock: false });
   }
   // Con solución (.sln) basta un objetivo (cubre todos los proyectos); sin ella, uno por proyecto.
   const dotnetArgs = sln.length ? sln : csproj;

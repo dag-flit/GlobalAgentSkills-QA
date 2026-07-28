@@ -948,6 +948,103 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   Motor sigue cero-dependencias (YAML/http/readFile inyectados, patrón axe). Suite `openapi-diff-suite.mjs`
   (+4). `yaml` nuevo en `webapp/package.json`. Ver [[openapi-breaking-change-pr]]. **Reiniciado `npm run dev`.**
 
+- **QA del código sin tocar el repo certificado: MATERIALIZACIÓN EFÍMERA fuera de la ruta (2026-07-27,
+  motor+webapp, smoke 114 · tsc0 · budget0, sin commitear).** El usuario (QA) pidió NO instalar nada en
+  el repo que certifica: `npm install` escribe `node_modules/` DENTRO del repo probado. Regla que faltaba
+  a la de [[dotnet-static-roslyn]] (*herramienta*→kit, *artefacto*→repo): para Node el artefacto va DENTRO
+  del árbol → hay que materializarlo FUERA. Solución (lo que hace un CI): copiar el repo a un espacio del
+  kit, instalar ahí, correr las capas con-deps ahí; el repo original NUNCA se toca. `runtime/workspace/
+  materialize.mjs` (PURO, TODO efecto inyectable —mkdtemp/copyTree/exec/rm/readdir—; offline-testable):
+  `makeMaterializer(deps)` → `prepareWorkspace({repoRoot,detection})`. Aplicabilidad v1 = **Node** (npm/
+  pnpm/yarn con lockfile); **.NET → devuelve null** (dotnet restaura al caché GLOBAL, no ensucia el repo →
+  camino .NET/FLIT **intacto**); sin lockfile / no-Node → null. `npm ci` (fallback `npm install`) / `pnpm
+  install --frozen-lockfile` según el lockfile; un lock de workspace cubre sub-paquetes (1 install). Si
+  NADA se instala → descarta la copia y cae al repo tal cual (nunca peor que hoy). `code-cycle.mjs`: opt
+  `prepareWorkspace` (**ausente → comportamiento IDÉNTICO al histórico**); las capas `DEP_LAYERS=
+  {static,unit,security}` corren sobre `workRoot`, el resto (api/db + git-blame) sobre el repo original
+  (rutas relativas → válidas en ambos; la copia no lleva `.git` → blame sobre el original); `finally`
+  borra el workRoot siempre. Webapp: `lib/qa/workspace.ts` (fs real `cpSync` con filtro de EXCLUDE_DIRS +
+  `makeSandboxedExec` del kit → install solo npm/pnpm/yarn de la allowlist, con timeout; el env de la
+  corrida —conexión BD— NO viaja al subproceso de install); `runner.ts` lo cablea en modo código; allowlist
+  `kit.ts` += `materialize.mjs`+`exec-sandbox.mjs`. Extraídos `describeError`/`runId` a `runnerUtils.ts`
+  (runner.ts rebasaba 400). **Fix de paso (Drizzle):** `db-probe.TRACKING_TABLES` += `__drizzle_migrations`
+  → "Migraciones al día" contrasta código↔base en repos Drizzle (antes caía a "sin tabla de control").
+  Suites nuevas `workspace-suite.mjs` (materializador + integración con runCodeCycle) y caso Drizzle en
+  `db-probe-suite`. **VALIDADO contra `C:\FLIT\Test FLITO\flito` (Node monorepo: API Express+Drizzle+PG,
+  Web React/Vite):** la copia excluye node_modules/.git, elige `npm ci`, flito ORIGINAL intacto, cleanup
+  borra. Ver [[materializacion-efimera-repo-certificado]]. **Reiniciado `npm run dev`.** Pendiente: el
+  usuario corre flito por la UI (QA del código) y valida que static/unit/security usen la copia instalada.
+
+- **Cobertura de "QA del código" en monorepos Node — 3 refinamientos + fix de BD (2026-07-27, motor+webapp,
+  smoke 116 · tsc0 · budget0, sin commitear).** Tras correr flito por la UI (materialización OK: flito quedó
+  SIN node_modules; corrieron tsc/vitest/licencias/npm-audit), el reporte reveló 3 huecos de cobertura y 1
+  bug de BD. **#1 Monorepo: construir los paquetes del workspace antes del type-check.** `apps/api/tsconfig`
+  tiene `references:[shared-types]` y `shared-types` publica tipos desde `dist/` (sin construir) → `tsc
+  --noEmit` daba TS2307 «Cannot find module '@operaciones/shared-types'» (FALSO rojo). Fix: `materialize.mjs`
+  tras `npm ci`, si es MONOREPO (`detection.architecture==="microservices"`) y la raíz tiene script `build`,
+  corre `<gestor> run build` en el workRoot (best-effort, no bloqueante) → los hermanos compilan a `dist/` →
+  el dependiente type-checkea. `readFile` inyectable nuevo (webapp lo provee). **#2 SCA en npm workspaces:**
+  `sca.detectScaTargets` ahora dedup como pnpm (`coveredByNpmLock`): con un solo `package-lock.json` en la
+  raíz, `apps/api`/`apps/web` (sin lock propio) YA NO emiten el falso «necesita lockfile» (el audit de la
+  raíz los cubre). **#3 vitest/jest: JSON a ARCHIVO** (`unit.jsonReporterSpec`: `--outputFile=<tmp>` + lee el
+  archivo, fallback a stdout) → el reporter deja de mezclarse con los `console.log` de las pruebas → se
+  recupera el desglose prueba-por-prueba (antes «sin desglose»). **#5 BD (bug, no config del usuario):** el
+  probe fallaba con `SASL: client password must be a string` (pg 8.22 línea 67 = clave `undefined`); la
+  cadena de descifrado SIEMPRE da string, así que la conexión PREDETERMINADA usada quedó sin clave (probable:
+  la predeterminada no es la que el usuario configuró). `dbInject.ts` endurecido: coerciona `password` a
+  string y AVISA nombrando la conexión + «SIN contraseña» + «verificá que la predeterminada sea la correcta».
+  **#4 (evidencia en el repo):** el usuario pidió DEJARLO — el reporte sigue en `<repo>/qa-evidence/`
+  (invariante 1). Smoke: sca-suite (+workspace npm), workspace-suite (+build monorepo). Ver
+  [[materializacion-efimera-repo-certificado]]. **Reiniciado `npm run dev`.** Pendiente: el usuario re-corre
+  flito (apps/api static verde, sin ruido de SCA, desglose de vitest) y revisa la conexión de BD predeterminada.
+
+- **Build de monorepo: construir SOLO los paquetes que emiten tipos (tsc), SALTAR los empaquetadores de app
+  (2026-07-27, motor, smoke 117 · tsc0 · budget0, sin commitear).** Tras correr flito por la UI, la consola mostró
+  «⚠ No se pudieron construir los paquetes del workspace (npm run build)». Diagnóstico por `run_events` (evento
+  `[stderr]`): el error real era `x Build failed … [vite:css] [postcss]` — el build raíz de flito es una **cadena**
+  `build = build:api && build:web`; `build:api` (`tsc -b && tsc-alias`) compila bien (por eso static salió VERDE:
+  `tsc -b` emite `shared-types/dist` vía project references), pero `build:web` (`tsc --noEmit && vite build`) revienta
+  en el paso CSS de **vite/lightningcss** (Tailwind v4). Falla en la webapp y NO en mi prueba directa porque la copia
+  de la webapp vive en una ruta **larga y con espacio** (`…GlobalizacionAgentsSkills QA\…\data\tenants\<uuid>\workspace\
+  qa-ws-…\apps\web`) que tropieza a postcss; mi prueba copió a `%TEMP%` (ruta corta). **Impacto real: NINGUNO** — el
+  empaquetado de la app no lo consume ningún type-check; static ya quedó verde. Era ruido (falsa alarma). Fix
+  (`materialize.mjs`): al construir un monorepo se enumeran los paquetes por los globs `workspaces` y se construyen
+  **solo los que EMITEN tipos** (`resolveWorkspacePackages` + filtro `!isAppBundlerBuild`); los empaquetadores de app
+  (`vite/next/astro/nuxt/parcel/remix/webpack build`) se **saltan** (su salida no la consume el type-check; `tsup`/
+  `rollup` NO se saltan: suelen ser build de librería que emite `.d.ts`). Sin `workspaces` legible → fallback histórico
+  al build de la raíz (narrativa aclarada: «suele ser el empaquetado de una app, no un error de tipos; el type-check de
+  cada paquete corre por separado y su resultado es válido»). **VALIDADO contra flito real:** enumera y construye
+  `apps/api` + `packages/shared-types` (ambos `tsc -b`) y **salta `apps/web`** (vite) → sin fallo de CSS, sin la falsa
+  advertencia, `apps/api` sigue verde. Smoke +1 (workspace-suite caso 4e: construye solo los tsc, salta el bundler).
+  Ver [[materializacion-efimera-repo-certificado]]. **Reiniciar `npm run dev`.**
+  - **Nota sobre «tantas pruebas saltadas» (misma corrida):** NO se saltaron pruebas de más. La sección «⏭ No
+    verificado (16)» del reporte junta 14 **vulnerabilidades de dependencia de severidad MEDIA** (SCA) que el kit SÍ
+    detectó y reportó pero clasifica como **sugerencia** (crítica/alta bloquea, media = sugerencia) + 2 notas de
+    licencia; **una sola** prueba real está saltada, y la marcó el propio dev de flito (`.skip` «race condition —
+    flakiness»). La capa `db` no se «saltó»: **falló al conectar** porque la conexión PREDETERMINADA («Flit Operaciones
+    DEV») está **SIN contraseña** (confirmado en `run_events`: «…SIN contraseña…»). Acción del usuario: en Ajustes › BD,
+    poner la clave real en la conexión predeterminada y validar con «Probar conexión» del kit (no en el frontend de la
+    app). Posible mejora futura (no aplicada): separar «sugerencias de seguridad» de «no verificado» para que 14 vulns
+    medias no se lean como pruebas saltadas.
+
+- **Separar «Sugerencias de seguridad» de «No verificado» (2026-07-27, motor+webapp, smoke 118 · tsc0 · budget0,
+  sin commitear).** El usuario aprobó la mejora futura de la entrada anterior. La sección «⏭ No verificado (16)»
+  MEZCLABA cosas distintas: 14 vulns de dependencia de severidad MEDIA (SCA, DETECTADAS y reportadas pero no
+  bloqueantes) + 2 notas de licencia → se leían todas como «pruebas saltadas». Fix: un caso `skip` que es un
+  hallazgo DETECTADO no bloqueante se marca **`kind:"suggestion"`** en su runner (`parse-sca.tagSuggestions` para
+  vulns media/baja; `license-scan.buildCases` para copyleft débil/no declarada — el conflicto DURO sigue siendo
+  `fail`, sin marca). `layer-explain`: **`notVerifiedCases` EXCLUYE** `kind:"suggestion"` y nace **`suggestionCases`**.
+  Nueva sección **«💡 Sugerencias de seguridad»** en las 4 rutas: MD/HTML (`report-cases.skipSectionMd`/
+  `skipSectionHtml` — regla ÚNICA compartida por ambas secciones skip; local-sink las invoca dos veces), HU
+  (`findings-workitem.securitySuggestionsSection` + `skipSection` genérico), UX (`RunResults` cuenta las
+  sugerencias de seguridad en «💡 N sugerencia(s)»; `CaseList` pinta el caso `kind:"suggestion"` con 💡 ámbar, no
+  como saltado). El veredicto y la línea «Pruebas» cuentan las sugerencias JUNTAS (linter + seguridad). «No
+  verificado» queda SOLO para lo que NO se pudo comprobar (herramienta ausente, criterio no declarado como RLS).
+  VALIDADO con datos tipo flito: «💡 Sugerencias de seguridad (16)» (14 vulns medias + 2 licencias) · «⏭ No
+  verificado (1)» (pip-audit ausente) · las 12 críticas/altas en «❌ Hallazgos». Coherente en HU/MD/HTML/UX
+  (invariante 8). Smoke +1 (sca-suite: vuln media→sugerencia, no a No verificado; skip de herramienta ausente→No
+  verificado). Ver [[claridad-resultados-y-sugerencias]]. **Reiniciado `npm run dev`.**
+
 ## Mapa del repo
 
 ```

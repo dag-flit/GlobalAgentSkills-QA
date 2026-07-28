@@ -59,6 +59,11 @@ const RUNNERS = {
  * @param {string[]} [opts.layers]      capas pedidas (subconjunto de CODE_LAYERS; default: todas)
  * @param {function} [opts.exec]        ejecutor inyectable (default: sandbox allowlist+timeout)
  * @param {number}  [opts.timeoutMs]    tope por comando del sandbox
+ * @param {function} [opts.prepareWorkspace]  materializador OPCIONAL del repo en un espacio aislado
+ *   (copia + deps instaladas FUERA de la ruta certificada). Firma: `({repoRoot,detection,profile}) =>
+ *   Promise<{workRoot:string|null,cleanup?,warnings?}|null>`. Si devuelve `workRoot`, las capas que
+ *   necesitan dependencias (static/unit/security) corren ahí; el resto sobre el repo original. Ausente
+ *   o `null` → todo corre sobre el repo tal cual (comportamiento histórico). Ver workspace/materialize.mjs.
  * @returns {Promise<object>} resumen del ciclo
  */
 export async function runCodeCycle({
@@ -75,6 +80,7 @@ export async function runCodeCycle({
   exec,
   timeoutMs,
   pgQuery,
+  prepareWorkspace,
   emit,
 } = {}) {
   // Progreso en vivo (opcional): la webapp lo cablea a emitEvent para que la UI no se vea colgada
@@ -111,6 +117,33 @@ export async function runCodeCycle({
   // ── (4) Ejecutor endurecido por defecto (mitigación 2); inyectable en tests ──
   const runExec = exec || makeSandboxedExec({ timeoutMs, env });
 
+  // ── (4b) Espacio de trabajo AISLADO (opcional, inyectable) ───────────────────
+  // Las capas que necesitan dependencias instaladas (static/unit/security-licencias) NO deben instalar
+  // en la RUTA CERTIFICADA. Si el operador provee `prepareWorkspace`, se materializa una copia efímera
+  // del repo FUERA (con deps instaladas) y esas capas corren ahí; las de solo-lectura (api/db + semgrep/
+  // secretos/SCA) siguen sobre el repo original. Sin `prepareWorkspace` → todo corre sobre el repo tal
+  // cual (comportamiento IDÉNTICO al histórico). Ver runtime/workspace/materialize.mjs.
+  const warnings = [];
+  const DEP_LAYERS = new Set(["static", "unit", "security"]);
+  let workRoot = null;
+  let cleanupWorkspace = null;
+  if (typeof prepareWorkspace === "function" && toRun.some((l) => DEP_LAYERS.has(l))) {
+    say("info", "Preparando espacio de trabajo aislado (copiando el repo e instalando dependencias FUERA de la ruta certificada; puede tardar unos minutos)…");
+    try {
+      const ws = await prepareWorkspace({ repoRoot, detection, profile: resolvedProfile });
+      if (ws) {
+        for (const w of ws.warnings || []) warnings.push(w);
+        if (ws.workRoot) {
+          workRoot = ws.workRoot;
+          cleanupWorkspace = typeof ws.cleanup === "function" ? ws.cleanup : null;
+          say("info", "Espacio de trabajo aislado listo: las dependencias se instalaron FUERA del repo certificado (el original no se modifica).");
+        }
+      }
+    } catch (e) {
+      warnings.push(`No se pudo preparar el espacio de trabajo aislado: ${(e && e.message) || e}. Se analiza el repo tal cual (sin instalar en él).`);
+    }
+  }
+
   // ── (5) Correr cada capa → EvidenceObjects normalizados (uno por objetivo) ───
   // Los runners usan spawnSync (BLOQUEANTE): mientras una capa corre, el hilo de Node está
   // congelado y el SSE no puede transmitir. `tick()` cede el hilo (macrotarea) para que el log EN
@@ -120,32 +153,43 @@ export async function runCodeCycle({
   say("info", `Capas detectadas: ${toRun.join(", ") || "ninguna"}. Corriendo…`);
   await tick(); // deja que el SSE se conecte y transmita lo previo antes de la 1ª capa bloqueante
   const results = [];
-  for (const layer of toRun) {
-    say("info", `Capa ${layer}: ejecutando…`);
-    await tick(); // flush del "ejecutando…" ANTES de bloquear el hilo con spawnSync
-    // `await`: la mayoría de runners son síncronos (spawnSync) pero `db` puede ser ASÍNCRONO (sonda
-    // directa a Postgres vía pgQuery). await sobre un valor síncrono lo devuelve igual → uniforme.
-    const out = await RUNNERS[layer]({ layer, repoRoot, profile: resolvedProfile, env, detection, exec: runExec, workItemId, pgQuery });
-    const arr = Array.isArray(out) ? out : [out];
-    // Resumen de la capa para el log en vivo (❌ si algún objetivo falló; ⏭ si todos se omitieron).
-    const verdict = arr.some((r) => r.status === "fail") ? "❌ con fallos" : arr.every((r) => r.status === "skip") ? "⏭ omitida" : "✅ ok";
-    const tc = arr.reduce((n, r) => n + (Array.isArray(r.cases) ? r.cases.length : 0), 0);
-    say("info", `Capa ${layer}: ${verdict}${tc ? ` · ${tc} caso(s)` : ""}.`);
-    results.push(...arr);
-  }
-
-  // ── (5b) Atribución best-effort: quién tocó por última vez el archivo/línea del fallo ──────
-  // Read-only (git blame/log) sobre el repo probado. Nunca rompe el ciclo; si no es git, se omite.
   try {
-    const attr = attributeFailures(repoRoot, results);
-    if (attr.gitRepo && attr.attributed) {
-      say("info", `Atribución: ${attr.attributed} fallo(s) vinculados a su último autor (git blame, solo lectura).`);
+    for (const layer of toRun) {
+      say("info", `Capa ${layer}: ejecutando…`);
+      await tick(); // flush del "ejecutando…" ANTES de bloquear el hilo con spawnSync
+      // Las capas que necesitan dependencias corren sobre el espacio AISLADO (workRoot) si se
+      // materializó; las de solo-lectura, sobre el repo original. Sin workRoot → todas sobre el repo
+      // (histórico). La detección trae cwds RELATIVOS ("apps/api") → válidos en ambas raíces (la copia
+      // es un espejo fiel), así que el objetivo/binario se resuelven igual.
+      const layerRoot = workRoot && DEP_LAYERS.has(layer) ? workRoot : repoRoot;
+      // `await`: la mayoría de runners son síncronos (spawnSync) pero `db` puede ser ASÍNCRONO (sonda
+      // directa a Postgres vía pgQuery). await sobre un valor síncrono lo devuelve igual → uniforme.
+      const out = await RUNNERS[layer]({ layer, repoRoot: layerRoot, profile: resolvedProfile, env, detection, exec: runExec, workItemId, pgQuery });
+      const arr = Array.isArray(out) ? out : [out];
+      // Resumen de la capa para el log en vivo (❌ si algún objetivo falló; ⏭ si todos se omitieron).
+      const verdict = arr.some((r) => r.status === "fail") ? "❌ con fallos" : arr.every((r) => r.status === "skip") ? "⏭ omitida" : "✅ ok";
+      const tc = arr.reduce((n, r) => n + (Array.isArray(r.cases) ? r.cases.length : 0), 0);
+      say("info", `Capa ${layer}: ${verdict}${tc ? ` · ${tc} caso(s)` : ""}.`);
+      results.push(...arr);
     }
-  } catch {
-    /* best-effort: la atribución jamás interrumpe la corrida */
+
+    // ── (5b) Atribución best-effort: quién tocó por última vez el archivo/línea del fallo ──────
+    // Read-only (git blame/log) SIEMPRE sobre el repo ORIGINAL (la copia aislada no lleva .git; las
+    // rutas de los casos son relativas y coinciden con el repo real). Nunca rompe el ciclo.
+    try {
+      const attr = attributeFailures(repoRoot, results);
+      if (attr.gitRepo && attr.attributed) {
+        say("info", `Atribución: ${attr.attributed} fallo(s) vinculados a su último autor (git blame, solo lectura).`);
+      }
+    } catch {
+      /* best-effort: la atribución jamás interrumpe la corrida */
+    }
+  } finally {
+    // El espacio aislado ya cumplió su función (los resultados están en memoria; la evidencia del sink
+    // no depende de él) → se borra SIEMPRE, incluso si una capa lanzó, para no dejar copias en disco.
+    if (cleanupWorkspace) { try { await cleanupWorkspace(); } catch { /* best-effort */ } }
   }
 
-  const warnings = [];
   const notRun = requested.filter((l) => !toRun.includes(l));
   if (notRun.length) {
     warnings.push(`capas no ejecutadas (no detectadas en el repo o fuera de alcance): ${notRun.join(", ")}`);

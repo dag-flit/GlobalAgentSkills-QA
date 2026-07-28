@@ -32,7 +32,12 @@ export async function runDbProbeCases(ctx) {
     const fakePg = (scenario) => async (sql) => {
       if (/version\(\)/.test(sql)) { if (scenario === "authfail") throw new Error('password authentication failed for user "postgres"'); return [{ v: "PostgreSQL 16.2" }]; }
       if (/information_schema\.tables WHERE table_schema NOT IN/.test(sql)) return [{ n: 30 }];
-      if (/table_name IN/.test(sql)) return [{ table_schema: "public", table_name: "__EFMigrationsHistory" }];
+      // Tabla de control de migraciones: Drizzle la publica como `drizzle.__drizzle_migrations`; el resto
+      // de ecosistemas (EF) en `public`. La sonda debe reconocer AMBAS (no es EF/Flyway/Prisma).
+      if (/table_name IN/.test(sql)) return scenario === "drizzle"
+        ? [{ table_schema: "drizzle", table_name: "__drizzle_migrations" }]
+        : [{ table_schema: "public", table_name: "__EFMigrationsHistory" }];
+      if (/FROM "drizzle"\."__drizzle_migrations"/.test(sql)) return [{ n: 2 }];
       if (/count\(\*\)::int AS n FROM "public"/.test(sql)) return [{ n: scenario === "behind" ? 0 : 5 }];
       if (/pg_encoding_to_char/.test(sql)) return [{ enc: "UTF8" }];
       // Rol de la conexión (menor privilegio): superusuario solo en el escenario "superuser".
@@ -129,6 +134,13 @@ export async function runDbProbeCases(ctx) {
     const dbBehind = await runDbTests({ repoRoot: base, detection: det, env, pgQuery: fakePg("behind"), workItemId: "local" });
     assert.strictEqual(dbBehind[0].status, "fail", "faltan migraciones (0 aplicadas < 2 en código) → fail");
     assert.ok(dbBehind[0].cases.some((c) => /Migraciones al d.a/.test(c.name) && c.status === "fail"), "señala migraciones pendientes por aplicar");
+
+    // Drizzle ORM: su tabla de control es `drizzle.__drizzle_migrations` (no EF/Flyway/Prisma). La sonda
+    // debe reconocerla y contrastar código↔base como con EF, en vez de caer a "sin tabla de control".
+    const dbDrizzle = await runDbTests({ repoRoot: base, detection: det, env, pgQuery: fakePg("drizzle"), workItemId: "local" });
+    const drz = dbDrizzle[0].cases.find((c) => /Migraciones al d.a/.test(c.name));
+    assert.ok(drz && drz.status === "pass" && /__drizzle_migrations/.test(drz.message), "reconoce la tabla de control de Drizzle (drizzle.__drizzle_migrations) → migraciones al día, no 'sin tabla de control'");
+    ok("QA de código: la sonda reconoce la tabla de control de Drizzle (__drizzle_migrations) además de EF/Flyway/Prisma → migraciones código↔base en repos Drizzle/Postgres");
 
     const dbAuth = await runDbTests({ repoRoot: base, detection: det, env, pgQuery: fakePg("authfail"), workItemId: "local" });
     assert.strictEqual(dbAuth[0].status, "fail", "auth falla → fail (no oculta el problema)");

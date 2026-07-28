@@ -136,4 +136,39 @@ export function casesHtml(results, byFile = {}, embedded = new Set()) {
   return `<h2>${heading(results)}</h2>${blocks}`;
 }
 
-export default { casesMd, casesHtml, esc, caseWhere, caseCounts, blameAt };
+// Detalle técnico acotado a 2 líneas (para las secciones skip: sugerencias / no verificado).
+const skipDetail = (m) => esc(String(m).split(/\r?\n/).slice(0, 2).join(" ⏎ "));
+
+/**
+ * Sección de casos OMITIDOS con explicación (MD). Una sola regla para «⏭ No verificado» y para
+ * «💡 Sugerencias de seguridad» (mismos ítems {c,r} con plain/action/message; solo cambia el rótulo).
+ * @param {{title:string, icon:string, intro:string, items:Array<{c:object,r:object}>}} p
+ */
+export function skipSectionMd({ title, icon, intro, items }) {
+  if (!items || !items.length) return [];
+  const md = ["---", `## ${title} (${items.length})`, "", `_${intro}_`, ""];
+  for (const { c, r } of items) {
+    const L = explainLabels("skip");
+    md.push(`- ${icon} **${esc(c.name)}** — _${esc(r.layer)}_`);
+    md.push(`  - **${L.plain}:** ${esc(c.plain)}`);
+    if (c.action) md.push(`  - **${L.action}:** ${esc(c.action)}`);
+    if (c.message) md.push(`  - 🔎 _Detalle técnico:_ ${skipDetail(c.message)}`);
+  }
+  md.push("");
+  return md;
+}
+
+/** Igual que `skipSectionMd` pero en HTML. `cls` = clase visual (.nov gris / .warn amarillo). */
+export function skipSectionHtml({ title, icon, intro, items, cls = "nov" }) {
+  if (!items || !items.length) return "";
+  return `<h2>${esc(title)} (${items.length})</h2><p class="muted">${esc(intro)}</p>${items
+    .map(({ c, r }) => {
+      const L = explainLabels("skip");
+      const act = c.action ? `<div style="color:#0a5"><b>${L.action}:</b> ${esc(c.action)}</div>` : "";
+      const det = c.message ? `<div class="muted">🔎 Detalle técnico: ${skipDetail(c.message)}</div>` : "";
+      return `<div class="${cls}"><b>${icon} ${esc(c.name)}</b> <small class="muted">— ${esc(r.layer)}</small><div><b>${L.plain}:</b> ${esc(c.plain)}</div>${act}${det}</div>`;
+    })
+    .join("")}`;
+}
+
+export default { casesMd, casesHtml, esc, caseWhere, caseCounts, blameAt, skipSectionMd, skipSectionHtml };

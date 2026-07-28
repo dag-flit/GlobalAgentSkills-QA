@@ -23,10 +23,15 @@ export function RunResults({
   const allCases = results.flatMap((r: any) => (Array.isArray(r.cases) ? r.cases : []));
   const caseP = allCases.filter((c: any) => c.status === "pass").length;
   const caseF = allCases.filter((c: any) => c.status === "fail").length;
-  const warn = results
+  // Sugerencias = advertencias del linter (static skip) + hallazgos NO bloqueantes detectados
+  // (kind:"suggestion" — SCA media/baja, licencias). Se cuentan juntas para que coincida con el
+  // reporte md/html/HU y para que las vulns medias no se lean como pruebas saltadas.
+  const lintWarn = results
     .filter((r) => r.layer === "static")
     .flatMap((r: any) => (Array.isArray(r.cases) ? r.cases : []))
     .filter((c: any) => c.status === "skip").length;
+  const secSugg = allCases.filter((c: any) => c.status === "skip" && c.kind === "suggestion").length;
+  const warn = lintWarn + secSugg;
   return (
     <div className="card space-y-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
