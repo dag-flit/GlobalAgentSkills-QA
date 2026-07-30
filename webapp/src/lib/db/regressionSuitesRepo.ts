@@ -49,3 +49,18 @@ export async function deleteSuite(targetId: string, id: string): Promise<void> {
     await c.query("DELETE FROM regression_suites WHERE target_id = $1 AND id = $2", [targetId, id]);
   });
 }
+
+/** Cuántas suites tiene un sistema (para avisar antes de borrarlo). */
+export async function countSuitesForTarget(targetId: string): Promise<number> {
+  return withTenant(async (c) => {
+    const r = await c.query("SELECT count(*)::int AS n FROM regression_suites WHERE target_id = $1", [targetId]);
+    return Number(r.rows[0]?.n ?? 0);
+  });
+}
+
+/** Elimina TODAS las suites de un sistema (al borrar el sistema → sin huérfanas). */
+export async function deleteSuitesForTarget(targetId: string): Promise<void> {
+  await withTenant(async (c) => {
+    await c.query("DELETE FROM regression_suites WHERE target_id = $1", [targetId]);
+  });
+}

@@ -80,6 +80,7 @@ export async function runFlow({
     const ac = step.args && step.args.ac != null ? String(step.args.ac).trim() : "";
     cases.push({
       name: stepLabel(step, idx),
+      op: step.op, // qué operación fue (clic/verificar_*/…): permite diagnosticar la causa del fallo
       status: res.ok ? "pass" : "fail",
       duration: Date.now() - started,
       message: res.ok ? null : res.message || "fallo",

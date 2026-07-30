@@ -174,6 +174,17 @@ export const regressionTargetSchema = z.object({
   password: z.string().default(""),
 });
 
+// Duplicar un sistema a OTRO AMBIENTE (QA/PDN): copia el catálogo y las suites del origen a un
+// sistema nuevo, cambiando solo URL + credenciales → se reutilizan las pruebas sin re-escanear.
+export const regressionDuplicateSchema = z.object({
+  sourceId: z.string().min(1),
+  name: z.string().min(1),
+  baseUrl: z.string().min(1),
+  authMode: z.enum(["none", "login"]),
+  username: z.string().default(""),
+  password: z.string().default(""),
+});
+
 // Escanear un sistema por id. `routes` (opcional) = rutas a catalogar (una por página); sin ellas
 // se escanea solo la URL base. Efímeras (no se persisten en esta fase).
 export const regressionScanSchema = z.object({
@@ -181,10 +192,13 @@ export const regressionScanSchema = z.object({
   routes: z
     .array(z.object({ route: z.string(), name: z.string().optional() }))
     .optional(),
+  // Catálogo incremental: "merge" (por defecto) agrega/actualiza las páginas escaneadas y CONSERVA
+  // las demás; "replace" reemplaza todo el catálogo (empezar de cero a propósito).
+  mode: z.enum(["merge", "replace"]).optional(),
 });
 
 // Guardar una SUITE de regresión (colección de pruebas). Un paso es { op, ...campos string } — los
-// campos variables (alias/valor/texto/ruta/nombre) llegan por catchall como strings.
+// campos variables (alias/valor/texto/ruta/nombre/segundos) llegan por catchall como strings.
 const regressionStepSchema = z.object({ op: z.string().min(1) }).catchall(z.string());
 const regressionTestSchema = z.object({
   id: z.string().min(1),
@@ -204,6 +218,9 @@ export const regressionRunSchema = z.object({
   targetId: z.string().min(1),
   suiteId: z.string().min(1),
   testId: z.string().min(1).optional(), // correr una sola prueba de la suite (si se omite, corre todas)
+  // Anti-flaky: si una prueba falla, se re-corre hasta N veces; si pasa en un reintento se marca
+  // «inestable» (no se esconde). 0 = sin reintentos. Un fallo por regresión de selector NO se reintenta.
+  retries: z.number().int().min(0).max(3).optional(),
 });
 
 // Publicar en ADO la evidencia de una corrida YA ejecutada. `runId` = basename de la carpeta de la

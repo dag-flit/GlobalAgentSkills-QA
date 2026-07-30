@@ -3,12 +3,15 @@
 // catálogo (se elige por ALIAS). `field` → un campo de texto libre extra (valor/texto/ruta/nombre).
 // El login es AUTOMÁTICO para sistemas con login (lo antepone el runner en la Fase 3): no es un paso.
 
+export type StepField = "valor" | "texto" | "ruta" | "nombre" | "segundos" | "numero";
 export interface StepType {
   op: string;
   label: string;
   needsElement?: boolean;
-  field?: "valor" | "texto" | "ruta" | "nombre";
+  field?: StepField;
   placeholder?: string;
+  field2?: StepField; // segundo dato (p.ej. «atributo» + «valor esperado» en verificar_atributo)
+  placeholder2?: string;
   hint?: string;
 }
 
@@ -17,9 +20,16 @@ export const STEP_TYPES: StepType[] = [
   { op: "clic", label: "Clic en un elemento", needsElement: true, hint: "Hace clic en el elemento elegido del catálogo." },
   { op: "escribir", label: "Escribir en un campo", needsElement: true, field: "valor", placeholder: "texto a escribir", hint: "Escribe el valor en el campo elegido." },
   { op: "seleccionar", label: "Seleccionar una opción", needsElement: true, field: "valor", placeholder: "opción", hint: "Elige una opción en una lista desplegable." },
+  { op: "esperar_tiempo", label: "Esperar (pausa)", field: "segundos", placeholder: "segundos (ej. 2)", hint: "Pausa la prueba N segundos. Útil ANTES o DESPUÉS de un clic para dar tiempo a que cargue (control fino tipo «slow motion»). Preferí «Verificar que se ve» cuando puedas: espera lo justo y es más robusto." },
   { op: "verificar_visible", label: "Verificar que se ve", needsElement: true, hint: "Falla si el elemento no está visible." },
   { op: "verificar_texto", label: "Verificar texto en pantalla", field: "texto", placeholder: "Total trámites", hint: "Falla si ese texto no aparece en la página." },
   { op: "verificar_url", label: "Verificar que la URL contiene", field: "texto", placeholder: "/reportes", hint: "Falla si la URL no contiene ese fragmento." },
+  { op: "verificar_valor", label: "Verificar el valor de un campo", needsElement: true, field: "valor", placeholder: "valor esperado", hint: "Falla si el campo no tiene exactamente ese valor (para inputs)." },
+  { op: "verificar_cantidad", label: "Verificar cuántos hay", needsElement: true, field: "numero", placeholder: "cantidad (ej. 10)", hint: "Falla si la cantidad de elementos que coinciden con el seleccionado no es esa (p.ej. filas de una tabla)." },
+  { op: "verificar_habilitado", label: "Verificar que está habilitado", needsElement: true, hint: "Falla si el elemento está deshabilitado (p.ej. un botón «Guardar»)." },
+  { op: "verificar_marcado", label: "Verificar que está marcado", needsElement: true, hint: "Falla si el checkbox o radio no está marcado." },
+  { op: "verificar_titulo", label: "Verificar el título de la página", field: "texto", placeholder: "parte del título", hint: "Falla si el título de la pestaña no contiene ese texto." },
+  { op: "verificar_atributo", label: "Verificar un atributo", needsElement: true, field: "nombre", placeholder: "atributo (ej. aria-disabled)", field2: "valor", placeholder2: "valor esperado (ej. true)", hint: "Falla si ese atributo del elemento no tiene el valor esperado." },
   { op: "captura", label: "Captura de pantalla", field: "nombre", placeholder: "nombre (opcional)", hint: "Guarda una captura como evidencia." },
 ];
 
@@ -65,11 +75,29 @@ export function aliasOptions(catalog: { pages?: Array<{ name: string; elements: 
   return out;
 }
 
+// Espejo (solo textos) del diagnóstico de causa del fallo — la lógica vive en runtime/regression/
+// diagnose.mjs y el `kind` llega ya calculado en cada caso. Aquí solo se muestran etiqueta + acción.
+export type FailureKind = "selector" | "assertion" | "other";
+export const DIAGNOSIS: Record<FailureKind, { label: string; action: string }> = {
+  selector: {
+    label: "No se encontró un elemento",
+    action: "Un paso intentó usar un elemento que no apareció. Puede que la app haya cambiado ese elemento (reportalo a los devs si no debía cambiar, o reasignalo re-escaneando el catálogo del sistema), o que un paso anterior no dejara la pantalla esperada.",
+  },
+  assertion: {
+    label: "Una verificación no se cumplió",
+    action: "Lo que se esperaba (un texto, un valor, un estado o una pantalla) no apareció. Puede ser un cambio en la app (reportalo a los devs), un valor esperado desactualizado en tu prueba (actualizalo), o que un paso anterior fallara (por ejemplo, un login con datos incorrectos).",
+  },
+  other: {
+    label: "Corte por tiempo o entorno",
+    action: "Pudo ser tiempo de carga, conectividad o navegación. Probá subir los reintentos, agregar una espera o revisar el paso.",
+  },
+};
+
 export const KIND_META: Record<ElementKind, { icon: string; label: string }> = {
-  campo: { icon: "✏️", label: "Campo" },
-  boton: { icon: "🔘", label: "Botón" },
-  enlace: { icon: "🔗", label: "Enlace" },
-  titulo: { icon: "📄", label: "Título" },
-  testid: { icon: "🏷️", label: "Test-id" },
-  texto: { icon: "•", label: "Texto" },
+  campo: { icon: "", label: "Campo" },
+  boton: { icon: "", label: "Botón" },
+  enlace: { icon: "", label: "Enlace" },
+  titulo: { icon: "", label: "Título" },
+  testid: { icon: "", label: "Test-id" },
+  texto: { icon: "", label: "Texto" },
 };

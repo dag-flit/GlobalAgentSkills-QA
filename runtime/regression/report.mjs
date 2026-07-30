@@ -6,6 +6,8 @@
 // Puro salvo la LECTURA de archivos, que llega INYECTADA (`reader`) → offline-testable.
 
 import fs from "node:fs";
+import { DIAGNOSIS, classifyCase } from "./diagnose.mjs";
+import { friendlyStep } from "./step-label.mjs";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -23,13 +25,17 @@ function dataUri(reader, file) {
 
 function stepRow(c) {
   const ok = c.status === "pass";
-  return `<div class="step ${ok ? "ok" : "bad"}" data-cap="${esc(c.name)}"><div class="sl"><b>${ok ? "✓" : "✗"}</b> ${esc(c.name)}${c.message ? ` <span class="msg">— ${esc(c.message)}</span>` : ""}</div>${c.shot ? `<img loading="lazy" src="${c.shot}" alt="captura del paso"/>` : ""}</div>`;
+  const d = DIAGNOSIS[c.kind || classifyCase(c)];
+  const diag = d ? `<div class="diag"><b>${esc(d.label)}</b> — ${esc(d.action)}</div>` : "";
+  const label = friendlyStep(c.name, c.op, { keepNumber: true });
+  return `<div class="step ${ok ? "ok" : "bad"}" data-cap="${esc(label)}"><div class="sl"><b>${ok ? "✓" : "✗"}</b> ${esc(label)}${c.message ? ` <span class="msg">— ${esc(c.message)}</span>` : ""}</div>${diag}${c.shot ? `<img loading="lazy" src="${c.shot}" alt="captura del paso"/>` : ""}</div>`;
 }
 
 function testCard(t, reader) {
   const ok = t.status === "pass";
   const cases = (t.cases || []).map((c) => ({ ...c, shot: dataUri(reader, c.file) }));
-  const warns = (t.warnings || []).map((w) => `<p class="warn">⚠ ${esc(w)}</p>`).join("");
+  const flakyNote = t.flaky ? `<p class="warn">Prueba inestable: falló y pasó al reintentar (intento ${esc(t.attempts)}). Conviene estabilizarla.</p>` : "";
+  const warns = flakyNote + (t.warnings || []).map((w) => `<p class="warn">Aviso: ${esc(w)}</p>`).join("");
   const steps = cases.map((c) => stepRow(c)).join("");
   const hasShots = cases.some((c) => c.shot);
   const player = hasShots
@@ -96,6 +102,7 @@ export function buildRegressionReport({ system = "", suite = "", tests = [], sta
     .step.bad{border-color:#ef4444}.step.ok{border-color:#22c55e}
     .step img{display:block;max-width:520px;width:100%;border:1px solid #22304a;border-radius:6px;margin-top:6px}
     .sl{font-size:12px}.msg{color:#f88}.warn{color:#fbbf24;font-size:12px;margin:2px 0}
+    .diag{font-size:12px;color:#fde68a;background:#3a2f10;border-left:3px solid #f5a623;padding:5px 8px;margin:6px 0;border-radius:4px}
   </style></head><body><h1>Regresión — ${esc(suite)}</h1><div class="meta">Sistema: ${esc(system)}${stamp ? ` · ${esc(stamp)}` : ""}</div><div class="verdict" style="background:${allOk ? "#14532d" : "#7f1d1d"}">${esc(verdict)}</div>${cards}${PLAYER_JS}</body></html>`;
 }
 

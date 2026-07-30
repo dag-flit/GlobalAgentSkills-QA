@@ -5,9 +5,10 @@ import type { RegressionTarget, RegressionSuite } from "@/lib/types";
 
 // Publica en Azure DevOps la evidencia de una corrida de regresión ya ejecutada. Alcance «por prueba
 // individual»: por CADA prueba de la corrida crea una HU (User Story) nueva «Regresión — <suite> /
-// <prueba>» en el sprint en curso, con el resumen en la Description y el reporte autocontenido
-// (capturas + video) ADJUNTO. Reusa `createFindingsWorkItem` del adapter azure (mismo camino que la
-// HU de hallazgos del modo código). No re-ejecuta el navegador: lee la evidencia que dejó la corrida.
+// <prueba>» en el sprint en curso, con el resumen + las capturas por paso INLINE en el CUERPO de la HU
+// (Description y campo «Evidences», cada imagen rotulada «Paso N»), y el reporte autocontenido ADJUNTO
+// como archivo. Reusa `createFindingsWorkItem` del adapter azure. No re-ejecuta el navegador: lee la
+// evidencia que dejó la corrida.
 //
 // Seguridad: el cliente solo manda ids opacos (targetId/suiteId/runId); la carpeta de la corrida la
 // reconstruye ESTE server desde tenant + target + suite + runId. `runId` se valida como dígitos.
@@ -19,21 +20,8 @@ function slug(s: string): string {
   return String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "x";
 }
 
-// Capturas PNG por paso de una prueba (ordenadas: paso-1, paso-2, …) → se adjuntan a la HU para
-// verlas directo en ADO (no solo el reporte HTML).
-function listShots(dir: string): string[] {
-  try {
-    return fs
-      .readdirSync(dir)
-      .filter((f) => /\.png$/i.test(f))
-      .sort()
-      .map((f) => path.join(dir, f));
-  } catch {
-    return [];
-  }
-}
+interface ManifestTest { id: string; name: string; status: "pass" | "fail"; steps: number; warnings: string[]; cases: Array<{ name: string; op?: string; status: string; message?: string | null; file?: string; kind?: string }>; dir: string; report: string; attempts?: number; flaky?: boolean }
 
-interface ManifestTest { id: string; name: string; status: "pass" | "fail"; steps: number; warnings: string[]; cases: Array<{ name: string; status: string; message?: string | null }>; dir: string; report: string }
 interface Manifest { system: string; suite: string; stamp: string; tests: ManifestTest[] }
 
 export async function publishRun(opts: {
@@ -60,6 +48,7 @@ export async function publishRun(opts: {
   }
 
   const { renderRegressionFindings, regressionTitle } = await importKit("runtime/regression/findings.mjs");
+  const { friendlyStep } = await importKit("runtime/regression/step-label.mjs");
   const chosen = (manifest.tests ?? []).filter((t) => !testId || t.id === testId);
   if (!chosen.length) return { ok: false, published: [], message: "No hay pruebas de esa corrida para publicar." };
 
@@ -67,7 +56,15 @@ export async function publishRun(opts: {
   for (const t of chosen) {
     const descriptionHtml = renderRegressionFindings({ system: manifest.system, suite: manifest.suite, test: t, stamp: manifest.stamp, url: target.baseUrl });
     const attach = t.report ? path.join(runDir, t.report) : "";
-    const shots = t.dir ? listShots(path.join(runDir, t.dir)) : [];
+    // Capturas por paso → INLINE en el cuerpo (Description + Evidences), rotuladas «Paso N — <paso>».
+    // El adapter las sube y las referencia por URL (no van a la lista de adjuntos).
+    const inlineImages = (t.cases || [])
+      .map((c, i) => {
+        if (!c.file) return null;
+        const action = friendlyStep(c.name, c.op);
+        return { file: path.join(runDir, t.dir, c.file), label: `Paso ${i + 1}${action ? ` — ${action}` : ""}`, status: c.status };
+      })
+      .filter(Boolean);
     try {
       const res = await adapter.createFindingsWorkItem({
         makeTitle: (seq: number) => regressionTitle({ suite: manifest.suite, test: t.name, stamp: manifest.stamp, seq }),
@@ -75,9 +72,10 @@ export async function publishRun(opts: {
         countTag: "Regresión E2E (QualityOps)",
         descriptionHtml,
         attachHtml: attach && fs.existsSync(attach) ? attach : null,
-        attachFiles: shots,
+        inlineImages,
+        inlineIntoEvidence: true,
       });
-      if (res?.ok) published.push({ testId: t.id, testName: t.name, ok: true, id: res.id, url: res.url, title: res.title, shots: res.attachedFiles ?? shots.length });
+      if (res?.ok) published.push({ testId: t.id, testName: t.name, ok: true, id: res.id, url: res.url, title: res.title, shots: res.inlineImages ?? inlineImages.length });
       else published.push({ testId: t.id, testName: t.name, ok: false, reason: res?.reason || "No se pudo crear la HU." });
     } catch (e: any) {
       published.push({ testId: t.id, testName: t.name, ok: false, reason: String(e?.message ?? e) });

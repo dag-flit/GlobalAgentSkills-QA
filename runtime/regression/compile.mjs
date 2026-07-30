@@ -8,7 +8,17 @@
 // reasigna el elemento). El vocabulario `by` del catálogo espeja el `por` del runner.
 
 const BY_TO_POR = { role: "role", label: "etiqueta", testid: "testid", placeholder: "placeholder", text: "texto" };
-const OP_LABELS = { clic: "clic", escribir: "escribir", seleccionar: "seleccionar", verificar_visible: "verificar que se ve" };
+const OP_LABELS = {
+  clic: "clic",
+  escribir: "escribir",
+  seleccionar: "seleccionar",
+  verificar_visible: "verificar que se ve",
+  verificar_valor: "verificar el valor",
+  verificar_cantidad: "verificar cuántos hay",
+  verificar_habilitado: "verificar que está habilitado",
+  verificar_marcado: "verificar que está marcado",
+  verificar_atributo: "verificar un atributo",
+};
 
 function joinUrl(base, route) {
   if (!route) return base || "";
@@ -29,7 +39,11 @@ function locatorArgs(el) {
   return { por: BY_TO_POR[el.by] || "css", en: el.value };
 }
 
-const needsElement = (op) => op === "clic" || op === "escribir" || op === "seleccionar" || op === "verificar_visible";
+const ELEMENT_OPS = new Set([
+  "clic", "escribir", "seleccionar", "verificar_visible",
+  "verificar_valor", "verificar_cantidad", "verificar_habilitado", "verificar_marcado", "verificar_atributo",
+]);
+const needsElement = (op) => ELEMENT_OPS.has(op);
 
 function compileStep(s, idx, baseUrl, warnings, i) {
   const n = i + 1;
@@ -42,6 +56,10 @@ function compileStep(s, idx, baseUrl, warnings, i) {
       return { op: "esperar_texto", texto: s.texto || "" };
     case "verificar_url":
       return { op: "verificar_url", texto: s.texto || "" };
+    case "verificar_titulo":
+      return { op: "verificar_titulo", texto: s.texto || "" };
+    case "esperar_tiempo":
+      return { op: "esperar_tiempo", segundos: s.segundos || s.valor || "" };
     case "captura":
       return { op: "captura", nombre: s.nombre || `paso-${n}` };
   }
@@ -60,6 +78,10 @@ function compileStep(s, idx, baseUrl, warnings, i) {
     if (s.op === "escribir" || s.op === "seleccionar") return { op: s.op, ...loc, valor: s.valor ?? "" };
     // Verificar que se ve → ESPERA a que el elemento esté visible (tolerante al render de la SPA).
     if (s.op === "verificar_visible") return { op: "esperar", ...loc };
+    if (s.op === "verificar_valor") return { op: "verificar_valor", ...loc, valor: s.valor ?? "" };
+    if (s.op === "verificar_cantidad") return { op: "verificar_cantidad", ...loc, numero: s.numero ?? s.valor ?? "" };
+    if (s.op === "verificar_atributo") return { op: "verificar_atributo", ...loc, nombre: s.nombre ?? "", valor: s.valor ?? "" };
+    if (s.op === "verificar_habilitado" || s.op === "verificar_marcado") return { op: s.op, ...loc };
     return { op: s.op, ...loc }; // clic
   }
   warnings.push({ step: n, message: `Paso ${n}: operación desconocida «${s.op}» (se omite).` });

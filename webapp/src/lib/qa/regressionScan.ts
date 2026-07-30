@@ -44,3 +44,26 @@ export async function scanTarget(
     launchBrowser: () => chromium.launch(),
   });
 }
+
+// Catálogo INCREMENTAL: fusiona las páginas recién escaneadas con el catálogo existente. La identidad
+// de una página es su NOMBRE (lo que el usuario ve: «Acceso», «Trámites»…) — más estable que la ruta,
+// porque en sistemas con login la pantalla de acceso comparte la ruta del primer destino. Se ACTUALIZA
+// una página con el mismo nombre (conservando su posición), se AGREGAN las nuevas y se CONSERVAN las no
+// escaneadas. `mode:"replace"` descarta lo anterior. Cada página escaneada lleva `scannedAt`.
+export function mergeCatalog(existing: SelectorCatalog | null | undefined, scanned: SelectorCatalog, mode: "merge" | "replace", stampIso: string): SelectorCatalog {
+  const scannedPages = (scanned.pages ?? []).map((p) => ({ ...p, scannedAt: stampIso }));
+  if (mode === "replace" || !existing?.pages?.length) {
+    return { baseUrl: scanned.baseUrl ?? existing?.baseUrl, authMode: scanned.authMode ?? existing?.authMode, pages: scannedPages };
+  }
+  const byName = new Map(scannedPages.map((p) => [p.name, p]));
+  const used = new Set<string>();
+  const pages = existing.pages.map((p) => {
+    if (byName.has(p.name)) {
+      used.add(p.name);
+      return byName.get(p.name)!;
+    }
+    return p;
+  });
+  for (const p of scannedPages) if (!used.has(p.name)) pages.push(p);
+  return { baseUrl: scanned.baseUrl ?? existing.baseUrl, authMode: scanned.authMode ?? existing.authMode, pages };
+}

@@ -131,6 +131,7 @@ export interface SelectorCatalogPage {
   route: string;
   name: string;
   elements: SelectorElement[];
+  scannedAt?: string; // ISO — cuándo se escaneó por última vez esta página (para el catálogo incremental)
 }
 export interface SelectorCatalog {
   baseUrl?: string;
@@ -164,6 +165,8 @@ export interface RegressionStep {
   texto?: string;
   ruta?: string;
   nombre?: string;
+  segundos?: string;
+  numero?: string;
 }
 export interface RegressionTest {
   id: string;

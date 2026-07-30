@@ -29,6 +29,12 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
   const [creating, setCreating] = useState(false);
   const [suiteName, setSuiteName] = useState("");
   const [testName, setTestName] = useState("");
+  const [renameId, setRenameId] = useState<string | null>(null); // prueba en renombrado inline (#2)
+  const [renameVal, setRenameVal] = useState("");
+  const [importOpen, setImportOpen] = useState(false); // importar suite desde JSON (#1)
+  const [importText, setImportText] = useState("");
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/regression/suites?targetId=${encodeURIComponent(target.id)}`);
@@ -86,6 +92,90 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
     setDraft({ ...draft, tests: draft.tests.filter((t) => t.id !== id) });
     if (testId === id) setTestId(null);
     setDirty(true);
+  }
+  // #2 Renombrar una prueba (inline).
+  function commitRename() {
+    if (!draft || !renameId) return;
+    const name = renameVal.trim();
+    if (name) setDraft({ ...draft, tests: draft.tests.map((t) => (t.id === renameId ? { ...t, name } : t)) });
+    if (name) setDirty(true);
+    setRenameId(null);
+    setRenameVal("");
+  }
+  // #2 Duplicar una prueba (con sus pasos) — se inserta justo debajo, con « (copia)» en el nombre.
+  function duplicateTest(id: string) {
+    if (!draft) return;
+    const i = draft.tests.findIndex((t) => t.id === id);
+    if (i < 0) return;
+    const src = draft.tests[i];
+    const copy: RegressionTest = { id: genId(src.name), name: `${src.name} (copia)`, steps: JSON.parse(JSON.stringify(src.steps)) };
+    const next = draft.tests.slice();
+    next.splice(i + 1, 0, copy);
+    setDraft({ ...draft, tests: next });
+    setTestId(copy.id);
+    setDirty(true);
+  }
+  // #5 Reordenar una prueba dentro de la suite.
+  function moveTest(id: string, dir: -1 | 1) {
+    if (!draft) return;
+    const i = draft.tests.findIndex((t) => t.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= draft.tests.length) return;
+    const next = draft.tests.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    setDraft({ ...draft, tests: next });
+    setDirty(true);
+  }
+  // #1 Exportar una suite a un archivo JSON (portátil: nombre + pruebas; sin ids ni credenciales).
+  function exportSuite(s: RegressionSuite) {
+    const data = JSON.stringify({ kind: "regression-suite", version: 1, name: s.name, tests: s.tests }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `suite-${(s.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "regresion")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+  // #1 Importar una suite desde JSON (pegado). Genera ids nuevos y crea una suite en ESTE sistema.
+  async function importSuite() {
+    let obj: any;
+    try {
+      obj = JSON.parse(importText);
+    } catch {
+      setImportMsg("El JSON no es válido.");
+      return;
+    }
+    const raw = Array.isArray(obj?.tests) ? obj.tests : null;
+    if (!raw) {
+      setImportMsg("El JSON no tiene una lista de pruebas («tests»).");
+      return;
+    }
+    const tests: RegressionTest[] = raw.map((t: any) => ({
+      id: genId(String(t?.name || "prueba")),
+      name: String(t?.name || "Prueba"),
+      steps: Array.isArray(t?.steps) ? t.steps.filter((s: any) => s && typeof s.op === "string") : [],
+    }));
+    const name = String(obj?.name || "Suite importada");
+    setImportBusy(true);
+    setImportMsg(null);
+    try {
+      const r = await fetch("/api/regression/suites", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: genId(name), targetId: target.id, name, tests }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || "No se pudo importar.");
+      setImportOpen(false);
+      setImportText("");
+      await load();
+    } catch (e: any) {
+      setImportMsg(e?.message ?? "error");
+    } finally {
+      setImportBusy(false);
+    }
   }
 
   async function saveSuite() {
@@ -147,20 +237,40 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
           <div className="flex items-center gap-2 rounded-md border border-dashed border-border p-2">
             <span className="text-[11px] text-muted shrink-0">Nueva prueba:</span>
             <input className="input h-7 text-[12px] flex-1 max-w-[260px]" placeholder="Ej: Logueo Correcto, Ver Reportes…" value={testName} onChange={(e) => setTestName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTest()} />
-            <button className="btn-primary text-[12px]" onClick={addTest} disabled={!testName.trim()}>＋ Agregar prueba</button>
+            <button className="btn-primary text-[12px]" onClick={addTest} disabled={!testName.trim()}>Agregar prueba</button>
           </div>
           {draft.tests.length === 0 && <p className="text-[11px] text-muted">Sin pruebas todavía. Agregá la primera arriba.</p>}
           <div className="space-y-1">
-            {draft.tests.map((t) => {
+            {draft.tests.map((t, i) => {
               const sel = testId === t.id;
+              const renaming = renameId === t.id;
               return (
                 <div key={t.id} className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${sel ? "border-accent bg-accent/10" : "border-border bg-panel2/20"}`}>
-                  <button className="flex items-center gap-2 flex-1 text-left" onClick={() => setTestId(sel ? null : t.id)} title={sel ? "Cerrar" : "Abrir para editar los pasos"}>
-                    <span className="text-muted w-4 shrink-0">{sel ? "✏️" : "▸"}</span>
-                    <span className="text-[12px] font-medium">{t.name}</span>
-                    <span className="text-[11px] text-muted">· {plural(t.steps.length, "paso")}</span>
-                  </button>
-                  <button className="text-red-300 hover:text-red-200 px-1" title="Quitar prueba" onClick={() => removeTest(t.id)}>✕</button>
+                  {renaming ? (
+                    <input
+                      autoFocus
+                      className="input h-6 text-[12px] flex-1"
+                      value={renameVal}
+                      onChange={(e) => setRenameVal(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setRenameId(null); setRenameVal(""); } }}
+                    />
+                  ) : (
+                    <button className="flex items-center gap-2 flex-1 text-left" onClick={() => setTestId(sel ? null : t.id)} title={sel ? "Cerrar" : "Abrir para editar los pasos"}>
+                      <span className="text-muted w-4 shrink-0">{sel ? "▾" : "▸"}</span>
+                      <span className="text-[12px] font-medium">{t.name}</span>
+                      <span className="text-[11px] text-muted">· {plural(t.steps.length, "paso")}</span>
+                    </button>
+                  )}
+                  {!renaming && (
+                    <div className="flex items-center gap-1 text-[11px] text-muted shrink-0">
+                      <button className="hover:text-white px-1" title="Renombrar" onClick={() => { setRenameId(t.id); setRenameVal(t.name); }}>Renombrar</button>
+                      <button className="hover:text-white px-1" title="Duplicar" onClick={() => duplicateTest(t.id)}>Duplicar</button>
+                      <button className="hover:text-white px-1 disabled:opacity-30" title="Subir" onClick={() => moveTest(t.id, -1)} disabled={i === 0}>↑</button>
+                      <button className="hover:text-white px-1 disabled:opacity-30" title="Bajar" onClick={() => moveTest(t.id, 1)} disabled={i === draft.tests.length - 1}>↓</button>
+                      <button className="text-red-300 hover:text-red-200 px-1" title="Quitar prueba" onClick={() => removeTest(t.id)}>✕</button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -174,11 +284,11 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
             <TestSteps steps={test.steps} aliases={aliases} onChange={(steps) => updateTestSteps(test.id, steps)} secrets={target.authMode === "login"} />
           </div>
         ) : (
-          draft.tests.length > 0 && <p className="text-[11px] text-muted">👆 Elegí una prueba de la lista para armar o editar sus pasos.</p>
+          draft.tests.length > 0 && <p className="text-[11px] text-muted">Elegí una prueba de la lista para armar o editar sus pasos.</p>
         )}
 
         {target.authMode === "login" && (
-          <p className="text-[11px] text-muted">🔒 Este sistema tiene login: el inicio de sesión se hace <b>automático</b> al correr (salvo la prueba que escribe usuario/clave, que ES la del login). No lo agregues como paso.</p>
+          <p className="text-[11px] text-muted">Este sistema tiene login: el inicio de sesión se hace <b>automático</b> al correr (salvo la prueba que escribe usuario/clave, que ES la del login). No lo agregues como paso.</p>
         )}
 
         {/* Correr la suite (usa la versión GUARDADA) */}
@@ -196,9 +306,27 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
     <div className="space-y-3 pt-3 border-t border-border">
       {/* Encabezado + crear suite */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="text-sm font-semibold flex items-center gap-1.5"><span>🗂️</span> Suites de regresión</div>
-        {!creating && <button className="btn-primary text-[12px]" onClick={() => { setCreating(true); setSuiteName(""); }}>＋ Crear nueva suite</button>}
+        <div className="text-sm font-semibold">Suites de regresión</div>
+        {!creating && (
+          <div className="flex items-center gap-2">
+            <button className="btn-ghost text-[12px]" onClick={() => { setImportOpen((o) => !o); setImportMsg(null); }}>Importar (JSON)</button>
+            <button className="btn-primary text-[12px]" onClick={() => { setCreating(true); setSuiteName(""); }}>Crear nueva suite</button>
+          </div>
+        )}
       </div>
+      {importOpen && (
+        <div className="rounded-lg border border-border p-2 space-y-2">
+          <p className="text-[11px] text-muted">Pegá el JSON de una suite exportada. Se crea una suite nueva en <b>este</b> sistema (con ids nuevos). Los pasos referencian alias del catálogo: si venís de otro sistema con distinta interfaz, revisá que los elementos existan (o re-escaneá).</p>
+          <textarea className="input font-mono w-full" rows={5} placeholder='{ "kind": "regression-suite", "name": "Login", "tests": [ … ] }' value={importText} onChange={(e) => setImportText(e.target.value)} />
+          <div className="flex items-center gap-2">
+            <button className="btn-primary text-[12px]" onClick={importSuite} disabled={importBusy || !importText.trim()}>
+              {importBusy ? <span className="flex items-center gap-2"><Spinner /> Importando…</span> : "Importar suite"}
+            </button>
+            <button className="btn-ghost text-[12px]" onClick={() => { setImportOpen(false); setImportText(""); setImportMsg(null); }}>Cancelar</button>
+            {importMsg && <span className="text-[11px] text-red-300">{importMsg}</span>}
+          </div>
+        </div>
+      )}
       {creating && (
         <div className="flex items-center gap-2">
           <input autoFocus className="input h-8 text-[13px] flex-1 max-w-[280px]" placeholder="Nombre de la nueva suite (ej: Login, Reportes…)" value={suiteName} onChange={(e) => setSuiteName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") newSuite(); if (e.key === "Escape") { setCreating(false); setSuiteName(""); } }} />
@@ -210,7 +338,7 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
       {/* Estado vacío */}
       {suites.length === 0 && !draft && !creating && (
         <button className="w-full rounded-lg border-2 border-dashed border-border hover:border-accent hover:text-accent text-muted text-[12px] py-4" onClick={() => { setCreating(true); setSuiteName(""); }}>
-          ＋ Creá tu primera suite de regresión<br />
+          Creá tu primera suite de regresión<br />
           <span className="text-[11px]">Una suite agrupa las pruebas que vas a re-correr tras cada release.</span>
         </button>
       )}
@@ -224,11 +352,11 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
               <div className={`flex items-center gap-2 px-3 py-2 ${open ? "bg-accent/10" : "bg-panel2/30"}`}>
                 <button className="flex items-center gap-2 flex-1 text-left" onClick={() => (open ? closeDraft() : openSuite(s))}>
                   <span className="text-muted w-4 shrink-0">{open ? "▾" : "▸"}</span>
-                  <span>🗂️</span>
                   <span className="text-[13px] font-medium">{s.name}</span>
                   <span className="text-[11px] text-muted">· {plural(s.tests.length, "prueba")}</span>
                 </button>
-                <button className="text-red-300 hover:text-red-200 px-1" title="Eliminar suite" onClick={() => removeSuite(s)}>🗑</button>
+                <button className="btn-ghost text-[11px]" title="Descargar esta suite como archivo JSON" onClick={() => exportSuite(s)}>Exportar</button>
+                <button className="btn-ghost text-[11px] text-red-300" title="Eliminar suite" onClick={() => removeSuite(s)}>Eliminar</button>
               </div>
               {open && detail()}
             </div>
@@ -240,7 +368,6 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
           <div className="rounded-lg border border-accent overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2 bg-accent/10">
               <span className="text-muted w-4 shrink-0">▾</span>
-              <span>🗂️</span>
               <span className="text-[13px] font-medium">{draft!.name}</span>
               <span className="text-[11px] text-accent">· nueva (sin guardar)</span>
               <button className="ml-auto text-muted hover:text-white px-1 text-[12px]" title="Cerrar" onClick={closeDraft}>✕</button>

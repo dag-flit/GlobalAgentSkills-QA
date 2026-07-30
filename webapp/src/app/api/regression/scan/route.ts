@@ -3,7 +3,7 @@ import { withTenantScope } from "@/lib/auth/route";
 import { parseJson } from "@/lib/validation/parse";
 import { regressionScanSchema } from "@/lib/validation/schemas";
 import { getTarget, saveCatalog } from "@/lib/db/regressionTargetsRepo";
-import { scanTarget } from "@/lib/qa/regressionScan";
+import { scanTarget, mergeCatalog } from "@/lib/qa/regressionScan";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const parsed = await parseJson(req, regressionScanSchema, "plain");
   if (!parsed.ok) return parsed.response;
-  const { id, routes } = parsed.data;
+  const { id, routes, mode } = parsed.data;
   return withTenantScope(async () => {
     const target = await getTarget(id);
     if (!target) return NextResponse.json({ ok: false, error: `No existe el sistema «${id}».` }, { status: 404 });
@@ -24,7 +24,11 @@ export async function POST(req: Request) {
     if (!res.ok || !res.catalog) {
       return NextResponse.json({ ok: false, error: res.message || "El escaneo no produjo catálogo." }, { status: 502 });
     }
-    await saveCatalog(id, res.catalog);
-    return NextResponse.json({ ok: true, catalog: res.catalog, count: res.count ?? 0 });
+    // Catálogo incremental: por defecto se FUSIONA con lo ya catalogado (agrega/actualiza páginas sin
+    // perder las demás). `mode:"replace"` empieza de cero. La marca de tiempo se pone en el server.
+    const merged = mergeCatalog(target.catalog, res.catalog, mode ?? "merge", new Date().toISOString());
+    await saveCatalog(id, merged);
+    const count = merged.pages.reduce((n, p) => n + p.elements.length, 0);
+    return NextResponse.json({ ok: true, catalog: merged, count });
   });
 }

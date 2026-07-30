@@ -22,7 +22,7 @@ import * as licenseSuite from "./smoke/license-scan-suite.mjs";
 import * as axeSuite from "./smoke/axe-suite.mjs";
 import * as openapiDiffSuite from "./smoke/openapi-diff-suite.mjs";
 
-const EXPECTED = 118;
+const EXPECTED = 123;
 
 console.log("== smoke test (kit acotado a exploración E2E) ==\n");
 

@@ -4,12 +4,18 @@
 // escáner sin login recorre 2 rutas y arma el catálogo por página; (3) el escáner con login invoca
 // el login genérico antes de catalogar. El launcher es inyectable → todo offline-testable.
 import assert from "node:assert";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { pickStrategy, buildElements, slugAlias } from "../regression/harvest.mjs";
 import { scanSelectors } from "../regression/scan.mjs";
 import { compileTest } from "../regression/compile.mjs";
 import { buildRegressionReport } from "../regression/report.mjs";
 import { renderRegressionFindings, regressionTitle } from "../regression/findings.mjs";
+import { classifyCase } from "../regression/diagnose.mjs";
+import { friendlyStep } from "../regression/step-label.mjs";
 import { STEPS } from "../runners/explore-steps.mjs";
+import { AzureDevOpsAdapter } from "../../adapters/trackers/azure-devops/azure-devops-adapter.mjs";
 
 // Catálogo de referencia para los casos del compilador (formas reales del harvest).
 const COMPILE_CATALOG = {
@@ -212,6 +218,32 @@ export async function run(ctx) {
   assert.strictEqual(navs[1].url, "https://app.test/?m=reportes");
   ctx.ok("compileTest: ir_a con ruta relativa se une a la URL base");
 
+  // 11b) esperar_tiempo → paso de PAUSA del motor (N segundos), para esperar antes/después de un clic.
+  const c6 = compileTest({ test: { steps: [{ op: "esperar_tiempo", segundos: "2" }] }, catalog: COMPILE_CATALOG });
+  const pause = c6.flow.find((f) => f.op === "esperar_tiempo");
+  assert.deepStrictEqual(pause, { op: "esperar_tiempo", segundos: "2" });
+  assert.ok(STEPS["esperar_tiempo"], "el motor tiene el paso esperar_tiempo");
+  ctx.ok("compileTest: esperar_tiempo → pausa de N segundos (op válida del motor)");
+
+  // 11c) aserciones RICAS (valor/cantidad/habilitado/atributo/título) → ops del motor con localizador
+  // + campos. verificar_atributo lleva DOS datos (nombre del atributo + valor esperado).
+  const c7 = compileTest({ test: { steps: [
+    { op: "verificar_valor", alias: "usuario", valor: "juan" },
+    { op: "verificar_cantidad", alias: "ingresar", numero: "3" },
+    { op: "verificar_habilitado", alias: "ingresar" },
+    { op: "verificar_atributo", alias: "menu_de_usuario", nombre: "aria-disabled", valor: "true" },
+    { op: "verificar_titulo", texto: "Inicio" },
+  ] }, catalog: COMPILE_CATALOG });
+  const byOp = (op) => c7.flow.find((f) => f.op === op);
+  assert.deepStrictEqual(byOp("verificar_valor"), { op: "verificar_valor", por: "etiqueta", en: "Usuario", valor: "juan" });
+  assert.deepStrictEqual(byOp("verificar_cantidad"), { op: "verificar_cantidad", por: "role", rol: "button", en: "Ingresar", numero: "3" });
+  assert.deepStrictEqual(byOp("verificar_habilitado"), { op: "verificar_habilitado", por: "role", rol: "button", en: "Ingresar" });
+  assert.deepStrictEqual(byOp("verificar_atributo"), { op: "verificar_atributo", por: "role", rol: "button", en: "Menú de usuario", nombre: "aria-disabled", valor: "true" });
+  assert.deepStrictEqual(byOp("verificar_titulo"), { op: "verificar_titulo", texto: "Inicio" });
+  for (const f of c7.flow) assert.ok(STEPS[f.op], `op ${f.op} existe en el motor`);
+  assert.strictEqual(c7.warnings.length, 0);
+  ctx.ok("compileTest: aserciones ricas (valor/cantidad/habilitado/atributo/título) → ops válidas del motor");
+
   // 12) buildRegressionReport: HTML autocontenido con capturas (data-URI) + reproducción paso a paso
   // (slideshow) construida con ellas; SIN video (salía en blanco en headless). Lector inyectado.
   const reader = (f) => Buffer.from(/\.png$/i.test(f) ? "PNGBYTES" : "");
@@ -221,12 +253,13 @@ export async function run(ctx) {
     stamp: "2026-07-22 10:00:00",
     reader,
     tests: [
-      { name: "Logueo Correcto", status: "pass", warnings: [], cases: [{ name: "1. clic Ingresar", status: "pass", file: "/x/paso-1.png" }] },
+      { name: "Logueo Correcto", status: "pass", flaky: true, attempts: 2, warnings: [], cases: [{ name: "1. clic Ingresar", status: "pass", file: "/x/paso-1.png" }] },
       { name: "Logueo Fallido", status: "fail", warnings: ["el elemento «x» ya no está"], cases: [{ name: "2. verificar", status: "fail", message: "no visible", file: "" }] },
     ],
   });
   assert.match(html, /Logueo Correcto/);
   assert.match(html, /✗ 1 en rojo · 1\/2 OK/); // veredicto
+  assert.match(html, /inestable/); // prueba flaky (pasó al reintentar) marcada, no escondida
   assert.match(html, /data:image\/png;base64,/); // captura embebida
   assert.ok(!/<video/.test(html), "ya no incrusta video (salía en blanco en headless)");
   assert.match(html, /class="player"/); // reproductor paso a paso (para la prueba con capturas)
@@ -238,10 +271,12 @@ export async function run(ctx) {
   // 13) renderRegressionFindings: Description de la HU (estilo en línea para ADO) de UNA prueba.
   const okDesc = renderRegressionFindings({
     system: "Flit Dev", suite: "Login", stamp: "2026-07-22 10:00:00", url: "https://dev.flitsas.online",
-    test: { name: "Logueo Correcto", status: "pass", warnings: [], cases: [{ name: "1. clic Ingresar", status: "pass" }] },
+    test: { name: "Logueo Correcto", status: "pass", flaky: true, attempts: 2, warnings: [], cases: [{ name: "1. clic Ingresar", status: "pass" }] },
   });
   assert.match(okDesc, /La prueba de regresión pasó/);
   assert.match(okDesc, /Logueo Correcto/);
+  assert.match(okDesc, /inestable/); // flaky señalado en la HU (pasó, pero conviene estabilizar)
+  assert.match(okDesc, /Intentos/);
   assert.match(okDesc, /URL probada/); // la URL de ejecución queda en la Description
   assert.match(okDesc, /dev\.flitsas\.online/);
   assert.ok(/style="[^"]*background/.test(okDesc), "el estilo va EN LÍNEA (ADO descarta hojas de estilo)");
@@ -260,6 +295,92 @@ export async function run(ctx) {
   assert.strictEqual(title, "Regresión E2E (QualityOps) — Login / Logueo Correcto — 2026-07-22 10:00:00 #1");
   assert.match(regressionTitle({ suite: "S", test: "T" }), /^Regresión E2E \(QualityOps\) — S \/ T$/); // sin seq → sin #N
   ctx.ok("regressionTitle: marcador propio + fecha·hora + #N (conteo específico, no cuenta ítems ajenos)");
+
+  // 15) createFindingsWorkItem con capturas INLINE: las sube y las incrusta en el CUERPO (Description
+  // rotulada «Paso N» + campo Evidences descubierto por nombre), y NO las manda a la lista de adjuntos.
+  // Adapter REAL con cliente FALSO que captura las llamadas → offline. Archivos temporales reales.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qa-reg-"));
+  const png1 = path.join(tmp, "paso-1-ir_a.png");
+  const png2 = path.join(tmp, "fallo-paso-2-verificar.png");
+  const report = path.join(tmp, "report.html");
+  fs.writeFileSync(png1, "PNG1");
+  fs.writeFileSync(png2, "PNG2");
+  fs.writeFileSync(report, "<html>reporte</html>");
+  const calls = { uploads: [], creates: [], patches: [], fields: 0 };
+  const fakeClient = {
+    project: "Proj",
+    workItemWebUrl: (id) => `https://ado/wi/${id}`,
+    async queryByWiql() { return { status: 200, json: { workItems: [] } }; },
+    async currentIteration() { return { status: 200, json: { value: [{ path: "Proj\\Sprint 1" }] } }; },
+    async uploadAttachment(name) { calls.uploads.push(name); return { status: 201, json: { id: "a", url: `https://ado/att/${name}` } }; },
+    async createWorkItem(type, ops) { calls.creates.push({ type, ops }); return { status: 200, json: { id: 7777 } }; },
+    async patchWorkItem(id, ops) { calls.patches.push({ id, ops }); return { status: 200, json: {} }; },
+    async listFields() { calls.fields++; return { status: 200, json: { value: [{ name: "Evidences", referenceName: "Custom.Evidences" }] } }; },
+  };
+  const adapter = new AzureDevOpsAdapter({ adoClient: fakeClient, profile: { azure: { fields: {} } }, env: {} });
+  const created = await adapter.createFindingsWorkItem({
+    makeTitle: (seq) => `Regresión E2E (QualityOps) — Login / T #${seq}`,
+    descriptionHtml: "<p>Resumen</p>",
+    attachHtml: report,
+    inlineImages: [
+      { file: png1, label: "Paso 1 — Ir a /login", status: "pass" },
+      { file: png2, label: "Paso 2 — verificar", status: "fail" },
+    ],
+    inlineIntoEvidence: true,
+  });
+  try {
+    assert.strictEqual(created.ok, true);
+    assert.strictEqual(created.id, "7777");
+    assert.strictEqual(created.inlineImages, 2, "subió las 2 capturas para incrustarlas");
+    assert.strictEqual(created.evidenceField, "Custom.Evidences", "descubrió el campo por su nombre visible");
+    assert.strictEqual(created.evidenceAttached, true, "puso la galería en el campo Evidences");
+    // La Description del create lleva SOLO el resumen: las capturas se movieron al campo Evidences.
+    const descOp = created && calls.creates[0].ops.find((o) => o.path === "/fields/System.Description");
+    assert.match(descOp.value, /Resumen/);
+    assert.ok(!/<img/.test(descOp.value), "la Description ya NO lleva capturas (van al campo Evidences)");
+    assert.ok(!/Evidencia por paso/.test(descOp.value), "el apartado «Evidencia por paso» se movió a Evidences");
+    // El apartado «Evidencia por paso» (título + imágenes inline) se escribe por PATCH en Evidences.
+    const evPatch = calls.patches.find((p) => p.ops[0] && p.ops[0].path === "/fields/Custom.Evidences");
+    assert.ok(evPatch, "se escribe el campo Evidences");
+    assert.match(evPatch.ops[0].value, /Evidencia por paso/);
+    assert.match(evPatch.ops[0].value, /Paso 1 — Ir a \/login/);
+    assert.match(evPatch.ops[0].value, /<img src="https:\/\/ado\/att\/paso-1-ir_a\.png"/);
+    // Las capturas NO se enlazan como AttachedFile (van inline). Solo el reporte HTML se adjunta.
+    const attachRels = calls.patches.filter((p) => p.ops[0] && p.ops[0].value && p.ops[0].value.rel === "AttachedFile");
+    assert.ok(!attachRels.some((p) => /paso-\d/.test(String(p.ops[0].value.url))), "ningún PNG queda como adjunto");
+    assert.ok(attachRels.some((p) => /report\.html/.test(String(p.ops[0].value.url))), "el reporte HTML sí queda adjunto");
+    ctx.ok("createFindingsWorkItem: «Evidencia por paso» va al campo Evidences (Description limpia), PNG fuera de adjuntos");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // 16) diagnose: clasifica la CAUSA del fallo (selector cambió / valor cambió / entorno) y la plasma
+  // en el reporte y la HU → el humano sabe qué reportar a devs o qué corregir en su suite.
+  assert.strictEqual(classifyCase({ op: "clic", status: "fail", message: "Timeout" }), "selector");
+  assert.strictEqual(classifyCase({ op: "verificar_valor", status: "fail", message: 'valor "a" ≠ esperado "b"' }), "assertion");
+  assert.strictEqual(classifyCase({ op: "verificar_visible", status: "fail", message: "no visible: [data-selector-ausente=x]" }), "selector");
+  assert.strictEqual(classifyCase({ op: "esperar_texto", status: "fail", message: "texto no aparece" }), "assertion");
+  assert.strictEqual(classifyCase({ op: "clic", status: "pass" }), null); // un paso que pasó no se diagnostica
+  assert.strictEqual(classifyCase({ name: "3. verificar_titulo Inicio", status: "fail", message: "x" }), "assertion"); // sin `op` → del nombre
+  const diagHtml = buildRegressionReport({ system: "S", suite: "L", tests: [{ name: "T", status: "fail", warnings: [], cases: [{ name: "2. clic Guardar", op: "clic", status: "fail", message: "Timeout", file: "" }] }] });
+  assert.match(diagHtml, /No se encontró un elemento/);
+  const diagDesc = renderRegressionFindings({ system: "S", suite: "L", test: { name: "T", status: "fail", warnings: [], cases: [{ name: "2. verificar_valor Total", op: "verificar_valor", status: "fail", message: 'valor "1" ≠ esperado "2"' }] } });
+  assert.match(diagDesc, /Qué hacer con este fallo/);
+  assert.match(diagDesc, /Una verificación no se cumplió/);
+  ctx.ok("diagnose: clasifica selector/valor/entorno y lo plasma en reporte + HU (qué reportar / corregir)");
+
+  // 17) step-label.friendlyStep: acción LEGIBLE + elemento (sin nº duplicado ni op cruda). Se usa en la
+  // galería de Evidences, la tabla «Pasos ejecutados» de la HU y el reporte HTML (fuente única).
+  assert.strictEqual(friendlyStep("2. escribir Usuario Corporativo", "escribir"), "Escribir en «Usuario Corporativo»");
+  assert.strictEqual(friendlyStep("5. esperar_texto Correo o contraseña incorrectos", "esperar_texto"), "Verificar texto «Correo o contraseña incorrectos»");
+  assert.strictEqual(friendlyStep("3. clic Ingresar", "clic"), "Clic en «Ingresar»");
+  assert.strictEqual(friendlyStep("1. captura", "captura"), "Captura");
+  assert.match(friendlyStep("4. esperar_texto Total", undefined), /^esperar_texto Total$/); // sin op (corrida vieja): al menos quita el nº
+  // keepNumber → conserva el «N.» al frente (para «Pasos ejecutados» y el reporte, no para la galería).
+  assert.strictEqual(friendlyStep("5. esperar_texto Correo o contraseña incorrectos", "esperar_texto", { keepNumber: true }), "5. Verificar texto «Correo o contraseña incorrectos»");
+  const fr = renderRegressionFindings({ system: "S", suite: "L", test: { name: "T", status: "fail", warnings: [], cases: [{ name: "5. esperar_texto Correo o contraseña incorrectos", op: "esperar_texto", status: "fail", message: "x" }] } });
+  assert.match(fr, /5\. Verificar texto «Correo o contraseña incorrectos»/); // «Pasos ejecutados» conserva el nº + acción legible
+  ctx.ok("step-label: acción legible + elemento; «Pasos ejecutados»/reporte conservan el nº, galería no");
 }
 
 export default { run };

@@ -65,6 +65,27 @@ export function esc(s) {
   return String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+// Galería INLINE de capturas para incrustar en un campo HTML de la HU (Description / Evidences).
+// Cada item = { url, label, status }: `url` es la URL de un adjunto YA subido (ADO borra data-URI:
+// las imágenes deben referenciar un adjunto o una URL externa), `label` el rótulo del paso
+// («Paso 1 — …») y `status` pinta el borde (verde/rojo). Estilo EN LÍNEA (ADO descarta <style>).
+// Devuelve "" si no hay imágenes → quien llama omite la sección.
+export function renderShotGallery(items = []) {
+  const shots = (Array.isArray(items) ? items : []).filter((i) => i && i.url);
+  if (!shots.length) return "";
+  const cards = shots
+    .map((i) => {
+      const ok = i.status !== "fail";
+      const border = ok ? "#12805c" : "#b42318";
+      const mark = ok ? "✔" : "✗";
+      return `<div style="margin:0 0 14px 0"><div style="font-size:13px;font-weight:600;color:#101828;margin-bottom:4px">${mark} ${esc(
+        i.label || ""
+      )}</div><img src="${esc(i.url)}" alt="${esc(i.label || "captura")}" style="display:block;max-width:100%;border:2px solid ${border};border-radius:6px"/></div>`;
+    })
+    .join("");
+  return `<div style="margin-top:10px">${cards}</div>`;
+}
+
 // ── render del resumen de la corrida ──────────────────────────────────────────
 
 // Detalle de los casos ejecutados por debajo de cada capa (mismo nivel de detalle que la

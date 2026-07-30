@@ -53,7 +53,7 @@ function shorthandArg(op, val) {
 /** Etiqueta legible del paso para el caso de evidencia. */
 export function stepLabel(step, idx) {
   const a = step.args || {};
-  const hint = a.url || a.ruta || a.en || a.selector || a.texto || a.tecla || a.nombre || "";
+  const hint = a.url || a.ruta || a.en || a.selector || a.texto || a.tecla || a.nombre || (a.segundos ? `${a.segundos}s` : "") || "";
   return `${idx + 1}. ${step.op}${hint ? ` ${hint}` : ""}`;
 }
 
@@ -143,6 +143,18 @@ async function stepEsperar({ page, args, env, vars, timeout }) {
   const loc = resolveLocator(page, args, { env, vars });
   if (!loc) return { ok: false, message: "esperar sin destino ('en')" };
   await loc.first().waitFor({ state: args.estado || "visible", timeout });
+  return { ok: true };
+}
+
+// Pausa explícita de N segundos: da tiempo a que algo cargue ANTES o DESPUÉS de otro paso (p.ej.
+// esperar tras un clic a que responda el backend). Independiente de la página → offline-safe. Tope de
+// cordura 120 s. No es la forma preferida de esperar (`esperar`/`esperar_texto` son más robustos), pero
+// el usuario lo pidió como control fino tipo "slow motion" entre pasos.
+async function stepEsperarTiempo({ args, env, vars }) {
+  const raw = interpolate(String(args.segundos ?? args.valor ?? ""), { env, vars });
+  const secs = Number(raw);
+  if (!Number.isFinite(secs) || secs <= 0) return { ok: false, message: "esperar_tiempo sin 'segundos' válido (ej. 2)" };
+  await sleep(Math.min(secs, 120) * 1000);
   return { ok: true };
 }
 
@@ -354,6 +366,7 @@ export const STEPS = {
   limpiar: stepLimpiar,
   esperar: stepEsperar,
   esperar_texto: stepEsperarTexto,
+  esperar_tiempo: stepEsperarTiempo,
   verificar_visible: stepVerificarVisible,
   verificar_texto: stepVerificarTexto,
   verificar_valor: stepVerificarValor,

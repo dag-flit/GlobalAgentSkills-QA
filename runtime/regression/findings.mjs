@@ -4,6 +4,9 @@
 // La evidencia rica (capturas por paso + video) viaja ADJUNTA como report.html autocontenido; esta
 // Description es el resumen legible que queda en el cuerpo de la HU.
 
+import { DIAGNOSIS, diagnoseKinds, classifyCase } from "./diagnose.mjs";
+import { friendlyStep } from "./step-label.mjs";
+
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // Prefijo ESTABLE del título (base del conteo #N, igual que la HU de QA del código). Es un marcador
@@ -23,9 +26,23 @@ export function regressionTitle({ suite = "", test = "", stamp = "", seq } = {})
 function stepRow(c) {
   const ok = c.status === "pass";
   const color = ok ? "#14532d" : "#b42318";
-  const mark = ok ? "✔ Pasó" : "✗ Falló";
+  const mark = ok ? "✓ Pasó" : "✗ Falló";
   const msg = c.message ? `<div style="color:#b42318;font-size:12px;margin-top:2px">— ${esc(c.message)}</div>` : "";
-  return `<tr><td style="padding:5px 8px;border:1px solid #d0d5dd;white-space:nowrap;color:${color};font-weight:600">${mark}</td><td style="padding:5px 8px;border:1px solid #d0d5dd">${esc(c.name)}${msg}</td></tr>`;
+  const d = DIAGNOSIS[c.kind || classifyCase(c)];
+  const diag = d ? `<div style="margin-top:3px;font-size:12px;color:#8a6d00"><b>${esc(d.label)}</b></div>` : "";
+  return `<tr><td style="padding:5px 8px;border:1px solid #d0d5dd;white-space:nowrap;color:${color};font-weight:600">${mark}</td><td style="padding:5px 8px;border:1px solid #d0d5dd">${esc(friendlyStep(c.name, c.op, { keepNumber: true }))}${msg}${diag}</td></tr>`;
+}
+
+// Caja accionable: qué hacer con el fallo (reportar a devs / corregir la suite), por categoría.
+function diagnosisBox(cases) {
+  const kinds = diagnoseKinds(cases);
+  if (!kinds.length) return "";
+  const items = kinds
+    .map((k) => DIAGNOSIS[k])
+    .filter(Boolean)
+    .map((d) => `<div style="font-size:12px;color:#3a2f10;margin-top:4px"><b>${esc(d.label)}</b> — ${esc(d.action)}</div>`)
+    .join("");
+  return `<div style="margin:12px 0;padding:8px 10px;background:#fff8e6;border-left:4px solid #f5a623;border-radius:4px"><b style="color:#8a6d00">Qué hacer con este fallo</b>${items}</div>`;
 }
 
 /**
@@ -43,11 +60,16 @@ export function renderRegressionFindings({ system = "", suite = "", test = {}, s
   const ok = test.status ? test.status === "pass" : cases.length > 0 && passed === cases.length;
   const bg = ok ? "#e7f6ec" : "#fde8e8";
   const bar = ok ? "#14532d" : "#b42318";
-  const verdict = ok ? "✔ La prueba de regresión pasó" : "✗ La prueba de regresión falló";
+  const verdict = ok ? "✓ La prueba de regresión pasó" : "✗ La prueba de regresión falló";
+
+  const attempts = Number(test.attempts) || 1;
+  const flakyHtml = test.flaky
+    ? `<div style="margin:12px 0;padding:8px 10px;background:#fff8e6;border-left:4px solid #f5a623;border-radius:4px"><b style="color:#8a6d00">Prueba inestable</b><div style="font-size:12px;color:#8a6d00">Falló y pasó al reintentar (intento ${attempts}). Pasó, pero conviene estabilizarla.</div></div>`
+    : "";
 
   const warnHtml = warnings.length
     ? `<div style="margin:12px 0;padding:8px 10px;background:#fff8e6;border-left:4px solid #f5a623;border-radius:4px"><b style="color:#8a6d00">Avisos de regresión</b>${warnings
-        .map((w) => `<div style="font-size:12px;color:#8a6d00">⚠ ${esc(w)}</div>`)
+        .map((w) => `<div style="font-size:12px;color:#8a6d00">${esc(w)}</div>`)
         .join("")}</div>`
     : "";
 
@@ -67,12 +89,15 @@ export function renderRegressionFindings({ system = "", suite = "", test = {}, s
       ${url ? metaRow("URL probada", `<a href="${esc(url)}" style="color:#155eef">${esc(url)}</a>`) : ""}
       ${metaRow("Suite", esc(suite))}
       ${metaRow("Pasos correctos", `${passed}/${cases.length}`)}
+      ${attempts > 1 ? metaRow("Intentos", String(attempts)) : ""}
       ${stamp ? metaRow("Ejecutada", esc(stamp)) : ""}
     </table>
+    ${flakyHtml}
     ${warnHtml}
+    ${diagnosisBox(cases)}
     <div style="font-weight:600;margin-bottom:6px">Pasos ejecutados</div>
     <table style="border-collapse:collapse;width:100%;font-size:13px">${rows}</table>
-    <p style="font-size:12px;color:#667;margin-top:12px">La evidencia (capturas por paso y video) va <b>adjunta</b> a esta HU como archivo HTML autocontenido.</p>
+    <p style="font-size:12px;color:#667;margin-top:12px">Las <b>capturas por paso</b> se ven más abajo, en el cuerpo de esta HU (sección «Evidencia por paso» y campo Evidences), cada una rotulada con su nº de paso. El reporte navegable (reproducción paso a paso) va <b>adjunto</b> como archivo HTML autocontenido.</p>
   </div>`;
 }
 

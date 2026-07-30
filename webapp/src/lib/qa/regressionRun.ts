@@ -13,11 +13,11 @@ import type { RegressionTarget, RegressionSuite, RegressionTest } from "@/lib/ty
 // Login automático DETERMINISTA (sin config): una prueba que escribe las credenciales ES la del login
 // → no se antepone login; cualquier otra prueba de un sistema con login corre ya autenticada.
 
-export interface StepResult { name: string; status: "pass" | "fail"; message?: string | null; duration?: number }
-export interface TestRunResult { id: string; name: string; status: "pass" | "fail"; steps: number; warnings: string[]; cases: StepResult[] }
-export interface SuiteRunResult { ok: boolean; suite: string; tests: TestRunResult[]; passed: number; failed: number; reportPath?: string; runId?: string; message?: string }
+export interface StepResult { name: string; status: "pass" | "fail"; message?: string | null; duration?: number; kind?: "selector" | "assertion" | "other" }
+export interface TestRunResult { id: string; name: string; status: "pass" | "fail"; steps: number; warnings: string[]; cases: StepResult[]; attempts?: number; flaky?: boolean }
+export interface SuiteRunResult { ok: boolean; suite: string; tests: TestRunResult[]; passed: number; failed: number; flaky?: number; reportPath?: string; runId?: string; message?: string }
 
-interface RunOpts { evidenceBase?: string; only?: string }
+interface RunOpts { evidenceBase?: string; only?: string; retries?: number; timeout?: number }
 
 function slug(s: string): string {
   return String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "x";
@@ -42,6 +42,7 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
   const { compileTest } = await importKit("runtime/regression/compile.mjs");
   const { runFlow } = await importKit("runtime/runners/explore-flow.mjs");
   const { buildRegressionReport } = await importKit("runtime/regression/report.mjs");
+  const { classifyCase } = await importKit("runtime/regression/diagnose.mjs");
 
   let chromium: any;
   try {
@@ -66,6 +67,8 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
   const runDir = opts.evidenceBase ? path.join(opts.evidenceBase, slug(target.id), slug(suite.name), runId) : "";
   if (runDir) fs.mkdirSync(runDir, { recursive: true });
 
+  const timeout = opts.timeout ?? 15000;
+  const retries = Math.max(0, Math.min(3, opts.retries ?? 1)); // anti-flaky: reintentos por prueba (default 1)
   const browser = await chromium.launch();
   const tests: TestRunResult[] = [];
   const forReport: any[] = [];
@@ -80,26 +83,42 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
       const testDir = runDir ? path.join(runDir, testSlug) : "";
       if (testDir) fs.mkdirSync(testDir, { recursive: true });
 
-      // Sin grabación de video: en headless salía en blanco de forma intermitente (el dashboard
-      // post-login no pinta en el compositor). La evidencia visual es la captura por paso (siempre
-      // funciona) y el reporte arma con ellas una reproducción paso a paso. Sesión limpia por prueba.
-      const context = await browser.newContext();
-      const page = await context.newPage();
+      // Anti-flaky: si la prueba falla, se re-corre en una sesión LIMPIA hasta `retries` veces más.
+      // La evidencia se sobreescribe en cada intento → queda la del intento que definió el veredicto.
+      // NO se reintenta un fallo por REGRESIÓN de selector (alias ausente): es determinista, reintentar
+      // no lo arregla y solo demora. Sin grabación de video (salía en blanco en headless): la evidencia
+      // es la captura por paso + la reproducción slideshow que arma el reporte con ellas.
+      const maxAttempts = warnMsgs.length ? 1 : 1 + retries;
       let cases: any[] = [];
-      try {
-        const r = await runFlow({ page, steps: flow, evidenceDir: testDir || undefined, env: process.env, vars, timeout: 15000 });
-        cases = r.cases ?? [];
-      } catch (e: any) {
-        cases = [{ name: "corrida", status: "fail", message: String(e?.message ?? e) }];
-      } finally {
-        await context.close().catch(() => {});
+      let attemptsMade = 0;
+      let runPassed = false;
+      for (let a = 1; a <= maxAttempts; a++) {
+        attemptsMade = a;
+        const context = await browser.newContext();
+        const page = await context.newPage();
+        try {
+          const r = await runFlow({ page, steps: flow, evidenceDir: testDir || undefined, env: process.env, vars, timeout });
+          cases = r.cases ?? [];
+        } catch (e: any) {
+          cases = [{ name: "corrida", status: "fail", message: String(e?.message ?? e) }];
+        } finally {
+          await context.close().catch(() => {});
+        }
+        runPassed = !cases.some((c) => c.status === "fail");
+        if (runPassed) break; // pasó → nos quedamos con esta evidencia; no gastamos más intentos
       }
 
-      const failed = warnMsgs.length > 0 || cases.some((c) => c.status === "fail");
+      const failed = warnMsgs.length > 0 || !runPassed;
       const status = failed ? "fail" : "pass";
-      const simpleCases = cases.map((c) => ({ name: c.name, status: c.status, message: c.message ?? null, duration: c.duration }));
-      tests.push({ id: test.id, name: test.name, status, steps: flow.length, warnings: warnMsgs, cases: simpleCases });
-      const reportEntry = { name: test.name, status, warnings: warnMsgs, cases };
+      const flaky = runPassed && attemptsMade > 1; // pasó, pero NO al primer intento → inestable
+      // Diagnóstico de CAUSA por paso fallido (selector cambió / valor cambió / entorno) → el humano
+      // sabe qué reportar a devs o qué corregir en su suite. Viaja en cada caso (UI, reporte y HU).
+      const kinded = cases.map((c) => (c.status === "fail" ? { ...c, kind: classifyCase(c) } : c));
+      // Guardamos el BASENAME de la captura por paso: «Publicar en ADO» lo usa para incrustar cada
+      // imagen INLINE en el cuerpo de la HU, rotulada con su nº de paso (parea imagen↔paso sin adivinar).
+      const simpleCases = kinded.map((c: any) => ({ name: c.name, op: c.op, status: c.status, message: c.message ?? null, duration: c.duration, file: c.file ? path.basename(c.file) : undefined, kind: c.kind }));
+      tests.push({ id: test.id, name: test.name, status, steps: flow.length, warnings: warnMsgs, cases: simpleCases, attempts: attemptsMade, flaky });
+      const reportEntry = { name: test.name, status, warnings: warnMsgs, cases: kinded, attempts: attemptsMade, flaky };
       forReport.push(reportEntry);
 
       // Reporte autocontenido POR PRUEBA (para adjuntarlo a su HU al publicar en ADO — el destino es
@@ -114,7 +133,7 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
           /* el reporte por prueba es best-effort */
         }
       }
-      manifestTests.push({ id: test.id, name: test.name, status, steps: flow.length, warnings: warnMsgs, cases: simpleCases, dir: testSlug, report: reportRel });
+      manifestTests.push({ id: test.id, name: test.name, status, steps: flow.length, warnings: warnMsgs, cases: simpleCases, dir: testSlug, report: reportRel, attempts: attemptsMade, flaky });
     }
   } finally {
     await browser.close().catch(() => {});
@@ -139,5 +158,6 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
   }
 
   const passed = tests.filter((t) => t.status === "pass").length;
-  return { ok: true, suite: suite.name, tests, passed, failed: tests.length - passed, reportPath: reportPath || undefined, runId: runDir ? runId : undefined };
+  const flakyCount = tests.filter((t) => t.flaky).length;
+  return { ok: true, suite: suite.name, tests, passed, failed: tests.length - passed, flaky: flakyCount, reportPath: reportPath || undefined, runId: runDir ? runId : undefined };
 }

@@ -112,13 +112,25 @@ export function createClient({ env = {}, http = defaultHttp } = {}) {
       });
     },
 
-    // Sube un binario y devuelve { id, url } del adjunto (luego se enlaza al WI).
+    // Sube un binario y devuelve { id, url } del adjunto (luego se enlaza al WI o se referencia
+    // por URL desde un campo HTML para verlo INLINE en el cuerpo de la HU).
     uploadAttachment(fileName, content) {
       return http({
         method: "POST",
         url: `${projBase}/wit/attachments?fileName=${encodeURIComponent(fileName)}&api-version=${API}`,
         headers: headers({ "Content-Type": "application/octet-stream" }),
         body: content,
+      });
+    },
+
+    // Lista los campos del proyecto → { value: [{ name, referenceName, ... }] }. Sirve para
+    // DESCUBRIR el reference name de un campo custom por su nombre visible (p.ej. «Evidences»),
+    // sin quemarlo. Best-effort: quien llama degrada si no está disponible.
+    listFields() {
+      return http({
+        method: "GET",
+        url: `${projBase}/wit/fields?api-version=${API}`,
+        headers: headers(),
       });
     },
   };

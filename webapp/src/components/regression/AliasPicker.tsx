@@ -55,8 +55,8 @@ export function AliasPicker({
         onClick={() => setOpen((o) => !o)}
       >
         {selected ? (
-          <span className="flex items-center gap-1 truncate">
-            <span>{KIND_META[selected.kind].icon}</span>
+          <span className="flex items-center gap-1.5 truncate">
+            <span className="text-[10px] text-muted uppercase shrink-0">{KIND_META[selected.kind].label}</span>
             <span className="truncate">{selected.name}</span>
           </span>
         ) : (
@@ -85,7 +85,6 @@ export function AliasPicker({
                   onClick={() => pick(o.alias)}
                   className={`w-full text-left flex items-start gap-2 rounded px-2 py-1 hover:bg-panel2 ${o.alias === value ? "bg-panel2" : ""}`}
                 >
-                  <span className="mt-0.5 shrink-0">{KIND_META[o.kind].icon}</span>
                   <span className="min-w-0">
                     <span className="block text-[12px] truncate">{o.name}</span>
                     <span className="block text-[10px] text-muted truncate">
