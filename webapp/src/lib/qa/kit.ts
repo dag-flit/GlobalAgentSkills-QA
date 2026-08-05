@@ -16,6 +16,9 @@ const ALLOWED = new Set<string>([
   "runtime/source/validate-project.mjs", // valida que la ruta del repo (QA del código) sea un proyecto real — api/code/validate-path
   "runtime/source/db-env.mjs", // arma las vars de conexión a BD para inyectar a las pruebas — runner.ts
   "runtime/regression/scan.mjs", // escáner de selectores del sistema (Test de Regresión) — regressionScan.ts
+  "runtime/regression/walk.mjs", // walk-through de un Recorrido multi-pantalla (cataloga cada etapa) — regressionWalk.ts
+  "runtime/regression/recorder.mjs", // grabador semi-automático: interacción→paso + ensamblado del recorrido — recorderSession.ts
+  "runtime/runners/explore-steps.mjs", // registro de pasos (login genérico para autenticar al grabar) — recorderSession.ts
   "runtime/regression/compile.mjs", // compila prueba+catálogo → flow del motor (Test de Regresión) — regressionRun.ts
   "runtime/runners/explore-flow.mjs", // ejecutor del guion de pasos (corre el flow compilado) — regressionRun.ts
   "runtime/regression/report.mjs", // reporte autocontenido de la corrida de regresión — regressionRun.ts

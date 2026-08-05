@@ -17,7 +17,7 @@ export interface StepResult { name: string; status: "pass" | "fail"; message?: s
 export interface TestRunResult { id: string; name: string; status: "pass" | "fail"; steps: number; warnings: string[]; cases: StepResult[]; attempts?: number; flaky?: boolean }
 export interface SuiteRunResult { ok: boolean; suite: string; tests: TestRunResult[]; passed: number; failed: number; flaky?: number; reportPath?: string; runId?: string; message?: string }
 
-interface RunOpts { evidenceBase?: string; only?: string; retries?: number; timeout?: number }
+interface RunOpts { evidenceBase?: string; only?: string; retries?: number; timeout?: number; filesDir?: string }
 
 function slug(s: string): string {
   return String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "x";
@@ -58,6 +58,8 @@ export async function runSuite(target: RegressionTarget, suite: RegressionSuite,
     vars.QA_USER = target.username;
     vars.QA_PASS = target.password; // descifrada en el repo; se queda en el proceso, nunca al cliente
   }
+  // Directorio de archivos de prueba del tenant → el paso «subir archivo» resuelve ${QA_FILES}/<nombre>.
+  if (opts.filesDir) vars.QA_FILES = opts.filesDir;
 
   // Carpeta de evidencia de ESTA corrida (aislada por tenant vía evidenceBase). Subcarpeta por prueba.
   // El basename (Date.now) es el `runId`: identifica la corrida para el «Publicar en ADO» sin exponer

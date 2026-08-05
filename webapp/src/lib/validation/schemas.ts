@@ -212,6 +212,44 @@ export const regressionSuiteSchema = z.object({
   tests: z.array(regressionTestSchema),
 });
 
+// Guardar un RECORRIDO (walk-through de un asistente multi-pantalla). Etapas ordenadas; cada etapa
+// tiene un nombre y sus pasos de avance (mismos pasos que una prueba → referencian alias del catálogo).
+const regressionStageSchema = z.object({
+  name: z.string().min(1),
+  guardText: z.string().optional(), // etapa condicional: solo aplica si ese texto está visible al llegar
+  prepare: z.array(regressionStepSchema).optional(), // acciones para revelar todo antes de cosechar
+  advance: z.array(regressionStepSchema).optional(),
+});
+export const regressionRecorridoSchema = z.object({
+  targetId: z.string().min(1),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  entryRoute: z.string(),
+  stages: z.array(regressionStageSchema),
+});
+
+// Caminar un RECORRIDO: abre el navegador, entra al asistente (login si aplica) y lo recorre etapa por
+// etapa cosechando selectores. El catálogo resultante se FUSIONA (reemplaza solo el bloque del recorrido).
+export const regressionWalkSchema = z.object({
+  targetId: z.string().min(1),
+  recorridoId: z.string().min(1),
+});
+
+// GRABADOR semi-automático: abrir un navegador headed, iniciar sesión y grabar mientras el usuario
+// navega. `start` recibe el sistema + entrada + nombre; `stop` recibe el id de la grabación en curso.
+export const recordStartSchema = z.object({
+  targetId: z.string().min(1),
+  entryRoute: z.string(),
+  name: z.string().min(1),
+  // Credenciales EFÍMERAS para grabar con OTRA cuenta (no se guardan; solo esta sesión). Vacío = usa
+  // las credenciales configuradas del sistema.
+  username: z.string().optional(),
+  password: z.string().optional(),
+});
+export const recordStopSchema = z.object({
+  id: z.string().min(1),
+});
+
 // Correr una SUITE de regresión (por sistema + suite). Abre el navegador, compila cada prueba contra
 // el catálogo vigente y la ejecuta. Las credenciales del sistema (cifradas) se resuelven en el server.
 export const regressionRunSchema = z.object({

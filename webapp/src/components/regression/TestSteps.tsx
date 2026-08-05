@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { RegressionStep } from "@/lib/types";
 import { STEP_TYPES, stepType, type AliasOption, type StepField } from "@/lib/qa/regressionSteps";
 import { AliasPicker } from "./AliasPicker";
+import { FileField } from "./FileField";
 
 // Etiqueta amigable del campo de texto de un paso, según su tipo.
 function fieldLabel(f?: StepField): string {
@@ -30,6 +31,7 @@ function fieldText(field: StepField | undefined, v?: string): string {
   if (!v) return "";
   if (field === "segundos") return `${v} s`;
   if (field === "valor") return friendlyValue(v);
+  if (field === "ruta") return `📎 ${v.replace(/^\$\{QA_FILES\}\//, "")}`; // muestra el nombre del archivo
   return `"${v}"`;
 }
 
@@ -141,7 +143,16 @@ export function TestSteps({
           </label>
         )}
 
-        {t?.field && (
+        {t?.field === "ruta" && (
+          <label className="text-[11px] text-muted">
+            Archivo
+            <div className="mt-0.5">
+              <FileField value={value} onChange={setValue} />
+            </div>
+          </label>
+        )}
+
+        {t?.field && t.field !== "ruta" && (
           <label className="text-[11px] text-muted">
             {fieldLabel(t.field)}
             <div className="mt-0.5 flex items-center gap-1">

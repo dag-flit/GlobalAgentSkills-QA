@@ -12,6 +12,7 @@ const OP_LABELS = {
   clic: "clic",
   escribir: "escribir",
   seleccionar: "seleccionar",
+  subir_archivo: "subir archivo",
   verificar_visible: "verificar que se ve",
   verificar_valor: "verificar el valor",
   verificar_cantidad: "verificar cuántos hay",
@@ -40,7 +41,7 @@ function locatorArgs(el) {
 }
 
 const ELEMENT_OPS = new Set([
-  "clic", "escribir", "seleccionar", "verificar_visible",
+  "clic", "escribir", "seleccionar", "subir_archivo", "verificar_visible",
   "verificar_valor", "verificar_cantidad", "verificar_habilitado", "verificar_marcado", "verificar_atributo",
 ]);
 const needsElement = (op) => ELEMENT_OPS.has(op);
@@ -76,6 +77,9 @@ function compileStep(s, idx, baseUrl, warnings, i) {
     }
     const loc = locatorArgs(el);
     if (s.op === "escribir" || s.op === "seleccionar") return { op: s.op, ...loc, valor: s.valor ?? "" };
+    // Subir archivo: el campo destino es un <input type=file> (el alias); `ruta` = ${QA_FILES}/<nombre>
+    // (el runner resuelve ${QA_FILES} al directorio de archivos de prueba del tenant, en el server).
+    if (s.op === "subir_archivo") return { op: "subir_archivo", ...loc, ruta: s.ruta ?? s.valor ?? "" };
     // Verificar que se ve → ESPERA a que el elemento esté visible (tolerante al render de la SPA).
     if (s.op === "verificar_visible") return { op: "esperar", ...loc };
     if (s.op === "verificar_valor") return { op: "verificar_valor", ...loc, valor: s.valor ?? "" };
@@ -89,6 +93,27 @@ function compileStep(s, idx, baseUrl, warnings, i) {
 }
 
 /**
+ * Compila una LISTA de pasos (que referencian alias del catálogo) a pasos del motor, sin prefijos.
+ * Reutilizado por compileTest (una prueba) y por el walk-through de Recorridos (los avances de etapa).
+ * @param {object} o
+ * @param {Array<object>} o.steps
+ * @param {{baseUrl?:string, pages?:Array<object>}} o.catalog
+ * @param {string} [o.baseUrl]
+ * @returns {{flow:Array<object>, warnings:Array<{step:number, alias?:string, message:string}>}}
+ */
+export function compileSteps({ steps = [], catalog, baseUrl } = {}) {
+  const idx = indexCatalog(catalog);
+  const base = baseUrl ?? catalog?.baseUrl ?? "";
+  const flow = [];
+  const warnings = [];
+  (steps ?? []).forEach((s, i) => {
+    const step = compileStep(s, idx, base, warnings, i);
+    if (step) flow.push(step);
+  });
+  return { flow, warnings };
+}
+
+/**
  * Compila una prueba de regresión a un flow del motor.
  * @param {object} o
  * @param {{name?:string, steps:Array<object>}} o.test
@@ -97,19 +122,15 @@ function compileStep(s, idx, baseUrl, warnings, i) {
  * @returns {{flow:Array<object>, warnings:Array<{step:number, alias?:string, message:string}>}}
  */
 export function compileTest({ test, catalog, login = false } = {}) {
-  const idx = indexCatalog(catalog);
   const baseUrl = catalog?.baseUrl || "";
   const flow = [];
-  const warnings = [];
 
   if (baseUrl) flow.push({ op: "ir_a", url: baseUrl }); // arrancar en la URL base del sistema
   if (login) flow.push({ op: "login" }); // login automático (credenciales por ${QA_USER}/${QA_PASS})
 
-  (test?.steps ?? []).forEach((s, i) => {
-    const step = compileStep(s, idx, baseUrl, warnings, i);
-    if (step) flow.push(step);
-  });
+  const { flow: body, warnings } = compileSteps({ steps: test?.steps ?? [], catalog, baseUrl });
+  flow.push(...body);
   return { flow, warnings };
 }
 
-export default { compileTest };
+export default { compileTest, compileSteps };

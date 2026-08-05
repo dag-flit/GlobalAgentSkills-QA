@@ -2,6 +2,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { withTenantScope } from "@/lib/auth/route";
 import { tenantDir } from "@/lib/paths";
+import { filesDir } from "@/lib/qa/regressionFiles";
 import { parseJson } from "@/lib/validation/parse";
 import { regressionRunSchema } from "@/lib/validation/schemas";
 import { getTarget } from "@/lib/db/regressionTargetsRepo";
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
     if (!suite) return NextResponse.json({ ok: false, error: `No existe la suite «${suiteId}».` }, { status: 404 });
 
     const evidenceBase = path.join(tenantDir(auth.tenantId), "regression-evidence");
-    const result = await runSuite(target, suite, { evidenceBase, only: testId, retries });
+    const result = await runSuite(target, suite, { evidenceBase, only: testId, retries, filesDir: filesDir(auth.tenantId) });
     if (!result.ok) return NextResponse.json({ ok: false, error: result.message || "La corrida no se pudo ejecutar." }, { status: 502 });
 
     // Histórico: solo se registra la corrida de SUITE COMPLETA (no las de una prueba suelta), para que

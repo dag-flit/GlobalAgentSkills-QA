@@ -29,11 +29,19 @@ export function slugAlias(s) {
     .slice(0, 40);
 }
 
+// Un id que parece ESTABLE (escrito por el equipo, no auto-generado). Los ids de React/frameworks
+// (`:r0:`, `«…»`, uuids largos) cambian entre renders → no sirven de ancla. Aceptamos ids "de a pie".
+function stableId(id) {
+  return /^[A-Za-z][\w-]*$/.test(id) && id.length <= 40;
+}
+
 /**
  * Elige la estrategia de localización de un nodo del DOM, o null si no hay ancla estable.
- * Prioridad (robusto/legible → frágil): role+nombre > etiqueta > testid > placeholder > texto.
- * @param {{role?:string, field?:boolean, name?:string, label?:string, testid?:string, placeholder?:string, text?:string}} node
- * @returns {{by:string, role?:string, name?:string, value?:string}|null}
+ * Prioridad (robusto/legible → frágil): role+nombre > etiqueta > testid > placeholder > texto >
+ * atributo `name` > `id` estable. Los dos últimos son el "colchón" para no dejar suelto ningún
+ * control accionable (checkbox/inputs que aparecen sin etiqueta) — ancla CSS por atributo, estable.
+ * @param {{role?:string, field?:boolean, name?:string, label?:string, testid?:string, placeholder?:string, text?:string, nameAttr?:string, id?:string}} node
+ * @returns {{by:string, role?:string, name?:string, value?:string, seed?:string}|null}
  */
 export function pickStrategy(node = {}) {
   const role = node.role || "";
@@ -42,6 +50,8 @@ export function pickStrategy(node = {}) {
   const testid = clean(node.testid);
   const placeholder = clean(node.placeholder);
   const text = clean(node.text);
+  const nameAttr = clean(node.nameAttr);
+  const idAttr = clean(node.id);
   const isField = !!node.field || FIELD_ROLES.has(role);
 
   if (NAMED_ROLES.has(role) && name) return { by: "role", role, name };
@@ -50,6 +60,10 @@ export function pickStrategy(node = {}) {
   if (isField && placeholder) return { by: "placeholder", value: placeholder };
   if (role && name) return { by: "role", role, name };
   if (text && text.length <= MAX_TEXT) return { by: "text", value: text };
+  // Colchón para controles sin ancla legible (checkbox/inputs revelados): atributo `name`, luego `id`
+  // estable. Ancla CSS por atributo (soportada por el runner); `seed` da un alias legible.
+  if (nameAttr) return { by: "css", value: `[name="${nameAttr}"]`, seed: nameAttr };
+  if (idAttr && stableId(idAttr)) return { by: "css", value: `#${idAttr}`, seed: idAttr };
   return null;
 }
 
@@ -73,13 +87,14 @@ export function buildElements(rawNodes = []) {
     const k = keyOf(st);
     if (seen.has(k)) continue;
     seen.add(k);
-    const human = st.by === "role" ? st.name : st.value;
+    const human = st.seed || (st.by === "role" ? st.name : st.value);
     let base = slugAlias(human) || `${st.role || st.by}_${out.length + 1}`;
     let alias = base;
     let n = 2;
     while (aliases.has(alias)) alias = `${base}_${n++}`;
     aliases.add(alias);
-    out.push({ alias, ...st });
+    const { seed, ...strategy } = st; // `seed` solo alimenta el alias; no se guarda en el elemento
+    out.push({ alias, ...strategy });
   }
   return out;
 }

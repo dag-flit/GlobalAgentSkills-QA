@@ -1,5 +1,5 @@
 import { importKit } from "./kit";
-import type { RegressionTarget, SelectorCatalog } from "@/lib/types";
+import type { RegressionTarget, SelectorCatalog, SelectorCatalogPage } from "@/lib/types";
 
 // Puente entre la ruta API y el ESCÁNER del motor (runtime/regression/scan.mjs). Corre SOLO en el
 // servidor: abre Playwright, pasa las credenciales del sistema como variables EFÍMERAS
@@ -66,4 +66,23 @@ export function mergeCatalog(existing: SelectorCatalog | null | undefined, scann
   });
   for (const p of scannedPages) if (!used.has(p.name)) pages.push(p);
   return { baseUrl: scanned.baseUrl ?? existing.baseUrl, authMode: scanned.authMode ?? existing.authMode, pages };
+}
+
+// Fusiona las páginas producidas al CAMINAR un recorrido. Un recorrido "posee" el bloque de páginas
+// cuyo nombre arranca con su prefijo («Matrícula Inicial › …»): al re-caminar se REEMPLAZA ese bloque
+// entero (así renombrar/reordenar/quitar etapas no deja huérfanas), conservando las demás páginas del
+// catálogo y la posición del bloque. Cada página caminada lleva `scannedAt`.
+export function mergeRecorridoPages(
+  existing: SelectorCatalog | null | undefined,
+  prefix: string,
+  walkedPages: SelectorCatalogPage[],
+  stampIso: string,
+): SelectorCatalog {
+  const fresh = (walkedPages ?? []).map((p) => ({ ...p, scannedAt: stampIso }));
+  const base = existing?.pages ?? [];
+  const at = base.findIndex((p) => p.name.startsWith(prefix));
+  const kept = base.filter((p) => !p.name.startsWith(prefix));
+  const insertAt = at < 0 ? kept.length : Math.min(at, kept.length);
+  const pages = [...kept.slice(0, insertAt), ...fresh, ...kept.slice(insertAt)];
+  return { baseUrl: existing?.baseUrl, authMode: existing?.authMode, pages };
 }

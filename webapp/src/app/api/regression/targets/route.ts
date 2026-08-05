@@ -4,6 +4,7 @@ import { parseJson } from "@/lib/validation/parse";
 import { regressionTargetSchema } from "@/lib/validation/schemas";
 import { listTargets, getTarget, saveTarget, deleteTarget } from "@/lib/db/regressionTargetsRepo";
 import { deleteSuitesForTarget } from "@/lib/db/regressionSuitesRepo";
+import { deleteRecorridosForTarget } from "@/lib/db/regressionRecorridosRepo";
 import { deleteRunsForTarget } from "@/lib/db/regressionHistoryRepo";
 import { SECRET_MASK, type RegressionTarget } from "@/lib/types";
 
@@ -48,9 +49,10 @@ export async function DELETE(req: Request) {
   const id = new URL(req.url).searchParams.get("id")?.trim() || "";
   if (!id) return NextResponse.json({ ok: false, error: "Falta 'id'." }, { status: 400 });
   return withTenantScope(async () => {
-    // Cascada: sin FK entre tablas (target_id es texto), así que borramos a mano las suites y el
-    // histórico del sistema para no dejar huérfanos. El catálogo vive en la propia fila del target.
+    // Cascada: sin FK entre tablas (target_id es texto), así que borramos a mano las suites, los
+    // recorridos y el histórico del sistema para no dejar huérfanos. El catálogo vive en la fila del target.
     await deleteSuitesForTarget(id);
+    await deleteRecorridosForTarget(id);
     await deleteRunsForTarget(id);
     await deleteTarget(id);
     return NextResponse.json({ ok: true });

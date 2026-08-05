@@ -119,6 +119,19 @@ export async function run(ctx) {
   assert.deepStrictEqual(st3, { by: "testid", value: "menu-user" });
   ctx.ok("pickStrategy: elemento con data-testid → getByTestId");
 
+  // 3b) harvest.pickStrategy: control SIN ancla legible (checkbox revelado sin etiqueta) → colchón por
+  // atributo `name` (o `id` estable), para no dejar suelto ningún control accionable. Alias legible por seed.
+  const stCb = pickStrategy({ role: "checkbox", field: true, name: "", label: "", nameAttr: "acepta_terminos" });
+  assert.deepStrictEqual(stCb, { by: "css", value: '[name="acepta_terminos"]', seed: "acepta_terminos" });
+  const stId = pickStrategy({ role: "checkbox", field: true, nameAttr: "", id: "chkVehiculo" });
+  assert.deepStrictEqual(stId, { by: "css", value: "#chkVehiculo", seed: "chkVehiculo" });
+  // id auto-generado (React `:r0:`) NO sirve de ancla → se descarta (no hay otra pista).
+  assert.strictEqual(pickStrategy({ role: "checkbox", field: true, id: ":r0:" }), null);
+  const cbEls = buildElements([{ role: "checkbox", field: true, nameAttr: "acepta_terminos", visible: true }]);
+  assert.strictEqual(cbEls[0].alias, "acepta_terminos", "el alias sale del name (seed), no del selector CSS");
+  assert.ok(!("seed" in cbEls[0]), "el seed no se guarda en el elemento");
+  ctx.ok("harvest: checkbox sin etiqueta se captura por name/id estable (colchón) con alias legible");
+
   // 4) harvest.buildElements: alias sin acentos + dedup por (estrategia,valor).
   const els = buildElements([
     { role: "button", name: "Añadir", visible: true },

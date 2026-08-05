@@ -20,6 +20,7 @@ export const STEP_TYPES: StepType[] = [
   { op: "clic", label: "Clic en un elemento", needsElement: true, hint: "Hace clic en el elemento elegido del catálogo." },
   { op: "escribir", label: "Escribir en un campo", needsElement: true, field: "valor", placeholder: "texto a escribir", hint: "Escribe el valor en el campo elegido." },
   { op: "seleccionar", label: "Seleccionar una opción", needsElement: true, field: "valor", placeholder: "opción", hint: "Elige una opción en una lista desplegable." },
+  { op: "subir_archivo", label: "Subir un archivo", needsElement: true, field: "ruta", placeholder: "archivo de prueba", hint: "Carga un archivo de prueba en el campo de subida elegido (p.ej. documentos obligatorios). El archivo se sube una vez y queda guardado para tus pruebas." },
   { op: "esperar_tiempo", label: "Esperar (pausa)", field: "segundos", placeholder: "segundos (ej. 2)", hint: "Pausa la prueba N segundos. Útil ANTES o DESPUÉS de un clic para dar tiempo a que cargue (control fino tipo «slow motion»). Preferí «Verificar que se ve» cuando puedas: espera lo justo y es más robusto." },
   { op: "verificar_visible", label: "Verificar que se ve", needsElement: true, hint: "Falla si el elemento no está visible." },
   { op: "verificar_texto", label: "Verificar texto en pantalla", field: "texto", placeholder: "Total trámites", hint: "Falla si ese texto no aparece en la página." },

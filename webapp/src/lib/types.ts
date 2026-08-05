@@ -181,3 +181,29 @@ export interface RegressionSuite {
   tests: RegressionTest[];
   updatedAt?: string;
 }
+
+// Una ETAPA de un Recorrido: una pantalla del asistente. `prepare` son acciones a hacer ANTES de
+// cosechar esta pantalla, para revelar elementos que aparecen al interactuar (p.ej. consultar el RUNT
+// habilita checkbox) → así la captura no deja nada suelto. `advance` son los pasos que llevan a la
+// SIGUIENTE etapa. La última etapa no necesita `advance`. Los pasos referencian alias del catálogo.
+export interface RegressionStage {
+  name: string;
+  // Etapa CONDICIONAL: si se define, esta pantalla solo se cataloga/avanza cuando ese texto está
+  // visible al llegar (p.ej. «Validación de identidad»). Si no aparece, el recorrido la SALTA y sigue.
+  // Modela pantallas que aparecen según los datos, sin motor de bifurcación (determinista).
+  guardText?: string;
+  prepare?: RegressionStep[];
+  advance?: RegressionStep[];
+}
+// Un RECORRIDO: el walk-through de un asistente multi-pantalla (Matrícula Inicial, Traspaso…). El
+// escáner lo camina etapa por etapa (cosecha → avanza) y cataloga cada pantalla como «Recorrido ›
+// Etapa». Resuelve el problema de pantallas detrás de un flujo con URL dinámica (hash): nunca navega a
+// la URL, LLEGA completando el flujo. `entryRoute` es la pantalla inicial del asistente.
+export interface RegressionRecorrido {
+  id: string;
+  targetId: string;
+  name: string;
+  entryRoute: string;
+  stages: RegressionStage[];
+  updatedAt?: string;
+}

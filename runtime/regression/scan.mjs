@@ -64,6 +64,8 @@ function browserExtract() {
       text: text.slice(0, 80),
       placeholder: el.getAttribute("placeholder") || "",
       testid,
+      nameAttr: el.getAttribute("name") || "", // colchón de ancla para controles sin etiqueta
+      id: el.id || "",
       visible: true,
     });
   });
@@ -91,7 +93,13 @@ async function extractWhenReady(page, timeout) {
   return nodes;
 }
 
-function joinUrl(base, route) {
+// Cosecha los nodos visibles de la página actual (espera al render de la SPA). Exportado para que el
+// walk-through de Recorridos (walk.mjs) coseche cada etapa con el mismo criterio que el escaneo por URL.
+export async function readVisibleNodes(page, timeout = DEFAULT_TIMEOUT) {
+  return extractWhenReady(page, timeout);
+}
+
+export function joinUrl(base, route) {
   if (!route) return base;
   if (/^https?:\/\//i.test(route)) return route;
   return String(base).replace(/\/+$/, "") + "/" + String(route).replace(/^\/+/, "");

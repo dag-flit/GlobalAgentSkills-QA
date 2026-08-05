@@ -65,18 +65,9 @@ export default function RegressionPage() {
     }
   }
 
+  // El borrado REAL (la confirmación fuerte —tipear el nombre— vive en SystemCard, porque la cascada
+  // es irreversible: sistema + suites + recorridos + histórico + catálogo).
   async function remove(id: string) {
-    // Avisar QUÉ se borra (suites + histórico + catálogo) antes de confirmar.
-    let extra = " y su catálogo";
-    try {
-      const u = await fetch(`/api/regression/usage?id=${encodeURIComponent(id)}`).then((r) => r.json());
-      if (u?.ok && (u.suites || u.runs)) {
-        extra = `: se borrarán ${u.suites} suite(s), ${u.runs} corrida(s) del histórico y el catálogo`;
-      }
-    } catch {
-      /* si no se pudo consultar, se confirma igual con el texto genérico */
-    }
-    if (!confirm(`¿Eliminar el sistema «${id}»${extra}? Esta acción no se puede deshacer.`)) return;
     await fetch(`/api/regression/targets?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     await load();
   }

@@ -6,6 +6,7 @@ import type { RegressionTarget, RegressionSuite, RegressionTest } from "@/lib/ty
 import { aliasOptions } from "@/lib/qa/regressionSteps";
 import { TestSteps } from "./TestSteps";
 import { SuiteRunner } from "./SuiteRunner";
+import { SuiteImport } from "./SuiteImport";
 
 // Constructor de SUITES de regresión para un sistema, con jerarquía VISUAL clara:
 //   Suite (acordeón) › Pruebas (filas) › Pasos (editor de la prueba elegida).
@@ -18,7 +19,7 @@ function genId(name: string): string {
 }
 const plural = (n: number, s: string) => `${n} ${s}${n === 1 ? "" : "s"}`;
 
-export function SuiteBuilder({ target }: { target: RegressionTarget }) {
+export function SuiteBuilder({ target, focusSuiteId, focusTestId, onFocusConsumed }: { target: RegressionTarget; focusSuiteId?: string | null; focusTestId?: string | null; onFocusConsumed?: () => void }) {
   const aliases = aliasOptions(target.catalog);
   const [suites, setSuites] = useState<RegressionSuite[]>([]);
   const [draft, setDraft] = useState<RegressionSuite | null>(null);
@@ -31,10 +32,9 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
   const [testName, setTestName] = useState("");
   const [renameId, setRenameId] = useState<string | null>(null); // prueba en renombrado inline (#2)
   const [renameVal, setRenameVal] = useState("");
-  const [importOpen, setImportOpen] = useState(false); // importar suite desde JSON (#1)
-  const [importText, setImportText] = useState("");
-  const [importMsg, setImportMsg] = useState<string | null>(null);
-  const [importBusy, setImportBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState<string | null>(null); // eliminar suite: confirmación en 2 pasos
+  const [deleted, setDeleted] = useState<RegressionSuite | null>(null); // última suite borrada (para Deshacer)
+  const [undoing, setUndoing] = useState(false);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/regression/suites?targetId=${encodeURIComponent(target.id)}`);
@@ -44,6 +44,20 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Enfoque externo: al crear una prueba desde un recorrido (pestaña Recorridos), el padre nos pide
+  // abrir esa suite y seleccionar la prueba nueva. Se consume una vez (avisa al padre) para no reabrir.
+  useEffect(() => {
+    if (!focusSuiteId) return;
+    const s = suites.find((x) => x.id === focusSuiteId);
+    if (!s) return; // aún no cargó la lista: se reintenta cuando `suites` cambie
+    setDraft(JSON.parse(JSON.stringify(s)));
+    setTestId(focusTestId ?? s.tests[0]?.id ?? null);
+    setDirty(false);
+    setMsg(null);
+    onFocusConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSuiteId, focusTestId, suites]);
 
   function guardUnsaved(): boolean {
     return !draft || !dirty || confirm("Hay cambios sin guardar en la suite abierta. ¿Descartarlos?");
@@ -138,46 +152,6 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
     a.remove();
     URL.revokeObjectURL(url);
   }
-  // #1 Importar una suite desde JSON (pegado). Genera ids nuevos y crea una suite en ESTE sistema.
-  async function importSuite() {
-    let obj: any;
-    try {
-      obj = JSON.parse(importText);
-    } catch {
-      setImportMsg("El JSON no es válido.");
-      return;
-    }
-    const raw = Array.isArray(obj?.tests) ? obj.tests : null;
-    if (!raw) {
-      setImportMsg("El JSON no tiene una lista de pruebas («tests»).");
-      return;
-    }
-    const tests: RegressionTest[] = raw.map((t: any) => ({
-      id: genId(String(t?.name || "prueba")),
-      name: String(t?.name || "Prueba"),
-      steps: Array.isArray(t?.steps) ? t.steps.filter((s: any) => s && typeof s.op === "string") : [],
-    }));
-    const name = String(obj?.name || "Suite importada");
-    setImportBusy(true);
-    setImportMsg(null);
-    try {
-      const r = await fetch("/api/regression/suites", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: genId(name), targetId: target.id, name, tests }),
-      });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.error || "No se pudo importar.");
-      setImportOpen(false);
-      setImportText("");
-      await load();
-    } catch (e: any) {
-      setImportMsg(e?.message ?? "error");
-    } finally {
-      setImportBusy(false);
-    }
-  }
-
   async function saveSuite() {
     if (!draft) return;
     setSaving(true);
@@ -199,14 +173,25 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
       setSaving(false);
     }
   }
-  async function removeSuite(s: RegressionSuite) {
-    if (!confirm(`¿Eliminar la suite «${s.name}» y todas sus pruebas?`)) return;
+  // Eliminar (tras confirmar en 2 pasos). Guardamos el objeto borrado para poder DESHACER: el cliente
+  // aún tiene la suite completa, así que restaurarla es un simple re-guardado (no depende de la BD).
+  async function doDelete(s: RegressionSuite) {
+    setConfirmDel(null);
     await fetch(`/api/regression/suites?targetId=${encodeURIComponent(target.id)}&id=${encodeURIComponent(s.id)}`, { method: "DELETE" });
-    if (draft?.id === s.id) {
-      setDraft(null);
-      setDirty(false);
-    }
+    if (draft?.id === s.id) { setDraft(null); setDirty(false); }
+    setDeleted(s);
     await load();
+  }
+  async function undoDelete() {
+    if (!deleted) return;
+    setUndoing(true);
+    try {
+      await fetch("/api/regression/suites", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(deleted) });
+      setDeleted(null);
+      await load();
+    } finally {
+      setUndoing(false);
+    }
   }
 
   const isNewDraft = draft ? !suites.some((s) => s.id === draft.id) : false;
@@ -309,22 +294,19 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
         <div className="text-sm font-semibold">Suites de regresión</div>
         {!creating && (
           <div className="flex items-center gap-2">
-            <button className="btn-ghost text-[12px]" onClick={() => { setImportOpen((o) => !o); setImportMsg(null); }}>Importar (JSON)</button>
+            <SuiteImport targetId={target.id} onImported={load} />
             <button className="btn-primary text-[12px]" onClick={() => { setCreating(true); setSuiteName(""); }}>Crear nueva suite</button>
           </div>
         )}
       </div>
-      {importOpen && (
-        <div className="rounded-lg border border-border p-2 space-y-2">
-          <p className="text-[11px] text-muted">Pegá el JSON de una suite exportada. Se crea una suite nueva en <b>este</b> sistema (con ids nuevos). Los pasos referencian alias del catálogo: si venís de otro sistema con distinta interfaz, revisá que los elementos existan (o re-escaneá).</p>
-          <textarea className="input font-mono w-full" rows={5} placeholder='{ "kind": "regression-suite", "name": "Login", "tests": [ … ] }' value={importText} onChange={(e) => setImportText(e.target.value)} />
-          <div className="flex items-center gap-2">
-            <button className="btn-primary text-[12px]" onClick={importSuite} disabled={importBusy || !importText.trim()}>
-              {importBusy ? <span className="flex items-center gap-2"><Spinner /> Importando…</span> : "Importar suite"}
-            </button>
-            <button className="btn-ghost text-[12px]" onClick={() => { setImportOpen(false); setImportText(""); setImportMsg(null); }}>Cancelar</button>
-            {importMsg && <span className="text-[11px] text-red-300">{importMsg}</span>}
-          </div>
+      {/* Red de seguridad: deshacer el último borrado (la suite sigue en memoria del cliente). */}
+      {deleted && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-100">
+          <span>🗑 Eliminaste «{deleted.name}» ({plural(deleted.tests.length, "prueba")}).</span>
+          <button className="rounded bg-amber-500/80 hover:bg-amber-500 text-white px-2 py-0.5 text-[11px]" onClick={undoDelete} disabled={undoing}>
+            {undoing ? "Restaurando…" : "Deshacer"}
+          </button>
+          <button className="ml-auto text-amber-200/70 hover:text-white" title="Descartar aviso" onClick={() => setDeleted(null)}>✕</button>
         </div>
       )}
       {creating && (
@@ -355,8 +337,18 @@ export function SuiteBuilder({ target }: { target: RegressionTarget }) {
                   <span className="text-[13px] font-medium">{s.name}</span>
                   <span className="text-[11px] text-muted">· {plural(s.tests.length, "prueba")}</span>
                 </button>
-                <button className="btn-ghost text-[11px]" title="Descargar esta suite como archivo JSON" onClick={() => exportSuite(s)}>Exportar</button>
-                <button className="btn-ghost text-[11px] text-red-300" title="Eliminar suite" onClick={() => removeSuite(s)}>Eliminar</button>
+                {confirmDel === s.id ? (
+                  <span className="flex items-center gap-1.5 text-[11px]" onClick={(e) => e.stopPropagation()}>
+                    <span className="text-red-300">¿Eliminar «{s.name}»?</span>
+                    <button className="rounded bg-red-500/80 hover:bg-red-500 text-white px-2 py-0.5" onClick={() => doDelete(s)}>Sí, eliminar</button>
+                    <button className="btn-ghost" onClick={() => setConfirmDel(null)}>Cancelar</button>
+                  </span>
+                ) : (
+                  <>
+                    <button className="btn-ghost text-[11px]" title="Descargar esta suite como archivo JSON" onClick={() => exportSuite(s)}>Exportar</button>
+                    <button className="btn-ghost text-[11px] text-muted hover:text-red-300" title="Eliminar suite" onClick={(e) => { e.stopPropagation(); setConfirmDel(s.id); }}>Eliminar</button>
+                  </>
+                )}
               </div>
               {open && detail()}
             </div>

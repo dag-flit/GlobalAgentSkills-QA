@@ -275,7 +275,11 @@ async function stepLogin({ page, args, env, vars, timeout }) {
 async function stepSeleccionar({ page, args, env, vars }) {
   const loc = resolveLocator(page, args, { env, vars });
   if (!loc) return { ok: false, message: "seleccionar sin lista destino ('en')" };
-  await loc.selectOption(interpolate(args.valor ?? "", { env, vars }));
+  // `force`: el <select> puede estar OCULTO tras un control visual (widget custom: un botón «Seleccionar»
+  // que abre un modal, con un <select> nativo escondido por detrás que la app actualiza). Sin force,
+  // Playwright exige que esté visible+habilitado → timeout. La cadena matchea la opción por TEXTO visible
+  // (robusto entre ambientes) o por su value interno (compat con recorridos que guardaron el value crudo).
+  await loc.selectOption(interpolate(args.valor ?? "", { env, vars }), { force: true });
   return { ok: true };
 }
 async function stepMarcar({ page, args, env, vars }) {
@@ -295,6 +299,9 @@ async function stepSubirArchivo({ page, args, env, vars }) {
   if (!loc) return { ok: false, message: "subir_archivo sin campo destino ('en')" };
   const ruta = interpolate(args.ruta ?? args.valor ?? "", { env, vars });
   if (!ruta) return { ok: false, message: "subir_archivo sin 'ruta' del archivo" };
+  // Guarda contra path traversal: la ruta la compone la webapp como ${QA_FILES}/<nombre> (dir de
+  // archivos de prueba del tenant); un `..` no debe poder escapar de ahí para leer archivos ajenos.
+  if (ruta.split(/[\\/]/).includes("..")) return { ok: false, message: "subir_archivo: ruta no permitida" };
   await loc.setInputFiles(ruta);
   return { ok: true };
 }

@@ -1,24 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Spinner } from "@/components/ui";
 import { SECRET_MASK, type RegressionTarget } from "@/lib/types";
 import { SuiteBuilder } from "./SuiteBuilder";
 import { RegressionCatalog } from "./RegressionCatalog";
+import { RecorridoBuilder } from "./RecorridoBuilder";
 
-// Tarjeta de UN sistema de regresión. Un botón «Abrir» la expande en TRES secciones (pestañas):
-//   • Pruebas  → armar/editar/correr las suites (usa el catálogo YA guardado; no re-escanea).
-//   • Catálogo → ver y ACTUALIZAR el catálogo de selectores (aquí vive «Escanear», acción secundaria).
-//   • Ajustes  → nombre, URL y credenciales del sistema.
-// Antes, editar una prueba obligaba a tocar «Escanear sistema» (re-crawl innecesario). Ahora escanear
-// y editar son trabajos separados: el catálogo persiste, así que las pruebas abren sin re-escanear.
+// Tarjeta de UN sistema de regresión. Un botón «Abrir» la expande en CUATRO secciones (pestañas):
+//   • Pruebas   → armar/editar/correr las suites (usa el catálogo YA guardado; no re-escanea).
+//   • Recorridos→ GRABAR un flujo multipantalla y convertirlo en prueba (puente → Pruebas).
+//   • Catálogo  → ver el inventario de selectores (plegado + buscador); aquí vive «Escanear».
+//   • Ajustes   → nombre, URL y credenciales del sistema.
+// Escanear, grabar y editar son trabajos separados: el catálogo persiste, así que las pruebas abren
+// sin re-escanear. Los recorridos salieron del Catálogo a su propia pestaña (antes estaban mezclados).
 
-type Tab = "pruebas" | "catalogo" | "ajustes";
+type Tab = "pruebas" | "recorridos" | "catalogo" | "ajustes";
+const TAB_LABEL: Record<Tab, string> = { pruebas: "Pruebas", recorridos: "Recorridos", catalogo: "Catálogo", ajustes: "Ajustes" };
 type Settings = { name: string; baseUrl: string; authMode: "none" | "login"; username: string; password: string };
 
 export function SystemCard({ target, onChanged, onRemoved }: { target: RegressionTarget; onChanged: () => void; onRemoved: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("pruebas");
+  const [confirming, setConfirming] = useState(false);
+  // Foco entre pestañas: una prueba creada desde un recorrido abre esa suite en «Pruebas»; el botón
+  // «Ver recorrido» del catálogo abre ese recorrido en «Recorridos».
+  const [focusSuiteId, setFocusSuiteId] = useState<string | null>(null);
+  const [focusTestId, setFocusTestId] = useState<string | null>(null);
+  const [focusRecorrido, setFocusRecorrido] = useState<string | null>(null);
   const selectors = target.catalog?.pages?.reduce((n, p) => n + p.elements.length, 0) ?? 0;
 
   return (
@@ -34,38 +43,111 @@ export function SystemCard({ target, onChanged, onRemoved }: { target: Regressio
             </span>
           </span>
         </button>
-        <button className="btn-ghost text-red-300" onClick={() => onRemoved(target.id)}>Eliminar</button>
+        {/* Borrar el sistema es una cascada IRREVERSIBLE → botón discreto (gris, rojo al pasar) que abre
+            una confirmación fuerte (tipear el nombre), no un borrado de un clic. */}
+        <button className="btn-ghost text-[12px] text-muted hover:text-red-300" title="Eliminar sistema" onClick={() => setConfirming(true)}>Eliminar</button>
       </div>
+
+      {confirming && <DeleteConfirm target={target} onRemoved={onRemoved} onCancel={() => setConfirming(false)} />}
 
       {open && (
         <div className="pt-2 border-t border-border space-y-3">
           <div className="flex items-center gap-1">
-            {(["pruebas", "catalogo", "ajustes"] as Tab[]).map((tb) => (
+            {(["pruebas", "recorridos", "catalogo", "ajustes"] as Tab[]).map((tb) => (
               <button
                 key={tb}
                 className={`text-[12px] px-3 py-1.5 rounded-md ${tab === tb ? "bg-accent/15 text-accent font-medium" : "text-muted hover:text-white"}`}
                 onClick={() => setTab(tb)}
               >
-                {tb === "pruebas" ? "Pruebas" : tb === "catalogo" ? "Catálogo" : "Ajustes"}
+                {TAB_LABEL[tb]}
               </button>
             ))}
           </div>
 
           {tab === "pruebas" &&
             (selectors > 0 ? (
-              <SuiteBuilder target={target} />
+              <SuiteBuilder
+                target={target}
+                focusSuiteId={focusSuiteId}
+                focusTestId={focusTestId}
+                onFocusConsumed={() => { setFocusSuiteId(null); setFocusTestId(null); }}
+              />
             ) : (
               <p className="text-[12px] text-muted">
-                Este sistema todavía no tiene catálogo de selectores. Andá a la pestaña <b>Catálogo</b> y tocá
-                «Escanear» una vez; después vas a poder armar las pruebas eligiendo elementos.
+                Este sistema todavía no tiene catálogo de selectores. Andá a <b>Recorridos</b> y <b>grabá</b> un flujo
+                (llena el catálogo solo), o a <b>Catálogo → Escanear</b> una página; después armás las pruebas.
               </p>
             ))}
 
-          {tab === "catalogo" && <RegressionCatalog target={target} onChanged={onChanged} />}
+          {tab === "recorridos" && (
+            <RecorridoBuilder
+              target={target}
+              focusName={focusRecorrido}
+              onChanged={onChanged}
+              onCreatedTest={(suiteId, testId) => { setFocusSuiteId(suiteId); setFocusTestId(testId); setFocusRecorrido(null); setTab("pruebas"); }}
+            />
+          )}
+
+          {tab === "catalogo" && (
+            <RegressionCatalog
+              target={target}
+              onChanged={onChanged}
+              onEditRecorrido={(name) => { setFocusRecorrido(name); setTab("recorridos"); }}
+            />
+          )}
 
           {tab === "ajustes" && <SettingsTab target={target} onChanged={onChanged} />}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Confirmación FUERTE para borrar un sistema (cascada irreversible) ─────────────────────────────
+// Muestra qué se borra (suites + recorridos + histórico + catálogo) y EXIGE tipear el nombre del
+// sistema. Así un clic accidental en «Eliminar» no destruye nada (fue justo el accidente que hubo).
+function DeleteConfirm({ target, onRemoved, onCancel }: { target: RegressionTarget; onRemoved: (id: string) => void; onCancel: () => void }) {
+  const [usage, setUsage] = useState<{ suites: number; recorridos: number; runs: number } | null>(null);
+  const [text, setText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const selectors = target.catalog?.pages?.reduce((n, p) => n + p.elements.length, 0) ?? 0;
+
+  useEffect(() => {
+    fetch(`/api/regression/usage?id=${encodeURIComponent(target.id)}`)
+      .then((r) => r.json())
+      .then((u) => { if (u?.ok) setUsage({ suites: u.suites ?? 0, recorridos: u.recorridos ?? 0, runs: u.runs ?? 0 }); })
+      .catch(() => { /* si no se pudo consultar, se avisa genérico */ });
+  }, [target.id]);
+
+  const match = text.trim() === target.name.trim();
+  async function confirmDelete() {
+    if (!match || deleting) return;
+    setDeleting(true);
+    await Promise.resolve(onRemoved(target.id)); // recarga la lista → esta tarjeta desaparece
+  }
+
+  return (
+    <div className="rounded-lg border border-red-500/50 bg-red-500/10 p-3 space-y-2">
+      <div className="text-[12px] font-semibold text-red-200">Eliminar «{target.name}» — acción IRREVERSIBLE</div>
+      <p className="text-[11px] text-red-100/90">
+        Se borra el sistema y su catálogo ({selectors} selector(es)), y en cascada{" "}
+        {usage
+          ? <b>{usage.suites} suite(s), {usage.recorridos} recorrido(s) y {usage.runs} corrida(s) del histórico</b>
+          : "sus suites, recorridos e histórico"}. No se puede deshacer.
+      </p>
+      <label className="block text-[11px] text-red-100/90">
+        Escribí <b>{target.name}</b> para confirmar:
+        <input autoFocus className="input mt-1" value={text} placeholder={target.name}
+          onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && confirmDelete()} />
+      </label>
+      <div className="flex items-center gap-2">
+        <button
+          className="rounded bg-red-500/80 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1 text-[12px]"
+          onClick={confirmDelete} disabled={!match || deleting}>
+          {deleting ? <span className="flex items-center gap-2"><Spinner /> Eliminando…</span> : "Eliminar definitivamente"}
+        </button>
+        <button className="btn-ghost text-[12px]" onClick={onCancel} disabled={deleting}>Cancelar</button>
+      </div>
     </div>
   );
 }
