@@ -1,9 +1,19 @@
 node_modules/
 qa-evidence/
 dist/
+
+# Secretos e identidad — NUNCA versionar (PAT, claves, .env.local, identidad ADO)
 .env
 .env.*
 !.env*.example
+.env.user-identity
+**/.env.user-identity
+**/.env.local
+**/secrets/
+*.pem
+*.p12
+*.key
+
 *.log
 .DS_Store
 qa-generated/

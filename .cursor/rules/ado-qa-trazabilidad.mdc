@@ -1,0 +1,83 @@
+---
+description: Trazabilidad QA al crear Features/Tasks en Azure DevOps (FLIT)
+alwaysApply: true
+---
+
+# Azure DevOps — trazabilidad del agente de QA
+
+Cuando se creen o actualicen **Features** o **Tasks** (casos de prueba) en Azure DevOps para certificación QA de FLIT:
+
+## Fuente de identidad
+
+Leer **solo** desde `.env.user-identity` en la raíz del repo (nunca hardcodear):
+
+- `USER_REAL_NAME`
+- `USER_REAL_EMAIL`
+- `AZURE_ORG_URL`
+- `AZURE_PROJECT_NAME`
+
+No modificar adapters, tracker config, PAT de la webapp ni nada ya cableado a ADO en este proyecto. Usar MCP `user-ado` (o el contrato `flit-azure-devops`).
+
+## Mensaje obligatorio (Discussion / comentario HTML)
+
+En **cada** Feature y **cada** Task hija, agregar un comentario de Discussion con este texto (sustituir variables):
+
+```html
+<div>Work item registrado por el <b>agente de QA</b> bajo supervisión de <a href="mailto:{USER_REAL_EMAIL}">{USER_REAL_NAME}</a>.</div>
+```
+
+## Estándar de robustez (OBLIGATORIO — certificación FLIT 2.0)
+
+Toda Task/TC nueva o actualizada debe ser **ejecutable por un QA sin conocimiento previo del módulo**. Prohibido dejar pasos vagos (“probar el módulo”, “validar que funcione”).
+
+### Unificación de flujos (control de crecimiento de WI)
+
+**Obligatorio:** un solo WI = un **flujo de certificación completo** del tema (happy + negativo + borde + permisos del mismo eje), no TCs “que complementan” a otro.
+
+- Prohibido crear Tasks del estilo “complementa TC08”, “ver también TC05”, “parte 2 de…”.
+- Si hay varios escenarios del mismo eje (alta válida + inválidos + duplicado; clave OK + política + sesión), van **en la misma Task** como Escenarios A/B/C/D… dentro de Pasos.
+- Preferir **pocas Tasks densas** a muchas Tasks cortas. Objetivo: control del crecimiento de work items en ADO.
+- Al descubrir solapamiento en WI ya creados: **enriquecer el WI canónico**, cerrar/remover los satélites con comentario “Unificado en #ID”.
+
+### Feature
+
+Incluir siempre en Description (HTML):
+
+- **OBJETIVO** — qué se certifica y para qué
+- **DESCRIPTION** — alcance, precondiciones de Features previos, fuera de alcance, evidencia mínima, **lista corta de flujos (Tasks)**
+- **CRITERIOS FUNCIONALES** — checklist observable (pass/fail)
+
+### Task (caso de prueba) — plantilla mínima HTML
+
+```html
+<h2>Tipo</h2><p>Flujo completo · Prioridad …</p>
+<h2>Objetivo del caso</h2><p>Certificar de punta a punta: …</p>
+<h2>Precondiciones</h2><ul><li>…</li></ul>
+<h2>Datos de prueba</h2><table>…</table>
+<h2>Pasos</h2>
+<h3>Escenario A — …</h3><ol><li>…</li></ol>
+<h3>Escenario B — …</h3><ol><li>…</li></ol>
+<h2>Resultado esperado</h2><ul><li>Por escenario, criterios pass/fail</li></ul>
+<h2>Evidencia</h2><ul><li>Capturas / IDs (sin secretos ni PII real)</li></ul>
+<h2>Postcondiciones</h2><ul><li>Datos a conservar</li></ul>
+```
+
+Reglas:
+
+- Pasos **numerados**; escenarios A/B/C dentro del mismo WI
+- Referenciar Features previos por ID cuando haya dependencia de datos
+- Nunca pegar contraseñas reales en ADO
+- Asignar a `USER_REAL_EMAIL`; comentario de supervisión en Feature y cada Task
+## Flujo
+
+1. Borrador Feature → aprobación explícita del supervisor (salvo que diga “continúa / sí / hazlo”).
+2. Crear Feature asignado a `USER_REAL_EMAIL`.
+3. Crear Tasks hijas con la plantilla robusta arriba.
+4. **Asignar cada Task a `USER_REAL_EMAIL`** de inmediato.
+5. Comentario de trazabilidad en Feature y en cada Task.
+6. Tags `QA`; `certificacion-2.0`; `supervision-QA` solo si hay permiso de crear tags.
+
+## Modelo de backlog QA
+
+- Feature = necesidad de certificación (módulo/objetivo), **sin** Historias de Usuario.
+- Tasks hijas = casos de prueba.
