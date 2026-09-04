@@ -11,6 +11,7 @@ const PUBLIC_API = new Set([
   "/api/auth/register",
   "/api/auth/logout",
   "/api/auth/me",
+  "/api/health", // liveness para el proxy/monitor: sin cookie, sin BD
 ]);
 
 export function middleware(req: NextRequest) {
