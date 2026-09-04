@@ -78,3 +78,30 @@ export async function listHistoryRuns(targetId: string, suiteId: string, limit =
     }));
   });
 }
+
+export interface RecentRegressionRun {
+  runId: string; targetId: string; suiteId: string; systemName: string; suiteName: string;
+  ranAt: string; total: number; passed: number; failed: number;
+}
+
+/** Últimas corridas de regresión del tenant (TODAS las suites), para el selector de Seguimiento QA. */
+export async function listRecentHistoryRuns(limit = 20): Promise<RecentRegressionRun[]> {
+  return withTenant(async (c) => {
+    const r = await c.query(
+      `SELECT run_id, target_id, suite_id, system_name, suite_name, ran_at, total, passed, failed
+       FROM regression_runs ORDER BY ran_at DESC LIMIT $1`,
+      [Math.min(50, Math.max(1, limit))],
+    );
+    return r.rows.map((row: Record<string, unknown>) => ({
+      runId: String(row.run_id),
+      targetId: String(row.target_id),
+      suiteId: String(row.suite_id),
+      systemName: String(row.system_name ?? ""),
+      suiteName: String(row.suite_name ?? ""),
+      ranAt: row.ran_at instanceof Date ? row.ran_at.toISOString() : String(row.ran_at ?? ""),
+      total: Number(row.total),
+      passed: Number(row.passed),
+      failed: Number(row.failed),
+    }));
+  });
+}

@@ -299,3 +299,20 @@ export const scheduleTickSchema = z.object({
   tenantId: z.uuid(),
   token: z.string().min(10).max(200),
 });
+
+// ── Seguimiento QA (tablero de pendientes) ──────────────────────────────────
+export const qaStatusEnum = z.enum(["todo", "doing", "blocked", "review", "done"]);
+export const qaItemSchema = z.object({
+  id: z.string().min(1).max(64),
+  title: z.string().min(1).max(200),
+  notes: z.string().max(4000).default(""),
+  status: qaStatusEnum.default("todo"),
+  priority: z.enum(["alta", "media", "baja"]).default("media"),
+  assignee: z.string().max(120).default(""),
+  adoWi: z.string().max(32).default(""),                     // id de HU/Feature de ADO (opcional)
+  linkRunKind: z.enum(["", "run", "regression"]).default(""), // vínculo a corrida (Increment 2)
+  linkRunId: z.string().max(64).default(""),
+  linkRunMeta: z.record(z.string(), z.any()).default({}),
+  position: z.number().int().min(0).max(100000).default(0),
+});
+export const qaItemDeleteSchema = z.object({ id: z.string().min(1).max(64) });

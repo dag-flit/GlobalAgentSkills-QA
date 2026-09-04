@@ -66,6 +66,12 @@ const IconClock = svg(
     <path d="M12 7v5l3 2" />
   </>
 );
+const IconBoard = svg(
+  <>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M9 3v18M15 3v18" />
+  </>
+);
 const IconChevron = svg(<path d="M15 18l-6-6 6-6" />);
 
 /* ---------- menú ---------- */
@@ -81,6 +87,7 @@ const GROUPS: Group[] = [
       { href: "/pr", label: "Analizar PR", Icon: IconPr },
       { href: "/regression", label: "Test de Regresión", Icon: IconTarget },
       { href: "/schedules", label: "Programadas", Icon: IconClock },
+      { href: "/seguimiento", label: "Seguimiento QA", Icon: IconBoard },
       { href: "/runs", label: "Historial", Icon: IconHistory },
     ],
   },
