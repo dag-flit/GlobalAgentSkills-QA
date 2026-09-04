@@ -12,6 +12,7 @@ const PUBLIC_API = new Set([
   "/api/auth/logout",
   "/api/auth/me",
   "/api/health", // liveness para el proxy/monitor: sin cookie, sin BD
+  "/api/schedule/tick", // disparador de servicio: autenticado por {tenantId, token}, no por sesión
 ]);
 
 export function middleware(req: NextRequest) {

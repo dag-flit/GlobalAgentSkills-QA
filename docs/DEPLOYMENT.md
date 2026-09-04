@@ -77,9 +77,46 @@ El motor **ejecuta herramientas en el host** durante las corridas. La VPS necesi
 - Agregar `GET /api/health` liviano (200 sin auth) para el proxy/monitor — recomendado.
 - Provisional: `GET /` responde **307** (redirect al login) = señal de que el server vive.
 
-## 8. Programación de corridas (P1 — PRO #4, se diseña después del despliegue)
+## 8. Programación de corridas (PRO #4)
 
-Para correr regresión automáticamente hace falta un **disparador** (workflow programado
-de GitHub Actions, o cron en la VPS) que golpee un **endpoint de servicio autenticado**
-por tenant. Requiere un mecanismo de **auth de servicio multitenant** (no la sesión de un
-usuario). Se define en la fase P1, ya con la VPS y el pipeline en pie.
+La app trae el scheduler: en **«Programadas»** se definen horarios (qué suite corre y cuándo) y
+se genera el **token de servicio** por tenant. Falta solo el **disparador externo** que golpee el
+endpoint periódicamente. El endpoint corre los horarios **vencidos** del tenant; conviene un tick
+cada ~15 min.
+
+- **Endpoint:** `POST /api/schedule/tick` (público, autenticado por el cuerpo, no por sesión).
+- **Credencial:** `{ "tenantId": "<uuid>", "token": "<token de servicio>" }`. El token se valida
+  dentro de la RLS del tenant reclamado → un par que no casa devuelve 401, sin lectura cruzada.
+- **Secretos:** guardar `tenantId` + `token` como secretos del entorno (uno por tenant a programar).
+
+**Opción A — Workflow programado de GitHub Actions** (`.github/workflows/schedule-tick.yml`):
+
+```yaml
+name: qa-schedule-tick
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # cada 15 min (UTC)
+  workflow_dispatch: {}
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar corridas vencidas
+        run: |
+          curl -fsS -X POST "$APP_URL/api/schedule/tick" \
+            -H "Content-Type: application/json" \
+            -d "{\"tenantId\":\"$TENANT_ID\",\"token\":\"$SCHED_TOKEN\"}"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          TENANT_ID: ${{ secrets.SCHED_TENANT_ID }}
+          SCHED_TOKEN: ${{ secrets.SCHED_TOKEN }}
+```
+
+**Opción B — cron en la VPS** (`crontab -e`):
+
+```
+*/15 * * * * curl -fsS -X POST https://APP/api/schedule/tick -H 'Content-Type: application/json' -d '{"tenantId":"<uuid>","token":"<token>"}' >/dev/null 2>&1
+```
+
+Un tick puede tardar si hay varias suites (abre un navegador real por corrida): usar timeout amplio.
+Para varios tenants, repetir el paso/línea con el `tenantId`+`token` de cada uno.

@@ -48,6 +48,11 @@ export async function requireTenant(): Promise<AuthContext & { tenantId: string 
 
 const RANK: Record<string, number> = { viewer: 1, member: 2, admin: 3, owner: 4 };
 
+/** ¿El rol alcanza el mínimo pedido? (owner > admin > member > viewer). Para chequeos en handlers. */
+export function roleAtLeast(role: string | null, min: "owner" | "admin" | "member" | "viewer"): boolean {
+  return (RANK[role ?? ""] ?? 0) >= RANK[min];
+}
+
 /** Exige al menos el rol `min` en el tenant activo (owner > admin > member > viewer). */
 export async function requireRole(min: "owner" | "admin" | "member" | "viewer"): Promise<
   AuthContext & { tenantId: string }

@@ -270,3 +270,32 @@ export const regressionPublishSchema = z.object({
   runId: z.string().regex(/^\d+$/),
   testId: z.string().min(1).optional(),
 });
+
+// ── Programación de corridas (PRO #4) ───────────────────────────────────────
+// Cadencia de un horario: por hora / diaria / semanal. `time` en HH:MM; `tz` IANA opcional (UTC por
+// defecto). El motor (cadence.ts) traduce esto al instante UTC de la próxima corrida.
+const hhmm = z.string().regex(/^\d{1,2}:\d{2}$/, "hora en formato HH:MM");
+export const cadenceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("hourly"), everyHours: z.number().int().min(1).max(168) }),
+  z.object({ kind: z.literal("daily"), time: hhmm, tz: z.string().max(64).optional() }),
+  z.object({ kind: z.literal("weekly"), weekday: z.number().int().min(0).max(6), time: hhmm, tz: z.string().max(64).optional() }),
+]);
+
+export const scheduleSaveSchema = z.object({
+  id: z.string().min(1).max(64),
+  targetId: z.string().min(1).max(64),
+  suiteId: z.string().min(1).max(64),
+  cadence: cadenceSchema,
+  enabled: z.boolean().default(true),
+});
+
+export const scheduleDeleteSchema = z.object({ id: z.string().min(1).max(64) });
+
+export const schedulerTokenCreateSchema = z.object({ label: z.string().max(120).default("") });
+
+// Credencial de servicio del disparador externo: tenant reclamado + token (validado bajo la RLS
+// del tenant). NO es una sesión de usuario.
+export const scheduleTickSchema = z.object({
+  tenantId: z.uuid(),
+  token: z.string().min(10).max(200),
+});

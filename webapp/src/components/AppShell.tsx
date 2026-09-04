@@ -60,6 +60,12 @@ const IconTarget = svg(
     <circle cx="12" cy="12" r="1.5" />
   </>
 );
+const IconClock = svg(
+  <>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </>
+);
 const IconChevron = svg(<path d="M15 18l-6-6 6-6" />);
 
 /* ---------- menú ---------- */
@@ -74,6 +80,7 @@ const GROUPS: Group[] = [
       { href: "/", label: "Ejecutar", Icon: IconPlay },
       { href: "/pr", label: "Analizar PR", Icon: IconPr },
       { href: "/regression", label: "Test de Regresión", Icon: IconTarget },
+      { href: "/schedules", label: "Programadas", Icon: IconClock },
       { href: "/runs", label: "Historial", Icon: IconHistory },
     ],
   },
