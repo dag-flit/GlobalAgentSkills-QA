@@ -57,17 +57,17 @@ export function TokenPanel({ tenantId }: { tenantId: string | null }) {
   }
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white p-5">
-      <h2 className="text-base font-semibold text-neutral-800">Token de servicio</h2>
-      <p className="mt-1 text-sm text-neutral-500">
+    <section className="card">
+      <h2 className="text-base font-semibold text-white">Token de servicio</h2>
+      <p className="mt-1 text-sm text-muted">
         Lo usa el disparador externo (cron o GitHub Actions) para lanzar las corridas sin sesión. Se muestra
         una sola vez: copialo al crearlo. Revocable en cualquier momento.
       </p>
 
       {tenantId && (
-        <div className="mt-3 rounded-md bg-neutral-50 p-3 text-xs text-neutral-600">
+        <div className="mt-3 rounded-lg bg-panel2 p-3 text-xs text-muted">
           <span className="font-medium">tenantId</span> (para el cron):{" "}
-          <code className="select-all break-all text-neutral-800">{tenantId}</code>
+          <code className="select-all break-all text-gray-100">{tenantId}</code>
         </div>
       )}
 
@@ -75,24 +75,21 @@ export function TokenPanel({ tenantId }: { tenantId: string | null }) {
         <input
           value={label} onChange={(e) => setLabel(e.target.value)}
           placeholder="Etiqueta (ej: cron nocturno)"
-          className="flex-1 rounded-md border border-neutral-300 px-3 py-1.5 text-sm"
+          className="input flex-1"
         />
-        <button
-          onClick={create} disabled={busy}
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-        >
+        <button onClick={create} disabled={busy} className="btn-primary shrink-0">
           Generar token
         </button>
       </div>
 
       {fresh && (
-        <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3">
-          <p className="text-xs font-medium text-amber-800">Copialo ahora — no se vuelve a mostrar:</p>
+        <div className="mt-3 rounded-lg border border-warn/40 bg-warn/10 p-3">
+          <p className="text-xs font-medium text-warn">Copialo ahora — no se vuelve a mostrar:</p>
           <div className="mt-1 flex items-center gap-2">
-            <code className="flex-1 select-all break-all rounded bg-white px-2 py-1 text-xs text-neutral-800">{fresh}</code>
+            <code className="flex-1 select-all break-all rounded bg-panel2 px-2 py-1 text-xs text-gray-100">{fresh}</code>
             <button
               onClick={() => navigator.clipboard?.writeText(fresh)}
-              className="rounded border border-amber-300 px-2 py-1 text-xs text-amber-800"
+              className="rounded-lg border border-warn/40 px-2 py-1 text-xs text-warn hover:bg-warn/10"
             >
               Copiar
             </button>
@@ -100,26 +97,26 @@ export function TokenPanel({ tenantId }: { tenantId: string | null }) {
         </div>
       )}
 
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
 
       <div className="mt-4">
         {loading ? (
           <Spinner />
         ) : tokens.length === 0 ? (
-          <p className="text-sm text-neutral-400">Todavía no hay tokens.</p>
+          <p className="text-sm text-muted">Todavía no hay tokens.</p>
         ) : (
-          <ul className="divide-y divide-neutral-100">
+          <ul className="divide-y divide-border">
             {tokens.map((t) => (
               <li key={t.id} className="flex items-center justify-between py-2 text-sm">
                 <div>
-                  <span className="font-medium text-neutral-800">{t.label || "(sin etiqueta)"}</span>
-                  <span className="ml-2 text-xs text-neutral-400">
+                  <span className="font-medium text-gray-100">{t.label || "(sin etiqueta)"}</span>
+                  <span className="ml-2 text-xs text-muted">
                     {t.last_used_at ? `usado ${new Date(t.last_used_at).toLocaleString()}` : "nunca usado"}
                   </span>
                 </div>
                 <button
                   onClick={() => revoke(t.id)} disabled={busy}
-                  className="rounded border border-neutral-200 px-2 py-1 text-xs text-red-600 disabled:opacity-50"
+                  className="rounded-lg border border-border px-2 py-1 text-xs text-red-300 hover:bg-panel2 disabled:opacity-50"
                 >
                   Revocar
                 </button>

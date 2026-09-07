@@ -1045,6 +1045,81 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   (invariante 8). Smoke +1 (sca-suite: vuln media→sugerencia, no a No verificado; skip de herramienta ausente→No
   verificado). Ver [[claridad-resultados-y-sugerencias]]. **Reiniciado `npm run dev`.**
 
+- **Cola de UX/branding (2026-09-07, webapp+motor, smoke 137 · tsc0 · budget0, sin commitear).** 4 pendientes
+  que el usuario dejó en cola tras P0/P1/P2, ejecutados secuencialmente:
+  - **(1) Nombre del tenant/compañía visible.** Nueva barra superior `components/TenantBar.tsx` (en `AppShell`,
+    arriba de `<main>`, en todos los módulos): ícono + nombre de la compañía activa + rol en español; lee
+    `/api/auth/me` (misma fuente que `SessionBadge`, acotada por sesión→RLS). Con guardia de montado.
+  - **(2) Consistencia UI de los 2 módulos nuevos.** «Programadas» (`/schedules` + `schedules/TokenPanel`) y
+    «Seguimiento QA» (`/seguimiento` + `seguimiento/ItemEditor`+`RunPicker`) estaban en Tailwind CLARO crudo
+    (`bg-white`/`text-neutral-*`) → refactor al design system OSCURO (`card`/`input`/`btn-*`/`badge`, tokens
+    `panel/panel2/border/accent/muted`, acento esmeralda). Se quitó el `mx-auto max-w-* p-6` propio (el `<main>`
+    del shell ya lo da). Solo UI, sin tocar lógica/API.
+  - **(3) BUG «carga infinita al cambiar de módulo» → CORREGIDO (raíz).** Con una **cookie de sesión huérfana**
+    (presente en el navegador pero inválida en BD: reset/expiración en BD) se armaba un **ciclo de recargas
+    full-page** en CUALQUIER módulo: `SessionBadge` (global, en el sidebar) recibía 401 de `/api/auth/me` y hacía
+    `window.location.href="/login"` **sin limpiar la cookie**; el middleware —que en Edge solo mira si la cookie
+    EXISTE, no puede validar en BD— rebota `/login→/`; de vuelta en `/`, el badge vuelve a dar 401 → `/login` → …
+    Fix (`SessionBadge.tsx`): ante 401, `POST /api/auth/logout` (que SIEMPRE `jar.delete` la cookie, aun sin fila
+    en BD) **antes** de ir a `/login` → el middleware ya no rebota y el usuario llega a login. Sin debilitar auth
+    (solo limpia una cookie ya inválida). `TenantBar` en 401 solo pone `me=null` (no redirige) → no participa.
+  - **(4) REBRAND a «Flit Certify»** (user-facing + refs del software; el folder local `qa-kit` se queda). UI:
+    `AuthCard` (login/registro) y `AppShell` (logo sidebar + footer) → badge «FC» + wordmark «Flit Certify»;
+    `layout.tsx` `<title>`/description; `api/health` `service:"flit-certify"`; `package.json`+lockfile
+    `name:"flit-certify"`; `docs/DEPLOYMENT.md` título. **Opción B (elegida por el usuario)** para los tokens de
+    marca en ADO: se migraron a «Flit Certify» los tags/títulos de la HU de hallazgos y de regresión
+    (`findings-workitem.mjs` TITLE_PREFIX/FINDINGS_TAGS/FINDINGS_COUNT_TAG; `regression/findings.mjs`
+    REGRESSION_TITLE_PREFIX; `ado-findings.mjs` defaults + etiqueta de adjunto; `regressionPublish.ts`). Como el
+    `#N` se cuenta por **título** (`[System.Title] CONTAINS '<token>'`, NO por tag — crear tags pide permiso ADO
+    que puede faltar), para **no reiniciar la numeración** con el rebrand se agregó `countAlso` (marca LEGACY
+    `QualityOps` / `Regresión E2E (QualityOps)`): la WIQL ahora matchea `countTag OR countAlso` → sigue contando
+    las HU viejas. `FINDINGS_COUNT_ALSO`/`REGRESSION_COUNT_ALSO` exportados; `code-cycle`/`regressionPublish` los
+    pasan. Comillas simples del token escapadas para WIQL. Smoke +1 (code-suite: la WIQL une marca nueva Y legacy
+    con OR). NO se tocaron el `localStorage` key `qof-*` (rompería la preferencia guardada) ni `paths.ts` (rutas
+    reales del folder). Ver [[pendientes-proxima-sesion]] y [[despliegue-produccion-y-roadmap]]. **Reiniciar
+    `npm run dev`** (motor tocado). Pendiente: validación del usuario por UI (barra de tenant, look de los 2
+    módulos, que el ciclo ya no ocurra) y, en ADO, que el `#N` continúe.
+
+- **«Proyecto» (renombre de tenant) + Seguimiento QA robusto + refinamientos de UI (2026-09-07, webapp,
+  migraciones 0014-0018, tsc0 · budget0, sin commitear al escribir esto).** Gran tanda sobre la webapp
+  (sin tocar el motor salvo el rebrand ADO ya descrito). RLS INTACTO en todo.
+  - **Proyecto = tenant renombrado (Opción A del usuario):** el sistema es solo para FLIT → «organización/
+    tenant» pasó a llamarse **«Proyecto»** en toda la UI user-facing (barra superior, sidebar, login,
+    registro). Un Proyecto sigue siendo un **tenant aislado con RLS** (su propia config ADO/BD/regresión/
+    seguimiento). Nueva página **`/projects`** (ítem en el menú): crear, **entrar** (cambiar activo),
+    renombrar, **marcar terminado** (`tenants.archived_at`, migración 0017) y **eliminar** (cascada, con
+    confirmación TIPEADA del nombre, owner-only). Endpoints: `POST/GET/PATCH/DELETE /api/projects` (owner-
+    only en las mutaciones; `createTenantForUser`/`renameTenant`/`setTenantArchived`/`deleteTenant` en
+    authRepo; borrar el activo mueve la sesión a otro). El pie del sidebar se limpió (solo email + logout);
+    el proyecto activo se ve en la **barra superior** (`TenantBar`, solo el nombre).
+  - **Fix de raíz — ciclo de recargas al navegar (cookie de sesión huérfana):** `SessionBadge` (global)
+    recibía 401 de `/api/auth/me` y hacía `location.href="/login"` SIN limpiar la cookie → el middleware
+    (Edge, solo mira si la cookie existe) rebotaba `/login→/` → recargas full-page infinitas en cualquier
+    módulo. Fix: ante 401, `POST /api/auth/logout` (limpia la cookie) ANTES de ir a /login. No debilita auth.
+  - **Seguimiento QA robusto (tipo Jira/Azure Test), incrementos A-D:** **(A)** campos ricos en `qa_items`
+    (tipo/severidad/etiquetas/fecha límite/reporter — migración 0014) + **vista Tabla** ordenable + Tablero,
+    con **búsqueda y filtros** (chips removibles + «Limpiar»); UI partida en piezas <400 líneas
+    (`seguimiento/types.ts`, `BoardView`, `TableView`, `Filters`, `ItemEditor`). **(B)** **comentarios +
+    historial de actividad** por pendiente (migración 0015, tablas `qa_item_comments`/`qa_item_activity`
+    con FK a qa_items + RLS; `qaItemThreadRepo` con diff puro; se registra solo en cada guardado; timeline
+    unificado en `ItemThread`). **(C)** **métricas** (dashboard) + **export CSV/HTML** (`seguimientoReport.ts`;
+    CSV con separador `;` + `sep=;` + BOM → columnas separadas en Excel es/LatAm). **(D)** **notificaciones
+    in-app** (migración 0016 `qa_notifications` + RLS + filtro por `recipient`=email; `NotificationBell` en
+    la barra superior, polling 45s, degrada en silencio si falta la migración; se generan al asignar o
+    cambiar estado de un pendiente ajeno).
+  - **Refinamientos pedidos:** **drag & drop** de tarjetas entre columnas (cambia el estado); **selector
+    propio verde** `components/Select.tsx` (los `<option>` nativos no se pueden pintar; popup con posición
+    FIJA para no recortarse en modales, teclado, hover/selección verde) → reemplazó los **12 `<select>`
+    nativos de TODO el sistema** (Seguimiento, Programadas, Regresión, Bases de datos, asistente); se
+    quitaron íconos/emoji innecesarios; **vincular VARIAS corridas** por pendiente (migración 0018
+    `qa_items.link_runs` jsonb + backfill del vínculo simple; picker mejorado que agrega varias y oculta
+    las ya puestas).
+  - **ADO ↔ Seguimiento (import) DIFERIDO** por el usuario → ver [[ado-seguimiento-import-futuro]] (clave:
+    los estados varían por proyecto y tipo en ADO). **Herramienta de dev:** `webapp/db/seed-demo.mjs` (carga
+    pendientes/comentarios/actividad/notificación de demo en el proyecto de un usuario; idempotente; el
+    usuario lo corre con `!`). Migraciones 0014-0018 las aplicó el usuario. Ver [[seguimiento-qa-robusto]] y
+    [[pendientes-proxima-sesion]]. **No exige reiniciar** `npm run dev` (todo webapp).
+
 ## Mapa del repo
 
 ```

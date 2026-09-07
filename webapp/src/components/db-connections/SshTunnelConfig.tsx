@@ -1,4 +1,5 @@
 import { Field } from "@/components/ui";
+import { Select } from "@/components/Select";
 import type { DbConnection, SshAuthMethod, SshConfig } from "@/lib/types";
 import { defaultSsh } from "./helpers";
 
@@ -46,15 +47,16 @@ export function SshTunnelConfig({
               <input className="input" value={ssh.user} onChange={(e) => patchSsh({ user: e.target.value })} />
             </Field>
             <Field label="Método de autenticación SSH">
-              <select
-                className="input"
+              <Select
+                className="w-full"
                 value={ssh.authMethod}
-                onChange={(e) => patchSsh({ authMethod: e.target.value as SshAuthMethod })}
-              >
-                <option value="password">Contraseña</option>
-                <option value="privateKey">Llave privada</option>
-                <option value="agent">Agente SSH</option>
-              </select>
+                onChange={(v) => patchSsh({ authMethod: v as SshAuthMethod })}
+                options={[
+                  { value: "password", label: "Contraseña" },
+                  { value: "privateKey", label: "Llave privada" },
+                  { value: "agent", label: "Agente SSH" },
+                ]}
+              />
             </Field>
           </div>
 

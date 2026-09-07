@@ -1,6 +1,7 @@
 "use client";
 
 import { Field } from "@/components/ui";
+import { Select } from "@/components/Select";
 import type { RunWizardCtl } from "./useRunWizard";
 import { AcPanel } from "./AcPanel";
 import { FlowImportExport } from "./FlowImportExport";
@@ -75,19 +76,12 @@ export function StepsStep({ w }: { w: RunWizardCtl }) {
               <div key={i} className={`rounded-lg border bg-panel2/30 p-3 space-y-2 ${bad ? "border-red-700" : "border-border"}`}>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted w-5 text-right">{i + 1}.</span>
-                  <select
-                    className="input flex-1"
+                  <Select
+                    className="flex-1"
                     value={step.op}
-                    onChange={(e) => changeOp(i, e.target.value as OpId)}
-                  >
-                    {opsByGroup().map((g) => (
-                      <optgroup key={g.group} label={g.group}>
-                        {g.ops.map((o) => (
-                          <option key={o.id} value={o.id}>{o.label}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
+                    onChange={(v) => changeOp(i, v as OpId)}
+                    options={opsByGroup().flatMap((g) => g.ops.map((o) => ({ value: o.id, label: o.label, group: g.group })))}
+                  />
                   <button className="btn-ghost px-2 py-1" title="Subir" onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
                   <button className="btn-ghost px-2 py-1" title="Bajar" onClick={() => move(i, 1)} disabled={i === flow.length - 1}>↓</button>
                   <button className="btn-ghost px-2 py-1 text-red-300" title="Quitar" onClick={() => remove(i)}>✕</button>
@@ -105,15 +99,12 @@ export function StepsStep({ w }: { w: RunWizardCtl }) {
                       return (
                         <Field key={f.name} label={f.label}>
                           <div className="space-y-1">
-                            <select
-                              className="input"
+                            <Select
+                              className="w-full"
                               value={por}
-                              onChange={(e) => update(i, { por: e.target.value } as Partial<FlowStep>)}
-                            >
-                              {LOCATORS.map((l) => (
-                                <option key={l.id} value={l.id}>{l.label}</option>
-                              ))}
-                            </select>
+                              onChange={(v) => update(i, { por: v } as Partial<FlowStep>)}
+                              options={LOCATORS.map((l) => ({ value: l.id, label: l.label }))}
+                            />
                             <input
                               className="input font-mono"
                               placeholder={por === "css" ? "#id, .clase, button[type=submit]…" : f.placeholder}
@@ -149,16 +140,13 @@ export function StepsStep({ w }: { w: RunWizardCtl }) {
                 {provesAc(step.op) && w.acs.length > 0 && (
                   <div className="pl-7">
                     <Field label="¿Qué criterio de aceptación prueba? (opcional)">
-                      <select
-                        className="input"
+                      <Select
+                        className="w-full"
                         value={step.ac ?? ""}
-                        onChange={(e) => update(i, { ac: e.target.value } as Partial<FlowStep>)}
-                      >
-                        <option value="">(ninguno)</option>
-                        {w.acs.map((a, k) => (
-                          <option key={k} value={a.title}>{a.title}</option>
-                        ))}
-                      </select>
+                        onChange={(v) => update(i, { ac: v } as Partial<FlowStep>)}
+                        options={[{ value: "", label: "(ninguno)" }, ...w.acs.map((a) => ({ value: a.title, label: a.title }))]}
+                      />
+
                     </Field>
                   </div>
                 )}

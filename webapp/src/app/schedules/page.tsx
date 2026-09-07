@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/ui";
+import { Select } from "@/components/Select";
 import { TokenPanel } from "@/components/schedules/TokenPanel";
 import { describeCadence, type Cadence } from "@/lib/qa/cadence";
 
@@ -113,104 +114,97 @@ export default function SchedulesPage() {
     finally { setBusy(false); }
   }
 
-  const inputCls = "rounded-md border border-neutral-300 px-3 py-1.5 text-sm";
+  const smallBtn = "rounded-lg border border-border px-2 py-1 text-xs text-gray-200 hover:bg-panel2 disabled:opacity-50";
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
+    <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold text-neutral-900">Corridas programadas</h1>
-        <p className="mt-1 text-sm text-neutral-500">
+        <h1 className="text-xl font-bold text-white">Corridas programadas</h1>
+        <p className="mt-1 text-sm text-muted">
           Programá la regresión para que corra sola. Un disparador externo (cron o GitHub Actions) la
           lanza con el token de servicio; acá definís cuándo.
         </p>
       </header>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-300">{error}</p>}
 
       {/* Alta de un horario */}
-      <section className="rounded-lg border border-neutral-200 bg-white p-5">
-        <h2 className="text-base font-semibold text-neutral-800">Nuevo horario</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <section className="card space-y-4">
+        <h2 className="text-base font-semibold text-white">Nuevo horario</h2>
+        <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-neutral-600">Sistema</span>
-            <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={inputCls}>
-              <option value="">— elegí —</option>
-              {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            <span className="text-xs text-muted">Sistema</span>
+            <Select value={targetId} onChange={setTargetId} className="w-full" placeholder="— elegí —"
+              options={[{ value: "", label: "— elegí —" }, ...targets.map((t) => ({ value: t.id, label: t.name }))]} />
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-neutral-600">Suite</span>
-            <select value={suiteId} onChange={(e) => setSuiteId(e.target.value)} className={inputCls} disabled={!targetId}>
-              {suites.length === 0 ? <option value="">— sin suites —</option> : suites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <span className="text-xs text-muted">Suite</span>
+            <Select value={suiteId} onChange={setSuiteId} className="w-full" disabled={!targetId}
+              options={suites.length === 0 ? [{ value: "", label: "— sin suites —" }] : suites.map((s) => ({ value: s.id, label: s.name }))} />
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-neutral-600">Cadencia</span>
-            <select value={kind} onChange={(e) => setKind(e.target.value as Kind)} className={inputCls}>
-              <option value="hourly">Por hora</option>
-              <option value="daily">Diaria</option>
-              <option value="weekly">Semanal</option>
-            </select>
+            <span className="text-xs text-muted">Cadencia</span>
+            <Select value={kind} onChange={(v) => setKind(v as Kind)} className="w-full"
+              options={[{ value: "hourly", label: "Por hora" }, { value: "daily", label: "Diaria" }, { value: "weekly", label: "Semanal" }]} />
           </label>
           {kind === "hourly" ? (
             <label className="flex flex-col gap-1 text-sm">
-              <span className="text-neutral-600">Cada cuántas horas</span>
-              <input type="number" min={1} max={168} value={everyHours} onChange={(e) => setEveryHours(+e.target.value)} className={inputCls} />
+              <span className="text-xs text-muted">Cada cuántas horas</span>
+              <input type="number" min={1} max={168} value={everyHours} onChange={(e) => setEveryHours(+e.target.value)} className="input" />
             </label>
           ) : (
             <>
               {kind === "weekly" && (
                 <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-neutral-600">Día</span>
-                  <select value={weekday} onChange={(e) => setWeekday(+e.target.value)} className={inputCls}>
-                    {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                  </select>
+                  <span className="text-xs text-muted">Día</span>
+                  <Select value={String(weekday)} onChange={(v) => setWeekday(+v)} className="w-full"
+                    options={DIAS.map((d, i) => ({ value: String(i), label: d }))} />
                 </label>
               )}
               <label className="flex flex-col gap-1 text-sm">
-                <span className="text-neutral-600">Hora (HH:MM)</span>
-                <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
+                <span className="text-xs text-muted">Hora (HH:MM)</span>
+                <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="input" />
               </label>
               <label className="flex flex-col gap-1 text-sm">
-                <span className="text-neutral-600">Zona horaria (IANA)</span>
-                <input value={tz} onChange={(e) => setTz(e.target.value)} className={inputCls} />
+                <span className="text-xs text-muted">Zona horaria (IANA)</span>
+                <input value={tz} onChange={(e) => setTz(e.target.value)} className="input" />
               </label>
             </>
           )}
         </div>
-        <button onClick={save} disabled={busy} className="mt-4 rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+        <button onClick={save} disabled={busy} className="btn-primary">
           Agregar horario
         </button>
       </section>
 
       {/* Lista de horarios */}
-      <section className="rounded-lg border border-neutral-200 bg-white p-5">
-        <h2 className="text-base font-semibold text-neutral-800">Horarios</h2>
+      <section className="card">
+        <h2 className="text-base font-semibold text-white">Horarios</h2>
         {loading ? (
           <div className="mt-4"><Spinner /></div>
         ) : schedules.length === 0 ? (
-          <p className="mt-3 text-sm text-neutral-400">Todavía no hay horarios.</p>
+          <p className="mt-3 text-sm text-muted">Todavía no hay horarios.</p>
         ) : (
-          <ul className="mt-3 divide-y divide-neutral-100">
+          <ul className="mt-3 divide-y divide-border">
             {schedules.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
                 <div className="min-w-0">
-                  <p className="font-medium text-neutral-800">
-                    {targetName[s.target_id] ?? s.target_id} · <span className="text-neutral-500">{s.suite_id}</span>
+                  <p className="font-medium text-gray-100">
+                    {targetName[s.target_id] ?? s.target_id} · <span className="text-muted">{s.suite_id}</span>
                   </p>
-                  <p className="text-xs text-neutral-500">
+                  <p className="text-xs text-muted">
                     {describeCadence(s.cadence)} · próxima {new Date(s.next_run_at).toLocaleString()}
                     {s.last_status ? ` · última: ${s.last_status}` : ""}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${s.enabled ? "bg-green-100 text-green-700" : "bg-neutral-100 text-neutral-500"}`}>
+                  <span className={`badge ${s.enabled ? "bg-green-900 text-green-300" : "bg-panel2 text-muted"}`}>
                     {s.enabled ? "activo" : "pausado"}
                   </span>
-                  <button onClick={() => toggle(s)} disabled={busy} className="rounded border border-neutral-200 px-2 py-1 text-xs disabled:opacity-50">
+                  <button onClick={() => toggle(s)} disabled={busy} className={smallBtn}>
                     {s.enabled ? "Pausar" : "Activar"}
                   </button>
-                  <button onClick={() => remove(s.id)} disabled={busy} className="rounded border border-neutral-200 px-2 py-1 text-xs text-red-600 disabled:opacity-50">
+                  <button onClick={() => remove(s.id)} disabled={busy} className="rounded-lg border border-border px-2 py-1 text-xs text-red-300 hover:bg-panel2 disabled:opacity-50">
                     Eliminar
                   </button>
                 </div>

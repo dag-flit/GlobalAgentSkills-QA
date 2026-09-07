@@ -3,7 +3,9 @@ import { withTenantScope } from "@/lib/auth/route";
 import { roleAtLeast } from "@/lib/auth/context";
 import { parseJson } from "@/lib/validation/parse";
 import { qaItemSchema, qaItemDeleteSchema } from "@/lib/validation/schemas";
-import { listQaItems, upsertQaItem, deleteQaItem } from "@/lib/db/qaItemsRepo";
+import { listQaItems, upsertQaItem, deleteQaItem, getQaItem } from "@/lib/db/qaItemsRepo";
+import { diffActivity, logActivity } from "@/lib/db/qaItemThreadRepo";
+import { buildNotifications, addNotifications } from "@/lib/db/qaNotificationsRepo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,11 +25,18 @@ export async function PUT(req: Request) {
   const d = parsed.data;
   return withTenantScope(async (auth) => {
     if (!roleAtLeast(auth.role, "member")) return forbidden();
+    const before = await getQaItem(d.id); // para el historial de actividad (nuevo vs cambios)
     await upsertQaItem({
       id: d.id, title: d.title, notes: d.notes, status: d.status, priority: d.priority,
+      type: d.type, severity: d.severity, labels: d.labels, dueDate: d.dueDate, reporter: d.reporter,
       assignee: d.assignee, adoWi: d.adoWi, linkRunKind: d.linkRunKind, linkRunId: d.linkRunId,
-      linkRunMeta: d.linkRunMeta, position: d.position,
+      linkRunMeta: d.linkRunMeta, linkRuns: d.linkRuns, position: d.position,
     });
+    await logActivity(d.id, auth.email, diffActivity(before, {
+      status: d.status, priority: d.priority, type: d.type, severity: d.severity,
+      assignee: d.assignee, title: d.title, dueDate: d.dueDate,
+    }));
+    await addNotifications(d.id, buildNotifications(before, { title: d.title, status: d.status, assignee: d.assignee }, auth.email));
     return NextResponse.json({ ok: true });
   });
 }

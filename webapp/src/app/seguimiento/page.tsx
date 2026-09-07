@@ -2,28 +2,26 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/ui";
-import { ItemEditor, type QaItem, type QaItemDraft } from "@/components/seguimiento/ItemEditor";
+import { ItemEditor } from "@/components/seguimiento/ItemEditor";
+import { BoardView } from "@/components/seguimiento/BoardView";
+import { TableView } from "@/components/seguimiento/TableView";
+import { Filters, EMPTY_FILTER, type FilterState } from "@/components/seguimiento/Filters";
+import { Metrics } from "@/components/seguimiento/Metrics";
+import { type QaItem, type QaItemDraft, type QaStatus, blankItem, itemToDraft } from "@/components/seguimiento/types";
+import { toCsv, toHtml } from "@/lib/qa/seguimientoReport";
 
-// Página «Seguimiento QA»: tablero de pendientes por tenant (RLS). 5 columnas (Pendiente / En curso /
-// Bloqueado / En revisión / Hecho). Híbrido: cada pendiente puede referenciar una HU de ADO (enlace
-// navegable si el tenant tiene Azure configurado). El vínculo a corridas del kit llega en un 2º paso.
-
-const COLUMNS: { key: QaItem["status"]; label: string; accent: string }[] = [
-  { key: "todo", label: "Pendiente", accent: "border-t-neutral-400" },
-  { key: "doing", label: "En curso", accent: "border-t-blue-400" },
-  { key: "blocked", label: "Bloqueado", accent: "border-t-red-400" },
-  { key: "review", label: "En revisión", accent: "border-t-amber-400" },
-  { key: "done", label: "Hecho", accent: "border-t-green-400" },
-];
-const PRIO: Record<QaItem["priority"], string> = {
-  alta: "bg-red-100 text-red-700", media: "bg-neutral-100 text-neutral-600", baja: "bg-neutral-100 text-neutral-400",
-};
-
-function blankItem(): QaItem {
-  const id = (crypto as any).randomUUID ? crypto.randomUUID() : `q-${Date.now()}`;
-  return { id, title: "", notes: "", status: "todo", priority: "media", assignee: "",
-    ado_wi: "", link_run_kind: "", link_run_id: "", link_run_meta: {}, position: 0 };
+// Descarga un archivo generado en el cliente (Blob + <a download>). Sirve para CSV/HTML del reporte.
+function download(name: string, mime: string, content: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// Página «Seguimiento QA»: tracker de pendientes por PROYECTO (RLS). Tablero (5 columnas) o vista tabla,
+// con campos ricos (tipo/severidad/etiquetas/fecha límite), filtros y búsqueda. Híbrido: cada pendiente
+// puede referenciar una HU de ADO (navegable) y una corrida del kit/regresión.
 
 export default function SeguimientoPage() {
   const [items, setItems] = useState<QaItem[]>([]);
@@ -32,28 +30,70 @@ export default function SeguimientoPage() {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<QaItem | null>(null);
   const [ado, setAdo] = useState<{ orgUrl: string; project: string } | null>(null);
+  const [myEmail, setMyEmail] = useState("");
+  const [projectName, setProjectName] = useState("proyecto");
+  const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER);
+  const [view, setView] = useState<"board" | "table">("board");
+  const [showMetrics, setShowMetrics] = useState(false);
+
+  useEffect(() => {
+    try { const v = localStorage.getItem("qof-seguimiento-view"); if (v === "table" || v === "board") setView(v); } catch { /* noop */ }
+  }, []);
+  function changeView(v: "board" | "table") {
+    setView(v);
+    try { localStorage.setItem("qof-seguimiento-view", v); } catch { /* noop */ }
+  }
 
   async function load() {
     setLoading(true); setError(null);
     try {
-      const [it, cfg] = await Promise.all([
-        fetch("/api/qa-items").then((r) => r.json()),
+      const [itRes, cfg, me] = await Promise.all([
+        fetch("/api/qa-items"),
         fetch("/api/config").then((r) => r.json()).catch(() => null),
+        fetch("/api/auth/me").then((r) => r.json()).catch(() => null),
       ]);
+      // Un 500 suele venir con cuerpo vacío → r.json() lanzaría "Unexpected end of JSON input".
+      // Se lee como texto y se da un mensaje claro (causa típica: falta aplicar una migración de BD).
+      if (!itRes.ok) {
+        await itRes.text().catch(() => "");
+        throw new Error(
+          itRes.status === 500
+            ? "El servidor falló al cargar los pendientes (500). Causa habitual: falta aplicar la última migración de base de datos (db/migrate.mjs)."
+            : `No se pudieron cargar los pendientes (HTTP ${itRes.status}).`,
+        );
+      }
+      const it = await itRes.json().catch(() => ({ ok: false, error: "Respuesta inválida del servidor." }));
       if (!it.ok) throw new Error(it.error || "No se pudieron cargar los pendientes.");
       setItems(it.items ?? []);
       const az = cfg?.tracker?.azure;
       setAdo(az?.orgUrl && az?.project ? { orgUrl: az.orgUrl, project: az.project } : null);
+      setMyEmail(me?.user?.email ?? "");
+      const active = (me?.tenants ?? []).find((t: { id: string; name: string }) => t.id === me?.tenantId);
+      if (active?.name) setProjectName(active.name);
     } catch (e: any) { setError(e?.message ?? "Error de red."); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
-  const byStatus = useMemo(() => {
-    const m: Record<string, QaItem[]> = { todo: [], doing: [], blocked: [], review: [], done: [] };
-    for (const i of items) (m[i.status] ?? m.todo).push(i);
-    return m;
-  }, [items]);
+  const assignees = useMemo(
+    () => Array.from(new Set(items.map((i) => i.assignee).filter(Boolean))).sort(),
+    [items],
+  );
+
+  const filtered = useMemo(() => {
+    const q = filter.q.trim().toLowerCase();
+    return items.filter((i) => {
+      if (filter.type !== "all" && i.type !== filter.type) return false;
+      if (filter.status !== "all" && i.status !== filter.status) return false;
+      if (filter.priority !== "all" && i.priority !== filter.priority) return false;
+      if (filter.assignee && i.assignee !== filter.assignee) return false;
+      if (q) {
+        const hay = `${i.title} ${i.notes} ${(i.labels ?? []).join(" ")}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [items, filter]);
 
   function adoUrl(wi: string): string | null {
     if (!ado || !wi) return null;
@@ -73,10 +113,8 @@ export default function SeguimientoPage() {
     finally { setSaving(false); }
   }
 
-  async function move(i: QaItem, status: QaItem["status"]) {
-    await save({ id: i.id, title: i.title, notes: i.notes, status, priority: i.priority,
-      assignee: i.assignee, adoWi: i.ado_wi, linkRunKind: i.link_run_kind, linkRunId: i.link_run_id,
-      linkRunMeta: i.link_run_meta ?? {}, position: i.position });
+  async function move(i: QaItem, status: QaStatus) {
+    await save({ ...itemToDraft(i), status });
   }
 
   async function remove(id: string) {
@@ -92,68 +130,44 @@ export default function SeguimientoPage() {
     finally { setSaving(false); }
   }
 
+  const stamp = () => new Date().toLocaleString("es-CO");
+  function exportCsv() { download("seguimiento-qa.csv", "text/csv;charset=utf-8", toCsv(filtered)); }
+  function exportHtml() { download("seguimiento-qa.html", "text/html;charset=utf-8", toHtml(filtered, projectName, stamp())); }
+
   return (
-    <div className="mx-auto max-w-7xl space-y-5 p-6">
-      <header className="flex items-center justify-between">
+    <div className="space-y-5">
+      <header className="flex items-start justify-between gap-2 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold text-neutral-900">Seguimiento QA</h1>
-          <p className="mt-1 text-sm text-neutral-500">Tus pendientes de QA, por estado. Vinculá una HU de ADO cuando aplique.</p>
+          <h1 className="text-xl font-bold text-white">Seguimiento QA</h1>
+          <p className="mt-1 text-sm text-muted">
+            Tus pendientes de QA de este proyecto. Tablero o tabla, con tipo, severidad, etiquetas y fecha límite.
+          </p>
         </div>
-        <button onClick={() => setEditing(blankItem())}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white">+ Nuevo pendiente</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setShowMetrics((v) => !v)} className="btn-ghost text-xs">
+            {showMetrics ? "Ocultar métricas" : "Métricas"}
+          </button>
+          <button onClick={exportCsv} className="btn-ghost text-xs">Exportar CSV</button>
+          <button onClick={exportHtml} className="btn-ghost text-xs">Exportar HTML</button>
+          <button onClick={() => setEditing(blankItem(myEmail))} className="btn-primary">Nuevo pendiente</button>
+        </div>
       </header>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-300">{error}</p>}
 
       {loading ? (
         <div className="pt-10"><Spinner /></div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
-          {COLUMNS.map((col) => (
-            <div key={col.key} className={`rounded-lg border border-t-4 ${col.accent} border-neutral-200 bg-neutral-50/50 p-2`}>
-              <div className="flex items-center justify-between px-1 pb-2">
-                <h2 className="text-sm font-semibold text-neutral-700">{col.label}</h2>
-                <span className="text-xs text-neutral-400">{byStatus[col.key]?.length ?? 0}</span>
-              </div>
-              <div className="space-y-2">
-                {(byStatus[col.key] ?? []).map((i) => {
-                  const url = adoUrl(i.ado_wi);
-                  return (
-                    <div key={i.id} className="rounded-md border border-neutral-200 bg-white p-3 text-sm shadow-sm">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="font-medium text-neutral-800">{i.title}</p>
-                        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${PRIO[i.priority]}`}>{i.priority}</span>
-                      </div>
-                      {i.notes && <p className="mt-1 line-clamp-3 text-xs text-neutral-500">{i.notes}</p>}
-                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
-                        {i.assignee && <span>👤 {i.assignee}</span>}
-                        {i.ado_wi && (url
-                          ? <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">HU #{i.ado_wi}</a>
-                          : <span>HU #{i.ado_wi}</span>)}
-                        {i.link_run_id && (() => {
-                          const m = (i.link_run_meta ?? {}) as { title?: string; href?: string | null };
-                          const label = `🏃 ${m.title ?? "corrida"}`;
-                          return m.href
-                            ? <a href={m.href} className="text-blue-600 hover:underline">{label}</a>
-                            : <span title="corrida de regresión (sin página propia)">{label}</span>;
-                        })()}
-                      </div>
-                      <div className="mt-2 flex items-center gap-1 border-t border-neutral-100 pt-2">
-                        <select value={i.status} onChange={(e) => move(i, e.target.value as QaItem["status"])}
-                          disabled={saving} className="rounded border border-neutral-200 px-1 py-0.5 text-xs">
-                          {COLUMNS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-                        </select>
-                        <button onClick={() => setEditing(i)} className="ml-auto rounded px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100">Editar</button>
-                        <button onClick={() => remove(i.id)} disabled={saving} className="rounded px-1.5 py-0.5 text-xs text-red-600 hover:bg-red-50">Borrar</button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {(byStatus[col.key] ?? []).length === 0 && <p className="px-1 py-2 text-xs text-neutral-300">—</p>}
-              </div>
-            </div>
-          ))}
-        </div>
+        <>
+          {showMetrics && <Metrics items={items} />}
+          <Filters value={filter} onChange={setFilter} view={view} onView={changeView} assignees={assignees} />
+          <p className="text-xs text-muted">{filtered.length} de {items.length} pendiente(s)</p>
+          {view === "board" ? (
+            <BoardView items={filtered} adoUrl={adoUrl} onEdit={setEditing} onMove={move} onRemove={remove} saving={saving} />
+          ) : (
+            <TableView items={filtered} adoUrl={adoUrl} onEdit={setEditing} />
+          )}
+        </>
       )}
 
       {editing && <ItemEditor item={editing} onSave={save} onCancel={() => setEditing(null)} saving={saving} />}

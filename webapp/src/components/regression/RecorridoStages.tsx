@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Select } from "@/components/Select";
 import { AliasPicker } from "./AliasPicker";
 import { FileField } from "./FileField";
 import { STEP_TYPES, stepType, type AliasOption } from "@/lib/qa/regressionSteps";
@@ -31,11 +32,8 @@ function StepList({ steps, aliasOpts, addLabel, onChange }: { steps: RegressionS
         const t = stepType(st.op);
         return (
           <div key={pi} className="flex items-center gap-2 flex-wrap">
-            <select className="input" value={st.op} onChange={(e) => patch(pi, { op: e.target.value })}>
-              {TYPES.map((o) => (
-                <option key={o.op} value={o.op}>{o.label}</option>
-              ))}
-            </select>
+            <Select value={st.op} onChange={(v) => patch(pi, { op: v })}
+              options={TYPES.map((o) => ({ value: o.op, label: o.label }))} />
             {t?.needsElement && <AliasPicker options={aliasOpts} value={st.alias ?? ""} onChange={(alias) => patch(pi, { alias })} />}
             {t?.field === "ruta" ? (
               <FileField value={(st.ruta as string) ?? ""} onChange={(v) => patch(pi, { ruta: v })} />

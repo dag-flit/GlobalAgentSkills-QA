@@ -43,7 +43,7 @@ export async function POST(req: Request) {
   } catch (e: any) {
     if (e?.code === "23505") {
       return NextResponse.json(
-        { ok: false, error: "Ese email u organización ya existe." },
+        { ok: false, error: "Ese email o proyecto ya existe." },
         { status: 409 },
       );
     }

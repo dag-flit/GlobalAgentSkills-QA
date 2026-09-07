@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SessionBadge } from "./SessionBadge";
+import { TenantBar } from "./TenantBar";
 
 /* ---------- íconos (estilo lucide, stroke currentColor) ---------- */
 
@@ -72,6 +73,12 @@ const IconBoard = svg(
     <path d="M9 3v18M15 3v18" />
   </>
 );
+const IconFolders = svg(
+  <>
+    <path d="M4 20h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-7l-2-2H6a1 1 0 0 0-1 1" />
+    <path d="M2 8h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
+  </>
+);
 const IconChevron = svg(<path d="M15 18l-6-6 6-6" />);
 
 /* ---------- menú ---------- */
@@ -94,6 +101,7 @@ const GROUPS: Group[] = [
   {
     title: "Configuración",
     items: [
+      { href: "/projects", label: "Proyectos", Icon: IconFolders },
       { href: "/databases", label: "Bases de datos", Icon: IconDatabase },
       { href: "/settings", label: "Ajustes", Icon: IconSettings },
     ],
@@ -157,12 +165,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className={`h-14 flex items-center px-3 ${collapsed ? "justify-center" : "gap-2"}`}>
           {!collapsed && (
             <>
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-accent/20 text-accent font-bold shrink-0">
-                Q
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-accent/20 text-accent text-xs font-bold shrink-0">
+                FC
               </span>
               <span className="flex-1 min-w-0 font-bold tracking-tight text-white leading-tight">
-                Quality<span className="text-accent">Ops</span>
-                <span className="block text-[10px] font-normal text-muted -mt-0.5">Framework</span>
+                Flit<span className="text-accent"> Certify</span>
+                <span className="block text-[10px] font-normal text-muted -mt-0.5">Certificación QA</span>
               </span>
             </>
           )}
@@ -200,9 +208,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* contenido */}
       <div className="flex-1 flex flex-col min-w-0">
+        <TenantBar />
         <main className="flex-1 w-full max-w-[1400px] mx-auto px-6 py-6">{children}</main>
         <footer className="text-center text-xs text-muted py-4 border-t border-border">
-          Quality Ops Framework · interfaz del qa-kit
+          Flit Certify · plataforma de QA
         </footer>
       </div>
     </div>

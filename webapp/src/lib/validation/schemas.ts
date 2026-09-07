@@ -161,6 +161,17 @@ export const loginSchema = z.object({
 
 export const switchTenantSchema = z.object({ tenantId: z.uuid() });
 
+// Crear un PROYECTO nuevo (tenant aislado) para el usuario logueado — se vuelve su owner.
+export const projectCreateSchema = z.object({ name: z.string().trim().min(1).max(80) });
+// Acciones sobre un proyecto existente (renombrar / terminar / reactivar). Owner-only en la ruta.
+export const projectActionSchema = z.object({
+  tenantId: z.uuid(),
+  action: z.enum(["rename", "archive", "unarchive"]),
+  name: z.string().trim().min(1).max(80).optional(),
+});
+// Eliminar un proyecto: exige tipear el nombre exacto (confirmación fuerte, cascada irreversible).
+export const projectDeleteSchema = z.object({ tenantId: z.uuid(), confirmName: z.string().min(1).max(80) });
+
 // ---------- Test de Regresión ----------
 
 // Guardar un SISTEMA a probar. `password` viaja enmascarado si ya estaba guardado (la ruta lo
@@ -302,17 +313,40 @@ export const scheduleTickSchema = z.object({
 
 // ── Seguimiento QA (tablero de pendientes) ──────────────────────────────────
 export const qaStatusEnum = z.enum(["todo", "doing", "blocked", "review", "done"]);
+export const qaTypeEnum = z.enum(["bug", "task", "test", "improvement"]);
+export const qaSeverityEnum = z.enum(["", "trivial", "menor", "mayor", "critica"]);
 export const qaItemSchema = z.object({
   id: z.string().min(1).max(64),
   title: z.string().min(1).max(200),
   notes: z.string().max(4000).default(""),
   status: qaStatusEnum.default("todo"),
   priority: z.enum(["alta", "media", "baja"]).default("media"),
+  type: qaTypeEnum.default("task"),
+  severity: qaSeverityEnum.default(""),
+  labels: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null), // 'YYYY-MM-DD' o null
+  reporter: z.string().max(120).default(""),
   assignee: z.string().max(120).default(""),
   adoWi: z.string().max(32).default(""),                     // id de HU/Feature de ADO (opcional)
-  linkRunKind: z.enum(["", "run", "regression"]).default(""), // vínculo a corrida (Increment 2)
+  linkRunKind: z.enum(["", "run", "regression"]).default(""), // vínculo simple (legacy/compat)
   linkRunId: z.string().max(64).default(""),
   linkRunMeta: z.record(z.string(), z.any()).default({}),
+  linkRuns: z.array(z.object({           // varias corridas vinculadas (kit/regresión)
+    kind: z.string().max(20),
+    id: z.string().max(64),
+    title: z.string().max(300).default(""),
+    sub: z.string().max(300).default(""),
+    href: z.string().max(500).nullable().default(null),
+    when: z.string().max(40).default(""),
+    status: z.string().max(40).default(""),
+  })).max(30).default([]),
   position: z.number().int().min(0).max(100000).default(0),
 });
 export const qaItemDeleteSchema = z.object({ id: z.string().min(1).max(64) });
+export const qaCommentSchema = z.object({
+  itemId: z.string().min(1).max(64),
+  body: z.string().trim().min(1).max(2000),
+});
+export const qaThreadQuerySchema = z.object({ itemId: z.string().min(1).max(64) });
+// Marcar notificación(es) como leídas: con id → una; sin id → todas las del usuario.
+export const notificationReadSchema = z.object({ id: z.string().min(1).max(64).optional() });

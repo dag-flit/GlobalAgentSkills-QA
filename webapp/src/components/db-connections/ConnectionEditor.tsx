@@ -1,5 +1,6 @@
 import type { DbEngine } from "@/lib/types";
 import { Field } from "@/components/ui";
+import { Select } from "@/components/Select";
 import { ENGINES, SECRET_MASK, hasEdgeSpaces } from "./helpers";
 import { SshTunnelConfig } from "./SshTunnelConfig";
 import { TestResult } from "./TestResult";
@@ -15,21 +16,16 @@ export function ConnectionEditor({ c }: { c: DbConnectionsCtl }) {
           <input className="input" value={selected.name} onChange={(e) => c.patchSelected({ name: e.target.value })} />
         </Field>
         <Field label="Motor">
-          <select
-            className="input"
+          <Select
+            className="w-full"
             value={selected.engine}
-            onChange={(e) => {
-              const engine = e.target.value as DbEngine;
+            onChange={(v) => {
+              const engine = v as DbEngine;
               const def = ENGINES.find((x) => x.value === engine)?.defaultPort ?? selected.port;
               c.patchSelected({ engine, port: def });
             }}
-          >
-            {ENGINES.map((x) => (
-              <option key={x.value} value={x.value}>
-                {x.label}
-              </option>
-            ))}
-          </select>
+            options={ENGINES.map((x) => ({ value: x.value, label: x.label }))}
+          />
         </Field>
       </div>
 

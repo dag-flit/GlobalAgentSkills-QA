@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { RegressionStep } from "@/lib/types";
 import { STEP_TYPES, stepType, type AliasOption, type StepField } from "@/lib/qa/regressionSteps";
+import { Select } from "@/components/Select";
 import { AliasPicker } from "./AliasPicker";
 import { FileField } from "./FileField";
 
@@ -127,11 +128,10 @@ export function TestSteps({
         {editIdx !== null && <span className="w-full text-[11px] text-accent font-medium">Editando el paso {editIdx + 1}</span>}
         <label className="text-[11px] text-muted">
           Paso
-          <select className="input block mt-0.5" value={op} onChange={(e) => { setOp(e.target.value); setAlias(""); setValue(""); setValue2(""); }}>
-            {STEP_TYPES.map((st) => (
-              <option key={st.op} value={st.op}>{st.label}</option>
-            ))}
-          </select>
+          <div className="mt-0.5">
+            <Select value={op} onChange={(v) => { setOp(v); setAlias(""); setValue(""); setValue2(""); }}
+              options={STEP_TYPES.map((st) => ({ value: st.op, label: st.label }))} />
+          </div>
         </label>
 
         {t?.needsElement && (

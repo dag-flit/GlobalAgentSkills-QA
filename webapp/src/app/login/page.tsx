@@ -36,12 +36,12 @@ export default function LoginPage() {
   return (
     <AuthCard
       title="Iniciar sesión"
-      subtitle="Entra a tu organización."
+      subtitle="Entrá a tu proyecto de QA."
       footer={
         <>
-          ¿No tienes cuenta?{" "}
+          ¿No tenés cuenta?{" "}
           <Link href="/register" className="text-accent hover:underline">
-            Crear organización
+            Crear proyecto
           </Link>
         </>
       }

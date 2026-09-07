@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Spinner } from "@/components/ui";
+import { Select } from "@/components/Select";
 
 // Campo del paso «subir archivo»: en vez de escribir una ruta, el usuario SUBE un archivo de prueba
 // (se guarda por tenant en el server) o ELIGE uno ya subido. El valor del paso queda como el token
@@ -67,14 +68,10 @@ export function FileField({ value, onChange }: { value: string; onChange: (v: st
         {busy ? <span className="flex items-center gap-1"><Spinner /> Subiendo…</span> : "Subir archivo"}
       </button>
       {files.length > 0 && (
-        <select className="input text-[12px]" value={current} onChange={(e) => onChange(e.target.value ? TOKEN + e.target.value : "")}>
-          <option value="">— o elegí uno subido —</option>
-          {files.map((f) => (
-            <option key={f} value={f}>{f}</option>
-          ))}
-        </select>
+        <Select value={current} onChange={(v) => onChange(v ? TOKEN + v : "")} className="text-[12px]"
+          options={[{ value: "", label: "— o elegí uno subido —" }, ...files.map((f) => ({ value: f, label: f }))]} />
       )}
-      {current && <span className="text-[11px] text-accent truncate max-w-[160px]" title={current}>📎 {current}</span>}
+      {current && <span className="text-[11px] text-accent truncate max-w-[160px]" title={current}>{current}</span>}
       {err && <span className="text-[11px] text-red-300">{err}</span>}
     </span>
   );

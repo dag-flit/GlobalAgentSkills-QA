@@ -9,23 +9,34 @@ interface Me {
   tenants: { id: string; name: string; role: string }[];
 }
 
-// Pie del sidebar: usuario + tenant activo + cambio de tenant + logout. Lee /api/auth/me;
-// si la sesión no es válida (401, p.ej. cookie vencida) manda a /login.
+// Pie del sidebar: usuario + PROYECTO activo + acceso a «Proyectos» (crear/cambiar/gestionar) + logout.
+// Lee /api/auth/me; si la sesión no es válida (401, p.ej. cookie vencida) limpia la cookie y va a /login.
 export function SessionBadge({ collapsed }: { collapsed: boolean }) {
   const [me, setMe] = useState<Me | null>(null);
 
   useEffect(() => {
+    let alive = true;
     fetch("/api/auth/me")
       .then(async (r) => {
         if (r.status === 401) {
+          // Cookie de sesión HUÉRFANA (presente en el navegador pero inválida en BD): hay que
+          // LIMPIARLA antes de ir a /login. Si no, el middleware —que solo mira si la cookie
+          // existe, no puede validar en Edge— rebota /login→/ y se arma un ciclo de recargas
+          // full-page ("se queda cargando") en cualquier módulo, porque este badge es global.
+          await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
           window.location.href = "/login";
           return null;
         }
         const d = await r.json().catch(() => null);
         return d?.ok ? (d as Me) : null;
       })
-      .then(setMe)
+      .then((m) => {
+        if (alive) setMe(m);
+      })
       .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, []);
 
   async function logout() {
@@ -33,18 +44,8 @@ export function SessionBadge({ collapsed }: { collapsed: boolean }) {
     window.location.href = "/login";
   }
 
-  async function switchTenant(id: string) {
-    await fetch("/api/auth/switch-tenant", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tenantId: id }),
-    }).catch(() => {});
-    window.location.reload();
-  }
-
   if (!me) return null;
   const initial = (me.user.email[0] || "?").toUpperCase();
-  const active = me.tenants.find((t) => t.id === me.tenantId);
 
   if (collapsed) {
     return (
@@ -68,25 +69,6 @@ export function SessionBadge({ collapsed }: { collapsed: boolean }) {
           {me.user.email}
         </span>
       </div>
-      {me.tenants.length > 1 ? (
-        <select
-          className="input py-1 text-xs"
-          value={me.tenantId ?? ""}
-          onChange={(e) => switchTenant(e.target.value)}
-        >
-          {me.tenants.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name} · {t.role}
-            </option>
-          ))}
-        </select>
-      ) : (
-        active && (
-          <p className="px-1 text-[11px] text-muted truncate">
-            {active.name} · {active.role}
-          </p>
-        )
-      )}
       <button onClick={logout} className="btn-ghost w-full py-1 text-xs">
         Cerrar sesión
       </button>

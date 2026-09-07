@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Spinner } from "@/components/ui";
+import { Select } from "@/components/Select";
 import type { AppConfig } from "@/lib/types";
 import { DIAGNOSIS, type FailureKind } from "@/lib/qa/regressionSteps";
 import { RegressionHistory } from "./RegressionHistory";
@@ -93,12 +94,8 @@ export function SuiteRunner({ targetId, suiteId, tests, disabled }: { targetId: 
         </button>
         <label className="text-[11px] text-muted flex items-center gap-1" title="Si una prueba falla, se re-corre enseguida en una sesión limpia hasta esta cantidad de veces. Si pasa en un reintento, queda verde pero marcada «inestable» (no se esconde). Sirve para distinguir un fallo real de un parpadeo por tiempos. No es «correr la suite N veces».">
           Reintentos por prueba si falla
-          <select className="input h-7 text-[12px] py-0" value={retries} onChange={(e) => setRetries(Number(e.target.value))} disabled={busy}>
-            <option value={0}>0</option>
-            <option value={1}>1</option>
-            <option value={2}>2</option>
-            <option value={3}>3</option>
-          </select>
+          <Select value={String(retries)} onChange={(v) => setRetries(Number(v))} disabled={busy} className="text-[12px]"
+            options={[0, 1, 2, 3].map((n) => ({ value: String(n), label: String(n) }))} />
         </label>
         {disabled && <span className="text-[11px] text-muted">Guardá los cambios para poder correr.</span>}
         {err && <span className="text-[11px] text-red-300">No se pudo correr: {err}</span>}

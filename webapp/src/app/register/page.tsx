@@ -23,7 +23,7 @@ export default function RegisterPage() {
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || !data.ok) {
-        setError(data.error || "No se pudo crear la organización.");
+        setError(data.error || "No se pudo crear el proyecto.");
         return;
       }
       window.location.href = "/";
@@ -36,11 +36,11 @@ export default function RegisterPage() {
 
   return (
     <AuthCard
-      title="Crear organización"
-      subtitle="Tu cuenta será la propietaria (owner) de la organización."
+      title="Crear proyecto"
+      subtitle="Tu cuenta será la propietaria (owner) del proyecto de QA."
       footer={
         <>
-          ¿Ya tienes cuenta?{" "}
+          ¿Ya tenés cuenta?{" "}
           <Link href="/login" className="text-accent hover:underline">
             Iniciar sesión
           </Link>
@@ -49,7 +49,7 @@ export default function RegisterPage() {
     >
       <form onSubmit={submit} className="space-y-3">
         <div>
-          <label className="label">Nombre de la organización</label>
+          <label className="label">Nombre del proyecto</label>
           <input
             className="input"
             value={tenantName}
@@ -81,7 +81,7 @@ export default function RegisterPage() {
         </div>
         {error && <p className="text-sm text-red-400">{error}</p>}
         <button className="btn-primary w-full" type="submit" disabled={busy}>
-          {busy ? "Creando…" : "Crear organización"}
+          {busy ? "Creando…" : "Crear proyecto"}
         </button>
       </form>
     </AuthCard>
