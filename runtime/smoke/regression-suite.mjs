@@ -305,8 +305,8 @@ export async function run(ctx) {
 
   // 14) regressionTitle: prefijo estable propio + suite/prueba + fecha·hora + #N (como QA del código).
   const title = regressionTitle({ suite: "Login", test: "Logueo Correcto", stamp: "2026-07-22 10:00:00", seq: 1 });
-  assert.strictEqual(title, "Regresión E2E (QualityOps) — Login / Logueo Correcto — 2026-07-22 10:00:00 #1");
-  assert.match(regressionTitle({ suite: "S", test: "T" }), /^Regresión E2E \(QualityOps\) — S \/ T$/); // sin seq → sin #N
+  assert.strictEqual(title, "Regresión E2E (Flit Certify) — Login / Logueo Correcto — 2026-07-22 10:00:00 #1");
+  assert.match(regressionTitle({ suite: "S", test: "T" }), /^Regresión E2E \(Flit Certify\) — S \/ T$/); // sin seq → sin #N
   ctx.ok("regressionTitle: marcador propio + fecha·hora + #N (conteo específico, no cuenta ítems ajenos)");
 
   // 15) createFindingsWorkItem con capturas INLINE: las sube y las incrusta en el CUERPO (Description
@@ -332,7 +332,7 @@ export async function run(ctx) {
   };
   const adapter = new AzureDevOpsAdapter({ adoClient: fakeClient, profile: { azure: { fields: {} } }, env: {} });
   const created = await adapter.createFindingsWorkItem({
-    makeTitle: (seq) => `Regresión E2E (QualityOps) — Login / T #${seq}`,
+    makeTitle: (seq) => `Regresión E2E (Flit Certify) — Login / T #${seq}`,
     descriptionHtml: "<p>Resumen</p>",
     attachHtml: report,
     inlineImages: [

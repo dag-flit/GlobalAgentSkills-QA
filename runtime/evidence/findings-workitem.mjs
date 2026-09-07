@@ -8,13 +8,16 @@ import { explainFailure, explainLayerFailure, explainLabels } from "./failure-ex
 import { groupWarnings, friendlyFile } from "./lint-explain.mjs";
 import { describeEvidence, evidenceItems, evidenceLayers, notVerifiedCases, suggestionCases, techDetail } from "./layer-explain.mjs";
 
-// Prefijo estable del título (base del conteo #N). NO cambiar sin migrar el conteo por tag.
-export const TITLE_PREFIX = "Hallazgos QA de código (QualityOps Framework)";
-// Tags visibles del WI creado (marca del agente + hallazgos).
-export const FINDINGS_TAGS = "QualityOps; Hallazgos-QA";
-// Token de conteo por WIQL (`[System.Tags] CONTAINS '<token>'`). Palabra única, sin guiones ni
-// espacios → el conteo #N es robusto y no colisiona con otros work items del proyecto.
-export const FINDINGS_COUNT_TAG = "QualityOps";
+// Prefijo estable del título (base del conteo #N). NO cambiar sin migrar el conteo (ver COUNT_ALSO).
+export const TITLE_PREFIX = "Hallazgos QA de código (Flit Certify)";
+// Tags visibles del WI creado (marca del producto + hallazgos).
+export const FINDINGS_TAGS = "Flit Certify; Hallazgos-QA";
+// Token de conteo por WIQL (`[System.Title] CONTAINS '<token>'`). Es la marca del producto → el
+// conteo #N cuenta SOLO las HU de hallazgos y no colisiona con otros work items del proyecto.
+export const FINDINGS_COUNT_TAG = "Flit Certify";
+// Token LEGACY (marca anterior "QualityOps"): el conteo #N también cuenta las HU ya creadas con la
+// marca vieja → la numeración NO se reinicia con el rebrand. No borrar mientras existan HU antiguas.
+export const FINDINGS_COUNT_ALSO = "QualityOps";
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -261,9 +264,9 @@ export function renderFindingsDescription({ results = [], layersRun = [], when =
   const foot =
     `<hr/>` +
     (reportPath ? `<p>📄 Reporte local (autocontenido): <code>${esc(reportPath)}</code></p>` : "") +
-    `<p><em>HU creada automáticamente por el Agente QA (QualityOps Framework). No está relacionada a ninguna HU/Feature: agrupa los hallazgos de esta ejecución en el sprint en curso del proyecto.</em></p>`;
+    `<p><em>HU creada automáticamente por el Agente QA (Flit Certify). No está relacionada a ninguna HU/Feature: agrupa los hallazgos de esta ejecución en el sprint en curso del proyecto.</em></p>`;
 
   return head + table + evidence + suggestions + notVerifiedSection(results) + findings + foot;
 }
 
-export default { renderFindingsDescription, buildFindingsTitle, summarizeFindings, stampNow, TITLE_PREFIX, FINDINGS_TAGS, FINDINGS_COUNT_TAG };
+export default { renderFindingsDescription, buildFindingsTitle, summarizeFindings, stampNow, TITLE_PREFIX, FINDINGS_TAGS, FINDINGS_COUNT_TAG, FINDINGS_COUNT_ALSO };

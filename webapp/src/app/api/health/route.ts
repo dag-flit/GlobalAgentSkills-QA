@@ -12,7 +12,7 @@ export async function GET() {
     {
       ok: true,
       status: "ok",
-      service: "qa-kit-studio",
+      service: "flit-certify",
       timestamp: new Date().toISOString(),
       uptime: Math.round(process.uptime()),
     },

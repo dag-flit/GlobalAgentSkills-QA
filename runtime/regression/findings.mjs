@@ -12,7 +12,11 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 // Prefijo ESTABLE del título (base del conteo #N, igual que la HU de QA del código). Es un marcador
 // PROPIO y distintivo → el conteo por WIQL (título CONTIENE este prefijo) cuenta SOLO las HU de
 // regresión y no cualquier ítem que mencione la palabra "regresión". No cambiar sin migrar el conteo.
-export const REGRESSION_TITLE_PREFIX = "Regresión E2E (QualityOps)";
+export const REGRESSION_TITLE_PREFIX = "Regresión E2E (Flit Certify)";
+// Prefijo LEGACY (marca anterior "QualityOps"): se pasa como `countAlso` al crear la HU para que el
+// conteo #N también cuente las HU de regresión ya creadas con la marca vieja → el rebrand NO reinicia
+// la numeración. No borrar mientras existan HU de regresión antiguas en ADO.
+export const REGRESSION_COUNT_ALSO = "Regresión E2E (QualityOps)";
 
 /**
  * Título de la HU de regresión: prefijo estable + suite/prueba + fecha·hora + #N (como QA del código).
@@ -101,4 +105,4 @@ export function renderRegressionFindings({ system = "", suite = "", test = {}, s
   </div>`;
 }
 
-export default { renderRegressionFindings };
+export default { renderRegressionFindings, regressionTitle, REGRESSION_TITLE_PREFIX, REGRESSION_COUNT_ALSO };

@@ -11,8 +11,9 @@ import { renderShotGallery } from "./ado-html.mjs";
 // un fallo de conteo/iteración/adjunto NO aborta la creación; solo la creación en sí puede fallar.
 export async function createFindingsWorkItem(a, {
   type = "User Story",
-  tags = "QualityOps; Hallazgos-QA",
-  countTag = "QualityOps",
+  tags = "Flit Certify; Hallazgos-QA",
+  countTag = "Flit Certify",
+  countAlso = "QualityOps", // marca LEGACY: el conteo #N también cuenta las HU con la marca vieja
   makeTitle,
   descriptionHtml = "",
   attachHtml = null,
@@ -24,10 +25,17 @@ export async function createFindingsWorkItem(a, {
 
   // (1) Incrementador #N: cuántas HU de hallazgos existen ya. Se cuenta por el TÍTULO (token de
   // marca), NO por tag: crear/leer tags requiere un permiso especial de ADO («create tag definition»)
-  // que puede faltar; el título siempre está disponible y es igual de distintivo.
+  // que puede faltar; el título siempre está disponible y es igual de distintivo. El conteo matchea la
+  // marca actual `countTag` O la marca LEGACY `countAlso` (si se pasa) → tras un rebrand la numeración
+  // NO se reinicia: sigue contando las HU creadas con la marca anterior. Las comillas simples del token
+  // se escapan para WIQL (doble comilla).
   let seq = 1;
   try {
-    const q = `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.Title] CONTAINS '${countTag}'`;
+    const esc = (s) => String(s).replace(/'/g, "''");
+    const tokens = [countTag, ...(countAlso && countAlso !== countTag ? [countAlso] : [])]
+      .filter(Boolean)
+      .map((t) => `[System.Title] CONTAINS '${esc(t)}'`);
+    const q = `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND (${tokens.join(" OR ")})`;
     const res = await client.queryByWiql(q);
     seq = (((res.json && res.json.workItems) || []).length) + 1;
   } catch {
@@ -112,7 +120,7 @@ export async function createFindingsWorkItem(a, {
   // (4) Adjuntar evidencia a la HU (best-effort): el reporte HTML autocontenido + los archivos
   // extra que se pidan explícitamente como adjuntos.
   let attached = false;
-  if (attachHtml) attached = await a._attachFileTo(id, attachHtml, "Reporte QualityOps (autocontenido)");
+  if (attachHtml) attached = await a._attachFileTo(id, attachHtml, "Reporte Flit Certify (autocontenido)");
   let attachedFiles = 0;
   for (const f of Array.isArray(attachFiles) ? attachFiles : []) {
     if (await a._attachFileTo(id, f, "Evidencia de regresión (captura por paso)")) attachedFiles++;

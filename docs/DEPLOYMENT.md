@@ -1,4 +1,4 @@
-# Despliegue a producción — qa-kit (handoff para el líder técnico)
+# Despliegue a producción — Flit Certify (repo qa-kit, handoff para el líder técnico)
 
 > **Destino:** GitHub Actions configura el pipeline y despliega a la **VPS de la
 > compañía**. Este documento describe QUÉ necesita la app para correr en prod, para

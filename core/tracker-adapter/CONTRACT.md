@@ -24,8 +24,10 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 > **`createFindingsWorkItem(opts)`** — usado por el modo **QA del código** (`azure-devops`). Cada
 > ejecución crea una **HU (User Story) nueva** con los hallazgos de las capas, **sin relacionarla** a
 > ninguna HU/Feature, en el **proyecto del tracker** y el **sprint en curso** (resuelto por
-> `currentIteration`). El título lleva un **incrementador `#N`** por conteo de las ya creadas (por tag
-> `QualityOps`, vía WIQL). `opts` = `{ makeTitle:(seq)=>string, descriptionHtml, tags?, countTag?, attachHtml?, attachFiles? }`
+> `currentIteration`). El título lleva un **incrementador `#N`** por conteo de las ya creadas (el
+> conteo WIQL busca el título que CONTIENE la marca `countTag` —hoy `Flit Certify`— **o** la marca
+> legacy `countAlso` —`QualityOps`— para no reiniciar la numeración tras el rebrand). `opts` =
+> `{ makeTitle:(seq)=>string, descriptionHtml, tags?, countTag?, countAlso?, attachHtml?, attachFiles? }`
 > (`attachFiles`: rutas extra a adjuntar como archivos — p.ej. las capturas PNG por paso de una corrida
 > de regresión, para verlas directo en ADO sin abrir el reporte HTML). También lo usa el módulo de
 > **Test de Regresión** (una HU por prueba con su evidencia; `countTag` propio → conteo `#N` aislado).

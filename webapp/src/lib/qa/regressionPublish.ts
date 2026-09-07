@@ -47,7 +47,7 @@ export async function publishRun(opts: {
     return { ok: false, published: [], message: "La evidencia de la corrida está dañada." };
   }
 
-  const { renderRegressionFindings, regressionTitle } = await importKit("runtime/regression/findings.mjs");
+  const { renderRegressionFindings, regressionTitle, REGRESSION_COUNT_ALSO } = await importKit("runtime/regression/findings.mjs");
   const { friendlyStep } = await importKit("runtime/regression/step-label.mjs");
   const chosen = (manifest.tests ?? []).filter((t) => !testId || t.id === testId);
   if (!chosen.length) return { ok: false, published: [], message: "No hay pruebas de esa corrida para publicar." };
@@ -68,8 +68,9 @@ export async function publishRun(opts: {
     try {
       const res = await adapter.createFindingsWorkItem({
         makeTitle: (seq: number) => regressionTitle({ suite: manifest.suite, test: t.name, stamp: manifest.stamp, seq }),
-        tags: "QualityOps; Regresión",
-        countTag: "Regresión E2E (QualityOps)",
+        tags: "Flit Certify; Regresión",
+        countTag: "Regresión E2E (Flit Certify)",
+        countAlso: REGRESSION_COUNT_ALSO,
         descriptionHtml,
         attachHtml: attach && fs.existsSync(attach) ? attach : null,
         inlineImages,

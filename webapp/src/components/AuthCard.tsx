@@ -17,10 +17,10 @@ export function AuthCard({
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
           <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-accent/20 text-accent font-bold text-lg">
-            Q
+            FC
           </span>
           <h1 className="mt-3 text-xl font-bold tracking-tight text-white">
-            Quality<span className="text-accent">Ops</span>
+            Flit<span className="text-accent"> Certify</span>
           </h1>
         </div>
         <div className="card">

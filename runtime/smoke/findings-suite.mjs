@@ -29,7 +29,7 @@ export function runFindingsCases(ctx) {
   assert.strictEqual(stampNow(new Date(2026, 6, 13, 9, 5)), "2026-07-13 09:05", "marca fecha/hora local con padding");
   assert.strictEqual(
     buildFindingsTitle({ seq: 3, when: "2026-07-13 09:05" }),
-    "Hallazgos QA de código (QualityOps Framework) — 2026-07-13 09:05 #3",
+    "Hallazgos QA de código (Flit Certify) — 2026-07-13 09:05 #3",
     "título = prefijo + fecha/hora + #N",
   );
   const withFinds = [

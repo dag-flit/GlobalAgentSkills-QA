@@ -1,5 +1,5 @@
 {
-  "name": "qa-kit-studio",
+  "name": "flit-certify",
   "version": "0.1.0",
   "private": true,
   "description": "Interfaz web del qa-kit: configura y ejecuta el ciclo QA (capas, trackers, BD, E2E) sin tocar la CLI.",

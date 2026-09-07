@@ -30,6 +30,7 @@ import {
   stampNow,
   FINDINGS_TAGS,
   FINDINGS_COUNT_TAG,
+  FINDINGS_COUNT_ALSO,
 } from "../evidence/findings-workitem.mjs";
 import { executedHtml } from "../evidence/report-executed.mjs";
 
@@ -217,6 +218,7 @@ export async function runCodeCycle({
       findingsWorkItem = await adapter.createFindingsWorkItem({
         tags: FINDINGS_TAGS,
         countTag: FINDINGS_COUNT_TAG,
+        countAlso: FINDINGS_COUNT_ALSO,
         makeTitle: (seq) => buildFindingsTitle({ seq, when }),
         descriptionHtml: renderFindingsDescription({ results, layersRun: toRun, when, reportPath }),
         attachHtml: reportPath || null,

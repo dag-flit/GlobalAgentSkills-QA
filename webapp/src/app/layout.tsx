@@ -4,9 +4,9 @@ import { AppShell } from "@/components/AppShell";
 import { ActionFeedbackProvider } from "@/components/ActionFeedback";
 
 export const metadata: Metadata = {
-  title: "Quality Ops Framework",
+  title: "Flit Certify",
   description:
-    "Interfaz del qa-kit: configura y ejecuta el ciclo QA (capas, trackers, BD, E2E) a clics, sin usar la CLI.",
+    "Flit Certify: configura y ejecuta el ciclo QA (capas, trackers, BD, E2E) a clics, sin usar la CLI.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -310,8 +310,9 @@ export async function run(ctx) {
     // (8) adapter azure createFindingsWorkItem con cliente FALSO: cuenta #N (2 existentes → #3),
     // resuelve el sprint en curso y crea la User Story con Title/Description/Tags/IterationPath.
     let created = null;
+    let lastWiql = "";
     const fakeClient = {
-      queryByWiql: async () => ({ status: 200, json: { workItems: [{ id: 1 }, { id: 2 }] } }),
+      queryByWiql: async (q) => { lastWiql = q; return { status: 200, json: { workItems: [{ id: 1 }, { id: 2 }] } }; },
       currentIteration: async () => ({ status: 200, json: { value: [{ path: "Proj\\Sprint 5" }] } }),
       createWorkItem: async (type, ops) => { created = { type, ops }; return { status: 200, json: { id: 777 } }; },
       uploadAttachment: async () => ({ status: 201, json: { url: "http://att/1" } }),
@@ -329,6 +330,15 @@ export async function run(ctx) {
     assert.strictEqual(byPath["/fields/System.Title"], "T #3", "el título lleva el #N");
     assert.ok(byPath["/fields/System.IterationPath"] === "Proj\\Sprint 5" && /Hallazgos-QA/.test(byPath["/fields/System.Tags"]), "setea sprint + tags");
     ok("QA de código: adapter azure crea la HU de hallazgos (conteo #N + sprint en curso + User Story con tags/iteración)");
+
+    // (8a) rebrand → continuidad del #N: con los defaults (marca actual "Flit Certify" + marca LEGACY
+    // "QualityOps") el conteo por WIQL matchea AMBOS tokens (OR) → tras renombrar el producto la
+    // numeración NO se reinicia, sigue contando las HU creadas con la marca vieja.
+    await az.createFindingsWorkItem({ makeTitle: (s) => `T #${s}`, descriptionHtml: "<p>x</p>" });
+    assert.ok(lastWiql.includes("'Flit Certify'"), "el conteo busca la marca actual");
+    assert.ok(lastWiql.includes("'QualityOps'"), "el conteo también busca la marca legacy (continuidad del #N)");
+    assert.ok(/ OR /.test(lastWiql), "el conteo une ambas marcas con OR");
+    ok("QA de código: el conteo #N cuenta la marca nueva Y la legacy (el rebrand no reinicia la numeración)");
 
     // (8b) degradación de campos con permiso especial: si crear CON tags da 403 (TF401289 «create tag
     // definition», el caso REAL de FLIT) pero SIN tags funciona, la HU se crea igual, SIN tags y
