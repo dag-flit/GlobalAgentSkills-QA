@@ -16,6 +16,7 @@ import { resolveTaskId } from "./tc-match.mjs";
 import { writeLocalReport } from "../../../runtime/evidence/local-sink.mjs";
 import { parseAc, renderSummary } from "./ado-html.mjs";
 import { createFindingsWorkItem } from "./ado-findings.mjs";
+import { parseTestSteps } from "./ado-teststeps.mjs";
 
 const REQUIRED = ["AZURE_ORG_URL", "AZURE_PROJECT_NAME", "AZURE_PAT", "USER_REAL_EMAIL"];
 const MODE = "azure-devops";
@@ -110,6 +111,31 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     for (const it of items.slice(0, limit)) {
       const wi = await this.getWorkItem(it.id).catch(() => null);
       if (wi) out.push(this._toImport(wi));
+    }
+    return out;
+  }
+
+  // Azure Test Plans (Fase 3 de Casos de Prueba, solo lectura). Listar planes/suites para elegir en la UI.
+  async listTestPlans() {
+    const res = await this.client.listTestPlans();
+    return ((res.json && res.json.value) || []).map((p) => ({ id: String(p.id), name: p.name || `Plan ${p.id}` }));
+  }
+  async listTestSuites(planId) {
+    const res = await this.client.listTestSuites(planId);
+    return ((res.json && res.json.value) || []).map((s) => ({ id: String(s.id), name: s.name || `Suite ${s.id}` }));
+  }
+  // Trae los TEST CASES de un plan/suite CON SUS PASOS (parsea Microsoft.VSTS.TCM.Steps). Tope 200.
+  async importTestCases({ planId, suiteId }) {
+    const res = await this.client.listSuiteTestCases(planId, suiteId);
+    const items = (res.json && res.json.value) || [];
+    const out = [];
+    for (const it of items.slice(0, 200)) {
+      const wiId = (it.workItem && it.workItem.id) || (it.testCase && it.testCase.id) || it.id;
+      if (!wiId) continue;
+      const wi = await this.getWorkItem(wiId).catch(() => null);
+      if (!wi) continue;
+      const stepsXml = (wi.raw || {})["Microsoft.VSTS.TCM.Steps"] || "";
+      out.push({ id: String(wiId), title: wi.title, steps: parseTestSteps(stepsXml) });
     }
     return out;
   }

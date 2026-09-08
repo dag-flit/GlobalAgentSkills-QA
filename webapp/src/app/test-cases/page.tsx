@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Spinner } from "@/components/ui";
 import { SuiteSidebar } from "@/components/testcases/SuiteSidebar";
 import { CaseEditor } from "@/components/testcases/CaseEditor";
+import { TestPlanImport } from "@/components/testcases/TestPlanImport";
 import {
   type TestSuite, type TestCase, type TestCaseDraft, PRIORITY_LABELS, PRIO_STYLE,
   blankCase, blankSuiteId,
@@ -20,6 +21,7 @@ export default function TestCasesPage() {
   const [selected, setSelected] = useState("all"); // "all" | "none" | suiteId
   const [editing, setEditing] = useState<TestCase | null>(null);
   const [ado, setAdo] = useState<{ orgUrl: string; project: string } | null>(null);
+  const [showTpImport, setShowTpImport] = useState(false);
 
   async function load() {
     setLoading(true); setError(null);
@@ -87,7 +89,10 @@ export default function TestCasesPage() {
           <h1 className="text-xl font-bold text-white">Casos de Prueba</h1>
           <p className="mt-1 text-sm text-muted">Casos con pasos (acción / resultado esperado), organizados en suites. Vinculá la HU de ADO que cubren.</p>
         </div>
-        <button onClick={newCase} className="btn-primary">Nuevo caso</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setShowTpImport(true)} className="btn-ghost text-xs">Importar de ADO Test Plans</button>
+          <button onClick={newCase} className="btn-primary">Nuevo caso</button>
+        </div>
       </header>
 
       {error && <p className="text-sm text-red-300">{error}</p>}
@@ -142,6 +147,7 @@ export default function TestCasesPage() {
       )}
 
       {editing && <CaseEditor item={editing} suites={suites} onSave={saveCase} onCancel={() => setEditing(null)} saving={saving} />}
+      {showTpImport && <TestPlanImport localSuites={suites} onClose={() => setShowTpImport(false)} onDone={load} />}
     </div>
   );
 }

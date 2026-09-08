@@ -91,6 +91,18 @@ export function createClient({ env = {}, http = defaultHttp } = {}) {
       });
     },
 
+    // Azure Test Plans (API `testplan`, distinta de `wit`). Solo lectura.
+    listTestPlans() {
+      return http({ method: "GET", url: `${projBase}/testplan/plans?api-version=7.0`, headers: headers() });
+    },
+    listTestSuites(planId) {
+      return http({ method: "GET", url: `${projBase}/testplan/Plans/${Number(planId) || 0}/suites?api-version=7.0`, headers: headers() });
+    },
+    // Test cases de una suite → { value: [{ workItem: { id, name } }] } (cada test case es un work item).
+    listSuiteTestCases(planId, suiteId) {
+      return http({ method: "GET", url: `${projBase}/testplan/Plans/${Number(planId) || 0}/Suites/${Number(suiteId) || 0}/TestCase?api-version=7.0`, headers: headers() });
+    },
+
     // WIQL: consulta de work items. Devuelve { workItems: [{id}], ... }.
     queryByWiql(query) {
       return http({

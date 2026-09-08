@@ -66,3 +66,29 @@ export async function upsertCase(i: TestCaseInput): Promise<void> {
 export async function deleteCase(id: string): Promise<void> {
   await withTenant(async (c) => { await c.query("DELETE FROM qa_test_cases WHERE id = $1", [id]); });
 }
+
+// Importar test cases de Azure Test Plans (Fase 3): upsert por ado_wi. Si ya existe un caso con ese
+// work item, REFRESCA título + pasos SIN moverlo de suite (respeta la organización del usuario); si no,
+// lo crea en la suite destino. Devuelve cuántos creó/actualizó.
+export interface AdoTestCaseRow { adoWi: string; title: string; steps: TestStep[] }
+export async function importAdoTestCases(rows: AdoTestCaseRow[], targetSuiteId: string | null): Promise<{ created: number; updated: number }> {
+  return withTenant(async (c) => {
+    let created = 0, updated = 0;
+    for (const r of rows) {
+      const ex = await c.query("SELECT id FROM qa_test_cases WHERE ado_wi = $1 LIMIT 1", [r.adoWi]);
+      if (ex.rows[0]) {
+        await c.query("UPDATE qa_test_cases SET title = $2, steps = $3::jsonb, updated_at = now() WHERE id = $1",
+          [ex.rows[0].id, r.title, JSON.stringify(r.steps ?? [])]);
+        updated++;
+      } else {
+        await c.query(
+          `INSERT INTO qa_test_cases(id, suite_id, title, ado_wi, steps, position)
+           VALUES($1, NULLIF($2, '')::text, $3, $4, $5::jsonb, 0) ON CONFLICT (tenant_id, id) DO NOTHING`,
+          [`tc-ado-${r.adoWi}`, targetSuiteId ?? "", r.title, r.adoWi, JSON.stringify(r.steps ?? [])],
+        );
+        created++;
+      }
+    }
+    return { created, updated };
+  });
+}

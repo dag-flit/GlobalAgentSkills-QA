@@ -13,6 +13,8 @@ Interfaz **única** que toda integración de tracker implementa. El orquestador 
 | `getWorkItem(id)` | Devuelve la HU/Feature destino (incluye `type`: "Feature"/"User Story") | Lee `.qa/work-items/{id}.md` o devuelve un stub |
 | `getChildren(id)` | HU **hijas** de un Feature (para el fan-out por HU) | `[]` (local no tiene jerarquía) |
 | `queryWorkItems(wiql)` | Corre un WIQL → work items normalizados `{id,title,type,state,assignee,url}` (import a Seguimiento; solo lectura) | `[]` (local no tiene work items) |
+| `listTestPlans()` / `listTestSuites(planId)` | Planes / suites de **Azure Test Plans** `{id,name}` (para elegir en la UI; solo lectura) | `[]` |
+| `importTestCases({planId,suiteId})` | Test cases de una suite CON SUS PASOS `{id,title,steps:[{action,expected}]}` (parsea `Microsoft.VSTS.TCM.Steps`) | `[]` |
 | `publishEvidence(target, payload)` | Entrega la evidencia normalizada | Reporte `md`+`html` en `qa-evidence/` |
 | `commentWorkItem(id, html)` | Publica un comentario HTML en un WI (p.ej. el **brief PR-driven**) | `{ok:false}` (sin Discussion) |
 | `createFindingsWorkItem(opts)` | Crea una **HU de hallazgos** (modo QA del código) sin relacionarla a nada, en el sprint en curso | `{ok:false}` (local no crea work items) |

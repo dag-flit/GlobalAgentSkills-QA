@@ -52,7 +52,7 @@ function buildWiql(req: AdoImportRequest): string {
   return base + clauses.join(" AND ");
 }
 
-async function getAzureAdapter() {
+export async function getAzureAdapter() {
   const cfg = await loadConfig();
   if (cfg.tracker.selected !== "azure-devops") {
     throw new Error("Importar de ADO requiere el tracker Azure DevOps configurado en Ajustes.");

@@ -87,6 +87,11 @@ export class TrackerAdapter {
     return [];
   }
 
+  // Azure Test Plans (import de casos de prueba). Default `[]` (solo azure lo implementa, solo lectura).
+  async listTestPlans() { return []; }
+  async listTestSuites(planId) { return []; }
+  async importTestCases(opts) { return []; }
+
   /** Entrega la evidencia normalizada al destino del tracker (o al sink local). */
   async publishEvidence(target, payload) {
     throw new Error("publishEvidence() no implementado");

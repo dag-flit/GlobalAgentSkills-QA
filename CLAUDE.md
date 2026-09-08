@@ -1163,9 +1163,24 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   pass/fail/blocked/skipped con `ResultRow`; el estado del caso se DERIVA de los pasos; resultado real +
   notas; resumen con avance y **cobertura de HU**; «Marcar terminada»). Ítem «Corridas de prueba» en
   AppShell. **Evidencia binaria (subir capturas) = incremento posterior** (por ahora evidencia por
-  nota/enlace). **Fases siguientes:** 3 = import de Azure Test Plans (traer test cases con sus pasos, API
-  `test/plans`), 4 = métricas + export; integración = enganchar Regresión como ejecuciones automatizadas.
-  Ver [[casos-de-prueba-modulo]].
+  nota/enlace). Ver [[casos-de-prueba-modulo]].
+
+- **Casos de Prueba — Fase 3: IMPORT de Azure Test Plans (2026-09-08, motor+webapp, sin migración nueva,
+  smoke 140 · tsc0 · budget0).** Trae los TEST CASES de un plan/suite de Azure Test Plans **con sus pasos**
+  al módulo local (una vía, solo lectura de ADO). Motor: `ado-teststeps.mjs` (PURO: parsea el XML de
+  `Microsoft.VSTS.TCM.Steps` → `[{action, expected}]`, decodifica entidades + quita HTML); client
+  `ado-rest.mjs` += `listTestPlans`/`listTestSuites`/`listSuiteTestCases` (API `testplan` v7.0, distinta de
+  `wit`); adapter `listTestPlans`/`listTestSuites`/`importTestCases({planId,suiteId})` (lista los WI de la
+  suite → getWorkItem cada uno → parsea Steps) + contrato base (`[]`) + CONTRACT.md; smoke en
+  `ado-query-suite.mjs` (parseTestSteps + importTestCases con cliente falso). Webapp: `getAzureAdapter`
+  exportado de adoImport; `lib/qa/adoTestImport.ts` (listPlans/listSuites/importAdoTestPlan); repo
+  `importAdoTestCases` (upsert por ado_wi: refresca título+pasos SIN mover de suite; crea en la suite
+  destino); zod `adoTestImportSchema`; rutas `GET /api/test-cases/ado-plans` · `/ado-suites?planId=` ·
+  `POST /api/test-cases/ado-import` (member+); UI `TestPlanImport.tsx` (plan→suite→suite local destino) +
+  botón «Importar de ADO Test Plans» en /test-cases. **Motor tocado → reiniciar `npm run dev`.** Pendiente
+  de validación del usuario contra un Azure Test Plans real (la API testplan v7.0 y el shape de la respuesta
+  se probaron con cliente falso; falta el real). **Falta Fase 4** (métricas + export) + integración con
+  Regresión. Ver [[casos-de-prueba-modulo]].
 
 ## Mapa del repo
 

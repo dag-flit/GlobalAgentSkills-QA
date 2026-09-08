@@ -43,3 +43,10 @@ export const testResultUpdateSchema = z.object({
   actualResult: z.string().max(4000).default(""),
   notes: z.string().max(4000).default(""),
 });
+
+// ── Import de Azure Test Plans (Fase 3) ─────────────────────────────────────
+export const adoTestImportSchema = z.object({
+  planId: z.string().regex(/^\d+$/),
+  suiteId: z.string().regex(/^\d+$/),
+  targetSuiteId: z.string().max(64).nullable().default(null),
+});
