@@ -6,6 +6,14 @@ import Link from "next/link";
 import { Spinner } from "@/components/ui";
 import { ResultRow } from "@/components/testcases/ResultRow";
 import { type TestRun, type TestResult, RESULT_META } from "@/components/testcases/runTypes";
+import { runToCsv, runToHtml } from "@/lib/qa/testReport";
+
+function download(name: string, mime: string, content: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // Detalle de una CORRIDA: resumen (pasó/falló/sin probar + cobertura de HU) y la ejecución caso por caso
 // (ResultRow), con snapshot de los pasos. «Marcar terminada» cierra la corrida.
@@ -17,19 +25,23 @@ export default function RunDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ado, setAdo] = useState<{ orgUrl: string; project: string } | null>(null);
+  const [projectName, setProjectName] = useState("proyecto");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [rj, cfg] = await Promise.all([
+      const [rj, cfg, me] = await Promise.all([
         fetch(`/api/test-runs/${id}`).then((r) => r.json()),
         fetch("/api/config").then((r) => r.json()).catch(() => null),
+        fetch("/api/auth/me").then((r) => r.json()).catch(() => null),
       ]);
       if (!rj.ok) throw new Error(rj.error || "No se pudo cargar la corrida.");
       setRun(rj.run); setResults(rj.results ?? []);
       const az = cfg?.tracker?.azure;
       setAdo(az?.orgUrl && az?.project ? { orgUrl: az.orgUrl, project: az.project } : null);
+      const active = (me?.tenants ?? []).find((t: { id: string; name: string }) => t.id === me?.tenantId);
+      if (active?.name) setProjectName(active.name);
     } catch (e: any) { setError(e?.message ?? "Error de red."); }
     finally { setLoading(false); }
   }, [id]);
@@ -73,9 +85,13 @@ export default function RunDetailPage() {
           <h1 className="text-xl font-bold text-white">{run.name}</h1>
           <p className="mt-1 text-sm text-muted">Iniciada por {run.started_by || "—"}. Cada caso guarda un snapshot de sus pasos.</p>
         </div>
-        <button onClick={toggleDone} disabled={busy} className={run.status === "done" ? "btn-ghost" : "btn-primary"}>
-          {run.status === "done" ? "Reabrir" : "Marcar terminada"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => download(`corrida-${run.name}.csv`, "text/csv;charset=utf-8", runToCsv(run, results))} className="btn-ghost text-xs">Exportar CSV</button>
+          <button onClick={() => download(`corrida-${run.name}.html`, "text/html;charset=utf-8", runToHtml(run, results, projectName, new Date().toLocaleString("es-CO")))} className="btn-ghost text-xs">Exportar HTML</button>
+          <button onClick={toggleDone} disabled={busy} className={run.status === "done" ? "btn-ghost" : "btn-primary"}>
+            {run.status === "done" ? "Reabrir" : "Marcar terminada"}
+          </button>
+        </div>
       </div>
 
       {error && <p className="text-sm text-red-300">{error}</p>}

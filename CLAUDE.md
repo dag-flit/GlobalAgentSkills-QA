@@ -1179,8 +1179,24 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   `POST /api/test-cases/ado-import` (member+); UI `TestPlanImport.tsx` (plan→suite→suite local destino) +
   botón «Importar de ADO Test Plans» en /test-cases. **Motor tocado → reiniciar `npm run dev`.** Pendiente
   de validación del usuario contra un Azure Test Plans real (la API testplan v7.0 y el shape de la respuesta
-  se probaron con cliente falso; falta el real). **Falta Fase 4** (métricas + export) + integración con
-  Regresión. Ver [[casos-de-prueba-modulo]].
+  se probaron con cliente falso; falta el real). Ver [[casos-de-prueba-modulo]].
+
+- **Casos de Prueba — Fase 4: MÉTRICAS + EXPORT (2026-09-08, webapp, sin migración, tsc0 · budget0).**
+  Cierra el módulo. `lib/qa/testReport.ts` (PURO): `runToCsv` (sep=; + BOM para Excel es/LatAm) y
+  `runToHtml` (reporte autocontenido imprimible: resumen pasó/falló/bloqueado + avance + **cobertura de
+  HU**, y por caso una tabla de pasos con acción/esperado/resultado + resultado real + notas). UI:
+  botones «Exportar CSV/HTML» en el detalle de la corrida (`/test-runs/[id]`); **panel de métricas** en
+  `/test-runs` (corridas, casos ejecutados, pasó/falló, **% pasó global**). **El módulo Casos de Prueba
+  queda COMPLETO (Fases 1-4).** Follow-up opcional: enganchar las corridas de **Regresión** como
+  ejecuciones automatizadas + evidencia binaria (subir capturas). Ver [[casos-de-prueba-modulo]].
+
+- **Perf: dev server con Turbopack (2026-09-08).** El usuario reportó que navegar entre módulos «se
+  demora una eternidad». Diagnóstico (log del dev server): NO hay query lenta sistémica (requests 60-200ms);
+  la lentitud es **compilación de dev con webpack** (cada ruta compila en su 1ª visita, 0.5-1.7s c/u) +
+  presión de RAM (el server llegó a morir por memoria). Fix: `package.json` dev = `next dev --turbopack -p
+  4312` (Next 15.5.19; no hay webpack config custom en `next.config.mjs`, solo `serverExternalPackages` que
+  Turbopack soporta) → compila mucho más rápido y usa menos memoria. Producción (`next start`) ya es rápida
+  (pre-compilada); era solo dev.
 
 ## Mapa del repo
 

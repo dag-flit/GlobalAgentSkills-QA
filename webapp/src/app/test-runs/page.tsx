@@ -38,6 +38,11 @@ export default function TestRunsPage() {
   useEffect(() => { load(); }, []);
 
   const suiteName = useMemo(() => Object.fromEntries(suites.map((s) => [s.id, s.name])), [suites]);
+  const agg = useMemo(() => {
+    let total = 0, passed = 0, failed = 0, done = 0;
+    for (const r of runs) { total += r.total; passed += r.passed; failed += r.failed; done += r.total - r.untested; }
+    return { runs: runs.length, executed: done, passed, failed, rate: done ? Math.round((passed / done) * 100) : 0 };
+  }, [runs]);
 
   async function create() {
     if (!name.trim()) return;
@@ -98,7 +103,16 @@ export default function TestRunsPage() {
       ) : runs.length === 0 ? (
         <p className="text-sm text-muted">Todavía no hay corridas. Creá una con «Nueva corrida».</p>
       ) : (
-        <ul className="space-y-2">
+        <>
+        <div className="flex flex-wrap gap-2">
+          {[["Corridas", agg.runs, "text-white"], ["Casos ejecutados", agg.executed, "text-white"], ["Pasó", agg.passed, "text-green-300"], ["Falló", agg.failed, "text-red-300"], ["% pasó (global)", `${agg.rate}%`, agg.rate >= 80 ? "text-green-300" : "text-warn"]].map(([label, val, tone]) => (
+            <div key={String(label)} className="rounded-xl border border-border bg-panel2 px-3 py-2 min-w-[100px]">
+              <div className={`text-2xl font-bold ${tone}`}>{val}</div>
+              <div className="text-[11px] text-muted">{label}</div>
+            </div>
+          ))}
+        </div>
+        <ul className="mt-2 space-y-2">
           {runs.map((r) => {
             const done = r.total - r.untested;
             const pct = r.total ? Math.round((done / r.total) * 100) : 0;
@@ -122,6 +136,7 @@ export default function TestRunsPage() {
             );
           })}
         </ul>
+        </>
       )}
     </div>
   );
