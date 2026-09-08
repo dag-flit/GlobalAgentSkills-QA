@@ -4,7 +4,7 @@
   "private": true,
   "description": "Interfaz web del qa-kit: configura y ejecuta el ciclo QA (capas, trackers, BD, E2E) sin tocar la CLI.",
   "scripts": {
-    "dev": "next dev -p 4312",
+    "dev": "next dev --turbopack -p 4312",
     "build": "next build",
     "start": "next start -p 4312",
     "lint": "next lint"
