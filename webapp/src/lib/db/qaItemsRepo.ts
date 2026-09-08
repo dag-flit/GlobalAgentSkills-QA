@@ -5,7 +5,7 @@ import { withTenant } from "./tx";
 
 export type QaStatus = "todo" | "doing" | "blocked" | "review" | "done";
 export type QaPriority = "alta" | "media" | "baja";
-export type QaType = "bug" | "task" | "test" | "improvement";
+export type QaType = "bug" | "task" | "test" | "improvement" | "story";
 export type QaSeverity = "" | "trivial" | "menor" | "mayor" | "critica";
 export interface QaRunLink { kind: string; id: string; title: string; sub: string; href: string | null; when: string; status: string }
 
@@ -22,6 +22,11 @@ export interface QaItemRow {
   reporter: string;
   assignee: string;
   ado_wi: string;
+  source: string;        // 'local' | 'ado'
+  ado_state: string;     // estado en ADO (informativo)
+  ado_type: string;      // tipo real en ADO
+  ado_url: string;
+  ado_synced_at: string | null;
   link_run_kind: string;
   link_run_id: string;
   link_run_meta: Record<string, unknown>;
@@ -33,7 +38,8 @@ export interface QaItemRow {
 
 const COLS =
   "id, title, notes, status, priority, type, severity, labels, to_char(due_date, 'YYYY-MM-DD') AS due_date, " +
-  "reporter, assignee, ado_wi, link_run_kind, link_run_id, link_run_meta, link_runs, position, created_at, updated_at";
+  "reporter, assignee, ado_wi, source, ado_state, ado_type, ado_url, ado_synced_at, " +
+  "link_run_kind, link_run_id, link_run_meta, link_runs, position, created_at, updated_at";
 
 export async function listQaItems(): Promise<QaItemRow[]> {
   return withTenant(async (c) => {
@@ -90,5 +96,56 @@ export async function upsertQaItem(i: QaItemInput): Promise<void> {
 export async function deleteQaItem(id: string): Promise<void> {
   await withTenant(async (c) => {
     await c.query("DELETE FROM qa_items WHERE id = $1", [id]);
+  });
+}
+
+// ── Importar work items de Azure DevOps al tablero (una vía, solo lectura desde ADO) ──────────────
+export interface AdoImportRow {
+  adoWi: string; title: string; localType: QaType; adoType: string; adoState: string; assignee: string; url: string;
+}
+
+// Upsert por ado_wi: si ya existe un pendiente con ese work item, REFRESCA los datos de ADO SIN pisar
+// el estado/posición/notas/prioridad LOCAL (el tablero es del usuario); si no, lo crea como 'ado'.
+export async function importAdoItems(rows: AdoImportRow[]): Promise<{ created: number; updated: number }> {
+  return withTenant(async (c) => {
+    let created = 0, updated = 0;
+    for (const r of rows) {
+      const ex = await c.query("SELECT id FROM qa_items WHERE ado_wi = $1 LIMIT 1", [r.adoWi]);
+      if (ex.rows[0]) {
+        await c.query(
+          `UPDATE qa_items SET title = $2, assignee = COALESCE(NULLIF($3, ''), assignee), type = $4,
+             ado_type = $5, ado_state = $6, ado_url = $7, source = 'ado', ado_synced_at = now(), updated_at = now()
+           WHERE id = $1`,
+          [ex.rows[0].id, r.title, r.assignee, r.localType, r.adoType, r.adoState, r.url],
+        );
+        updated++;
+      } else {
+        await c.query(
+          `INSERT INTO qa_items(id, title, status, priority, type, assignee, ado_wi, source, ado_type, ado_state, ado_url, ado_synced_at, position)
+           VALUES($1, $2, 'todo', 'media', $3, $4, $5, 'ado', $6, $7, $8, now(), 0)
+           ON CONFLICT (tenant_id, id) DO NOTHING`,
+          [`ado-${r.adoWi}`, r.title, r.localType, r.assignee, r.adoWi, r.adoType, r.adoState, r.url],
+        );
+        created++;
+      }
+    }
+    return { created, updated };
+  });
+}
+
+// Elimina TODOS los pendientes importados de ADO (source='ado'). Los locales NO se tocan. Devuelve
+// cuántos borró. El borrado por registro individual usa deleteQaItem (el botón «Borrar» de la tarjeta).
+export async function deleteAdoItems(): Promise<number> {
+  return withTenant(async (c) => {
+    const r = await c.query("DELETE FROM qa_items WHERE source = 'ado'");
+    return r.rowCount ?? 0;
+  });
+}
+
+// Los ado_wi de los pendientes que vinieron de ADO (para «Actualizar desde ADO»).
+export async function listAdoWorkItemIds(): Promise<string[]> {
+  return withTenant(async (c) => {
+    const r = await c.query("SELECT ado_wi FROM qa_items WHERE source = 'ado' AND ado_wi <> ''");
+    return r.rows.map((x) => x.ado_wi as string);
   });
 }

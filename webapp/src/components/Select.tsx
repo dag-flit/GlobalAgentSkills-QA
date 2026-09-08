@@ -108,7 +108,7 @@ export function Select({
                   role="option"
                   aria-selected={isSel}
                   onMouseEnter={() => setHi(idx)}
-                  onClick={() => pick(o.value)}
+                  onMouseDown={(e) => { e.preventDefault(); pick(o.value); }}
                   className={`cursor-pointer px-3 py-1.5 text-sm ${isHi ? "bg-accent/15 text-accent" : isSel ? "text-accent" : "text-gray-100"}`}
                 >
                   {o.label}

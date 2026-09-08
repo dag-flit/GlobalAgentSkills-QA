@@ -313,7 +313,7 @@ export const scheduleTickSchema = z.object({
 
 // ── Seguimiento QA (tablero de pendientes) ──────────────────────────────────
 export const qaStatusEnum = z.enum(["todo", "doing", "blocked", "review", "done"]);
-export const qaTypeEnum = z.enum(["bug", "task", "test", "improvement"]);
+export const qaTypeEnum = z.enum(["bug", "task", "test", "improvement", "story"]);
 export const qaSeverityEnum = z.enum(["", "trivial", "menor", "mayor", "critica"]);
 export const qaItemSchema = z.object({
   id: z.string().min(1).max(64),
@@ -348,5 +348,43 @@ export const qaCommentSchema = z.object({
   body: z.string().trim().min(1).max(2000),
 });
 export const qaThreadQuerySchema = z.object({ itemId: z.string().min(1).max(64) });
+
+// ── Casos de Prueba (Fase 1) ────────────────────────────────────────────────
+export const testSuiteSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(2000).default(""),
+  position: z.number().int().min(0).max(100000).default(0),
+});
+export const testSuiteDeleteSchema = z.object({ id: z.string().min(1).max(64) });
+export const testStepSchema = z.object({
+  action: z.string().max(1000).default(""),
+  expected: z.string().max(1000).default(""),
+});
+export const testCaseSchema = z.object({
+  id: z.string().min(1).max(64),
+  suiteId: z.string().max(64).nullable().default(null),
+  title: z.string().trim().min(1).max(200),
+  preconditions: z.string().max(2000).default(""),
+  priority: z.enum(["alta", "media", "baja"]).default("media"),
+  tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  adoWi: z.string().max(32).default(""),
+  steps: z.array(testStepSchema).max(100).default([]),
+  position: z.number().int().min(0).max(100000).default(0),
+});
+export const testCaseDeleteSchema = z.object({ id: z.string().min(1).max(64) });
+
+// Importar work items de Azure DevOps al tablero de Seguimiento (una vía, solo lectura de ADO).
+export const adoImportSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("ids"), ids: z.array(z.string().regex(/^\d+$/)).min(1).max(200) }),
+  z.object({ mode: z.literal("children"), parentId: z.string().regex(/^\d+$/) }),
+  z.object({
+    mode: z.literal("query"),
+    states: z.array(z.string().max(40)).max(20).optional(),
+    types: z.array(z.string().max(40)).max(20).optional(),
+    areaPath: z.string().max(200).optional(),
+    iterationPath: z.string().max(200).optional(),
+  }),
+]);
 // Marcar notificación(es) como leídas: con id → una; sin id → todas las del usuario.
 export const notificationReadSchema = z.object({ id: z.string().min(1).max(64).optional() });

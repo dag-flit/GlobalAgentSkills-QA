@@ -7,8 +7,12 @@ import { BoardView } from "@/components/seguimiento/BoardView";
 import { TableView } from "@/components/seguimiento/TableView";
 import { Filters, EMPTY_FILTER, type FilterState } from "@/components/seguimiento/Filters";
 import { Metrics } from "@/components/seguimiento/Metrics";
+import { AdoImport } from "@/components/seguimiento/AdoImport";
+import { Select } from "@/components/Select";
 import { type QaItem, type QaItemDraft, type QaStatus, blankItem, itemToDraft } from "@/components/seguimiento/types";
 import { toCsv, toHtml } from "@/lib/qa/seguimientoReport";
+
+const PAGE_SIZES = [25, 50, 100, 200];
 
 // Descarga un archivo generado en el cliente (Blob + <a download>). Sirve para CSV/HTML del reporte.
 function download(name: string, mime: string, content: string) {
@@ -35,14 +39,28 @@ export default function SeguimientoPage() {
   const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER);
   const [view, setView] = useState<"board" | "table">("board");
   const [showMetrics, setShowMetrics] = useState(false);
+  const [showAdoImport, setShowAdoImport] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
-    try { const v = localStorage.getItem("qof-seguimiento-view"); if (v === "table" || v === "board") setView(v); } catch { /* noop */ }
+    try {
+      const v = localStorage.getItem("qof-seguimiento-view"); if (v === "table" || v === "board") setView(v);
+      const ps = Number(localStorage.getItem("qof-seguimiento-pagesize")); if (PAGE_SIZES.includes(ps)) setPageSize(ps);
+    } catch { /* noop */ }
   }, []);
   function changeView(v: "board" | "table") {
     setView(v);
     try { localStorage.setItem("qof-seguimiento-view", v); } catch { /* noop */ }
   }
+  function changePageSize(n: number) {
+    setPageSize(n); setPage(0);
+    try { localStorage.setItem("qof-seguimiento-pagesize", String(n)); } catch { /* noop */ }
+  }
+  // Volver a la página 1 cuando cambian los filtros (evita quedar en una página vacía).
+  useEffect(() => { setPage(0); }, [filter]);
 
   async function load() {
     setLoading(true); setError(null);
@@ -134,6 +152,36 @@ export default function SeguimientoPage() {
   function exportCsv() { download("seguimiento-qa.csv", "text/csv;charset=utf-8", toCsv(filtered)); }
   function exportHtml() { download("seguimiento-qa.html", "text/html;charset=utf-8", toHtml(filtered, projectName, stamp())); }
 
+  async function resync() {
+    setResyncing(true); setError(null);
+    try {
+      const r = await fetch("/api/qa-items/ado-resync", { method: "POST" });
+      const j = await r.json().catch(() => ({ ok: false }));
+      if (!r.ok || !j.ok) throw new Error(j.error || "No se pudo actualizar desde ADO.");
+      await load();
+    } catch (e: any) { setError(e?.message ?? "Error de red."); }
+    finally { setResyncing(false); }
+  }
+  const hasAdoItems = useMemo(() => items.some((i) => i.source === "ado"), [items]);
+
+  async function clearAdo() {
+    const n = items.filter((i) => i.source === "ado").length;
+    if (!confirm(`¿Quitar los ${n} pendiente(s) importados de ADO? (los pendientes locales no se tocan)`)) return;
+    setClearing(true); setError(null);
+    try {
+      const r = await fetch("/api/qa-items/ado-clear", { method: "POST" });
+      const j = await r.json().catch(() => ({ ok: false }));
+      if (!r.ok || !j.ok) throw new Error(j.error || "No se pudo quitar la importación.");
+      await load();
+    } catch (e: any) { setError(e?.message ?? "Error de red."); }
+    finally { setClearing(false); }
+  }
+
+  // Paginación sobre el conjunto filtrado (aplica a tablero y tabla).
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const curPage = Math.min(page, pageCount - 1);
+  const paged = useMemo(() => filtered.slice(curPage * pageSize, curPage * pageSize + pageSize), [filtered, curPage, pageSize]);
+
   return (
     <div className="space-y-5">
       <header className="flex items-start justify-between gap-2 flex-wrap">
@@ -149,6 +197,17 @@ export default function SeguimientoPage() {
           </button>
           <button onClick={exportCsv} className="btn-ghost text-xs">Exportar CSV</button>
           <button onClick={exportHtml} className="btn-ghost text-xs">Exportar HTML</button>
+          {hasAdoItems && (
+            <button onClick={resync} disabled={resyncing} className="btn-ghost text-xs">
+              {resyncing ? "Actualizando…" : "Actualizar desde ADO"}
+            </button>
+          )}
+          {hasAdoItems && (
+            <button onClick={clearAdo} disabled={clearing} className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-red-300 hover:bg-panel2 disabled:opacity-50">
+              {clearing ? "Quitando…" : "Quitar importados"}
+            </button>
+          )}
+          <button onClick={() => setShowAdoImport(true)} className="btn-ghost text-xs">Importar de ADO</button>
           <button onClick={() => setEditing(blankItem(myEmail))} className="btn-primary">Nuevo pendiente</button>
         </div>
       </header>
@@ -161,16 +220,35 @@ export default function SeguimientoPage() {
         <>
           {showMetrics && <Metrics items={items} />}
           <Filters value={filter} onChange={setFilter} view={view} onView={changeView} assignees={assignees} />
-          <p className="text-xs text-muted">{filtered.length} de {items.length} pendiente(s)</p>
+
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+            <span>{filtered.length} de {items.length} pendiente(s)</span>
+            <span className="flex items-center gap-1">
+              Por página
+              <Select value={String(pageSize)} onChange={(v) => changePageSize(Number(v))} className="text-xs py-1"
+                options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))} />
+            </span>
+            {pageCount > 1 && (
+              <span className="ml-auto flex items-center gap-2">
+                <button onClick={() => setPage(Math.max(0, curPage - 1))} disabled={curPage === 0}
+                  className="rounded-lg border border-border px-2 py-1 hover:bg-panel2 disabled:opacity-40">Anterior</button>
+                <span>Página {curPage + 1} de {pageCount}</span>
+                <button onClick={() => setPage(Math.min(pageCount - 1, curPage + 1))} disabled={curPage >= pageCount - 1}
+                  className="rounded-lg border border-border px-2 py-1 hover:bg-panel2 disabled:opacity-40">Siguiente</button>
+              </span>
+            )}
+          </div>
+
           {view === "board" ? (
-            <BoardView items={filtered} adoUrl={adoUrl} onEdit={setEditing} onMove={move} onRemove={remove} saving={saving} />
+            <BoardView items={paged} adoUrl={adoUrl} onEdit={setEditing} onMove={move} onRemove={remove} saving={saving} />
           ) : (
-            <TableView items={filtered} adoUrl={adoUrl} onEdit={setEditing} />
+            <TableView items={paged} adoUrl={adoUrl} onEdit={setEditing} />
           )}
         </>
       )}
 
       {editing && <ItemEditor item={editing} onSave={save} onCancel={() => setEditing(null)} saving={saving} />}
+      {showAdoImport && <AdoImport onClose={() => setShowAdoImport(false)} onDone={load} />}
     </div>
   );
 }

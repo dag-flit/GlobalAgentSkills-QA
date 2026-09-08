@@ -3,7 +3,7 @@
 
 export type QaStatus = "todo" | "doing" | "blocked" | "review" | "done";
 export type QaPriority = "alta" | "media" | "baja";
-export type QaType = "bug" | "task" | "test" | "improvement";
+export type QaType = "bug" | "task" | "test" | "improvement" | "story";
 export type QaSeverity = "" | "trivial" | "menor" | "mayor" | "critica";
 
 // Una corrida vinculada a un pendiente (del kit o de regresión). Un pendiente puede tener varias.
@@ -31,6 +31,11 @@ export interface QaItem {
   reporter: string;
   assignee: string;
   ado_wi: string;
+  source?: string;        // 'local' | 'ado'
+  ado_state?: string;     // estado en ADO (informativo)
+  ado_type?: string;      // tipo real en ADO
+  ado_url?: string;
+  ado_synced_at?: string | null;
   link_run_kind: string;
   link_run_id: string;
   link_run_meta: Record<string, unknown>;
@@ -81,7 +86,14 @@ export const TYPE_META: Record<QaType, { label: string; cls: string }> = {
   task: { label: "Tarea", cls: "bg-panel2 text-muted" },
   test: { label: "Caso de prueba", cls: "bg-blue-900 text-blue-300" },
   improvement: { label: "Mejora", cls: "bg-green-900 text-green-300" },
+  story: { label: "Historia", cls: "bg-purple-900 text-purple-300" },
 };
+
+// Etiqueta de tipo a mostrar: para importados de ADO usa el tipo REAL de ADO (verbatim; los tipos de
+// ADO son abiertos/custom por proceso), para locales usa la etiqueta del tipo local.
+export function typeLabel(i: QaItem): string {
+  return i.source === "ado" && i.ado_type ? i.ado_type : TYPE_META[i.type].label;
+}
 
 export const SEVERITY_LABELS: Record<QaSeverity, string> = {
   "": "—", trivial: "Trivial", menor: "Menor", mayor: "Mayor", critica: "Crítica",

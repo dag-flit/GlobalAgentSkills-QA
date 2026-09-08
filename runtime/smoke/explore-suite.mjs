@@ -12,15 +12,14 @@ import { runExplore } from "../runners/explore.mjs";
 import { defaultHttp as retryHttp, isTransientNetworkError } from "../../adapters/_shared/http-retry.mjs";
 import { analyze as analyzeLineBudget } from "../../scripts/check-line-budget.mjs";
 import { runLoginSynthesis } from "./explore-login.mjs";
+import { runAdoQuery } from "./ado-query-suite.mjs";
 
 // Launcher de navegador FALSO (offline): una URL ok (200) y las que contienen "bad" → 500.
 const fakeLaunch = () => ({
   async newPage() {
     return {
       on() {},
-      async goto(url) {
-        return { status: () => (/bad/.test(url) ? 500 : 200) };
-      },
+      async goto(url) { return { status: () => (/bad/.test(url) ? 500 : 200) }; },
       async screenshot() {},
       async close() {},
     };
@@ -73,6 +72,7 @@ export async function run(ctx) {
   assert.strictEqual(kids[0].title, "HU A");
   fs.rmSync(repoCh, { recursive: true, force: true });
   ok("azure: getWorkItem.type + getChildren (Feature → HU hijas por WIQL) para el fan-out");
+  await runAdoQuery({ ok, creds, pFlit, makeFakeAdo }); // queryWorkItems (import) — en su propio archivo
 
   // B. adjuntos: la captura de la exploración se sube y se enlaza al Task hijo (mapping_file).
   const repoAtt = fs.mkdtempSync(path.join(os.tmpdir(), "qa-att-"));

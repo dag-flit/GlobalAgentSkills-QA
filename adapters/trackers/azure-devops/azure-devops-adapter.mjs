@@ -89,6 +89,31 @@ export class AzureDevOpsAdapter extends TrackerAdapter {
     return out;
   }
 
+  // Normaliza un work item (el que devuelve getWorkItem, con `raw`) al shape de IMPORT a Seguimiento.
+  _toImport(wi) {
+    const f = wi.raw || {};
+    const a = f["System.AssignedTo"];
+    const assignee = a ? (a.uniqueName || a.displayName || "") : "";
+    return {
+      id: String(wi.id), title: wi.title, type: wi.type, state: wi.state,
+      assignee, url: this.client.workItemWebUrl(wi.id),
+    };
+  }
+
+  // Corre un WIQL (acotado al proyecto configurado por el endpoint) y devuelve los work items
+  // NORMALIZADOS para importar al tablero de Seguimiento. Best-effort, tope de seguridad de 200.
+  // Solo LECTURA (no escribe en ADO).
+  async queryWorkItems(wiql, limit = 200) {
+    const res = await this.client.queryByWiql(wiql);
+    const items = (res.json && res.json.workItems) || [];
+    const out = [];
+    for (const it of items.slice(0, limit)) {
+      const wi = await this.getWorkItem(it.id).catch(() => null);
+      if (wi) out.push(this._toImport(wi));
+    }
+    return out;
+  }
+
   // Publica un comentario HTML (p.ej. el brief PR-driven de qué validar) en la Discussion del WI.
   async commentWorkItem(id, html) {
     if (!id) return { ok: false, reason: "sin work item destino" };

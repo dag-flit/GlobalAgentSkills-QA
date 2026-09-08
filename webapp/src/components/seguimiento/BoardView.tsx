@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  type QaItem, type QaStatus, COLUMNS, PRIO_STYLE, TYPE_META, SEVERITY_LABELS, SEVERITY_STYLE, isOverdue,
+  type QaItem, type QaStatus, COLUMNS, PRIO_STYLE, TYPE_META, SEVERITY_LABELS, SEVERITY_STYLE, isOverdue, typeLabel,
 } from "./types";
 
 // Tablero (kanban) de 5 columnas del Seguimiento QA. Recibe los items YA filtrados y las acciones.
@@ -68,7 +68,10 @@ export function BoardView({
                     <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${PRIO_STYLE[i.priority]}`}>{i.priority}</span>
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${t.cls}`}>{t.label}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${t.cls}`}>{typeLabel(i)}</span>
+                    {i.source === "ado" && i.ado_state && (
+                      <span className="rounded bg-blue-900 px-1.5 py-0.5 text-[10px] text-blue-300" title={`Estado en ADO${i.ado_type ? ` · ${i.ado_type}` : ""}`}>ADO: {i.ado_state}</span>
+                    )}
                     {i.severity && <span className={`text-[10px] ${SEVERITY_STYLE[i.severity]}`}>{SEVERITY_LABELS[i.severity]}</span>}
                     {(i.labels ?? []).map((l) => (
                       <span key={l} className="rounded bg-border px-1.5 py-0.5 text-[10px] text-gray-300">{l}</span>

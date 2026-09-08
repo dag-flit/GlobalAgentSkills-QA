@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  type QaItem, STATUS_LABELS, PRIORITY_LABELS, PRIO_STYLE, TYPE_META, SEVERITY_LABELS, SEVERITY_STYLE, isOverdue,
+  type QaItem, STATUS_LABELS, PRIORITY_LABELS, PRIO_STYLE, TYPE_META, SEVERITY_LABELS, SEVERITY_STYLE, isOverdue, typeLabel,
 } from "./types";
 
 // Vista TABLA del Seguimiento QA (además del tablero): ordenable por columna, densa, para revisar
@@ -82,7 +82,7 @@ export function TableView({
             return (
               <tr key={i.id} onClick={() => onEdit(i)} className="cursor-pointer border-t border-border hover:bg-panel2">
                 <td className="max-w-xs truncate px-2 py-2 text-gray-100" title={i.title}>{i.title}</td>
-                <td className="px-2 py-2 whitespace-nowrap"><span className={`rounded px-1.5 py-0.5 text-[10px] ${t.cls}`}>{t.label}</span></td>
+                <td className="px-2 py-2 whitespace-nowrap"><span className={`rounded px-1.5 py-0.5 text-[10px] ${t.cls}`}>{typeLabel(i)}</span></td>
                 <td className="px-2 py-2 whitespace-nowrap text-gray-300">{STATUS_LABELS[i.status]}</td>
                 <td className="px-2 py-2 whitespace-nowrap"><span className={`rounded-full px-1.5 py-0.5 text-[10px] ${PRIO_STYLE[i.priority]}`}>{PRIORITY_LABELS[i.priority]}</span></td>
                 <td className={`px-2 py-2 whitespace-nowrap text-xs ${SEVERITY_STYLE[i.severity]}`}>{SEVERITY_LABELS[i.severity]}</td>

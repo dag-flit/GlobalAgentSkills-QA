@@ -1120,6 +1120,41 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
     usuario lo corre con `!`). Migraciones 0014-0018 las aplicó el usuario. Ver [[seguimiento-qa-robusto]] y
     [[pendientes-proxima-sesion]]. **No exige reiniciar** `npm run dev` (todo webapp).
 
+- **Seguimiento QA ↔ ADO: IMPORT de work items (una vía) + refinamientos (2026-09-08, motor+webapp,
+  migración 0019, smoke 138 · tsc0 · budget0).** El usuario pidió conectar el tablero de Seguimiento con
+  Azure DevOps para jalar bugs/tareas/HU. **Una vía (solo LECTURA de ADO; nunca escribe).** Motor: nuevo
+  `queryWorkItems(wiql)` en el adapter azure (corre WIQL acotado al proyecto y normaliza id/título/tipo/
+  estado/asignado/url; tope 200; solo lectura) + en el contrato base (`[]`) + CONTRACT.md; caso de smoke
+  en `ado-query-suite.mjs` (extraído de explore-suite por el guardrail 400). Webapp: `lib/qa/adoImport.ts`
+  (arma el adapter del tenant como prBrief; construye el WIQL por modo; mapea ADO→qa e importa), migración
+  `0019_qa_items_ado_import.sql` (`source`/`ado_state`/`ado_type`/`ado_url`/`ado_synced_at` + índice por
+  ado_wi), repo `importAdoItems`/`listAdoWorkItemIds`/`deleteAdoItems` (upsert por ado_wi que REFRESCA los
+  datos de ADO SIN pisar el estado/posición LOCAL), rutas `POST /api/qa-items/ado-import` · `/ado-resync` ·
+  `/ado-clear` (member+), UI `seguimiento/AdoImport.tsx` (modal 3 modos: por ID(s), hijos de Feature/HU,
+  consulta) + botones «Importar de ADO» / «Actualizar desde ADO» / «Quitar importados». **Refinamientos
+  pedidos:** (1) la consulta EXCLUYE `Closed`/`Removed` por defecto (salvo que se pidan) y avisa si llega al
+  tope de 200; (5) se quitó el check «asignados a mí»; (6) la consulta exige ≥1 filtro (tipo/estado/área/
+  sprint); (2) tipo real de ADO se muestra VERBATIM en la tarjeta (`typeLabel`) + nuevo tipo local `story`
+  (Historia); (3) paginación (tamaño 25/50/100/200 recordado + Anterior/Siguiente) en tablero y tabla; (4)
+  borrado por registro (ya existía) + masivo de importados. Estado de ADO = **informativo** (chip); el
+  tablero mantiene sus 5 estados locales (los estados varían por proyecto/tipo en ADO). El Select propio se
+  endureció: selecciona en `onMouseDown` → cierra al instante. **Casos de prueba (Azure Test Plans) = fase
+  aparte** (API distinta) → ver el módulo de Casos de Prueba. Ver [[ado-seguimiento-import-futuro]].
+
+- **Módulo «Casos de Prueba» — Fase 1 (casos + suites) (2026-09-08, webapp, migración 0020, tsc0 · budget0).**
+  Base del test management (tipo Azure Test Plans/TestRail liviano). Migración `0020_test_cases.sql`:
+  `qa_test_suites` (carpetas) + `qa_test_cases` (título, precondiciones, prioridad, etiquetas jsonb, ado_wi,
+  **steps jsonb = [{action, expected}]**, suite_id FK ON DELETE SET NULL → al borrar la suite los casos
+  quedan sin archivar) — ambas tenant_id + FORCE RLS. Repo `qaTestCasesRepo.ts`; zod `testSuiteSchema`/
+  `testCaseSchema`/`testStepSchema`; rutas `GET/PUT/DELETE /api/test-suites` y `/api/test-cases` (member+);
+  UI `/test-cases` (`components/testcases/{types,SuiteSidebar,CaseEditor}` + page): barra de suites
+  (crear/renombrar/eliminar), tabla de casos por suite, editor con **pasos en tabla editable** (acción/
+  esperado, agregar/quitar/mover). Ítem «Casos de Prueba» en AppShell (grupo Flujo). **Fases siguientes
+  (el usuario pidió TODO secuencial):** 2 = ejecuciones (corridas con resultado por paso + evidencia +
+  historial + cobertura), 3 = import de Azure Test Plans (traer test cases con sus pasos), 4 = métricas +
+  export; integración = enganchar las corridas de Regresión como ejecuciones automatizadas. Ver
+  [[casos-de-prueba-modulo]].
+
 ## Mapa del repo
 
 ```

@@ -78,6 +78,15 @@ export class TrackerAdapter {
     return [];
   }
 
+  /**
+   * Corre un WIQL y devuelve work items normalizados para importar a Seguimiento. Default: `[]`
+   * (el tracker local no tiene work items). Solo azure-devops lo implementa (solo lectura).
+   * @param {string} wiql @returns {Promise<Array<{id,title,type,state,assignee,url}>>}
+   */
+  async queryWorkItems(wiql) {
+    return [];
+  }
+
   /** Entrega la evidencia normalizada al destino del tracker (o al sink local). */
   async publishEvidence(target, payload) {
     throw new Error("publishEvidence() no implementado");
