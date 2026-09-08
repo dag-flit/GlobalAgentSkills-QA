@@ -57,7 +57,7 @@ export async function listRuns(): Promise<TestRunRow[]> {
   return withTenant(async (c) => {
     const r = await c.query(
       `SELECT ${RUN_COLS} FROM qa_test_runs r LEFT JOIN qa_test_results res ON res.run_id = r.id
-       GROUP BY r.id ORDER BY r.started_at DESC`,
+       GROUP BY r.tenant_id, r.id ORDER BY r.started_at DESC`,
     );
     return r.rows as TestRunRow[];
   });
@@ -67,7 +67,7 @@ export async function getRun(id: string): Promise<{ run: TestRunRow | null; resu
   return withTenant(async (c) => {
     const rr = await c.query(
       `SELECT ${RUN_COLS} FROM qa_test_runs r LEFT JOIN qa_test_results res ON res.run_id = r.id
-       WHERE r.id = $1 GROUP BY r.id`,
+       WHERE r.id = $1 GROUP BY r.tenant_id, r.id`,
       [id],
     );
     const run = (rr.rows[0] as TestRunRow) ?? null;

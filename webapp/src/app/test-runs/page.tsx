@@ -25,10 +25,10 @@ export default function TestRunsPage() {
   async function load() {
     setLoading(true); setError(null);
     try {
-      const [ru, su] = await Promise.all([
-        fetch("/api/test-runs").then((r) => r.json()),
-        fetch("/api/test-suites").then((r) => r.json()),
-      ]);
+      const [ruRes, suRes] = await Promise.all([fetch("/api/test-runs"), fetch("/api/test-suites")]);
+      if (!ruRes.ok) throw new Error(`No se pudieron cargar las corridas (HTTP ${ruRes.status}). ¿Aplicaste las migraciones de BD?`);
+      const ru = await ruRes.json().catch(() => ({ ok: false, error: "Respuesta inválida del servidor." }));
+      const su = await suRes.json().catch(() => ({ suites: [] }));
       if (!ru.ok) throw new Error(ru.error || "No se pudieron cargar las corridas.");
       setRuns(ru.runs ?? []);
       setSuites(su.suites ?? []);
