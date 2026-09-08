@@ -1149,11 +1149,23 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   `testCaseSchema`/`testStepSchema`; rutas `GET/PUT/DELETE /api/test-suites` y `/api/test-cases` (member+);
   UI `/test-cases` (`components/testcases/{types,SuiteSidebar,CaseEditor}` + page): barra de suites
   (crear/renombrar/eliminar), tabla de casos por suite, editor con **pasos en tabla editable** (acción/
-  esperado, agregar/quitar/mover). Ítem «Casos de Prueba» en AppShell (grupo Flujo). **Fases siguientes
-  (el usuario pidió TODO secuencial):** 2 = ejecuciones (corridas con resultado por paso + evidencia +
-  historial + cobertura), 3 = import de Azure Test Plans (traer test cases con sus pasos), 4 = métricas +
-  export; integración = enganchar las corridas de Regresión como ejecuciones automatizadas. Ver
-  [[casos-de-prueba-modulo]].
+  esperado, agregar/quitar/mover). Ítem «Casos de Prueba» en AppShell (grupo Flujo).
+
+- **Casos de Prueba — Fase 2: EJECUCIONES (2026-09-08, webapp, migración 0021, tsc0 · budget0).** Corridas
+  manuales: una corrida toma los casos de una suite (o todos) y guarda el resultado POR CASO y POR PASO,
+  con **SNAPSHOT** del caso al correr (título/HU/pasos) → inmutable. Migración `0021_test_runs.sql`
+  (`qa_test_runs` + `qa_test_results` con `step_results jsonb`; FK a runs ON DELETE CASCADE; RLS). Repo
+  `qaTestRunsRepo.ts` (`createRun` snapshotea los casos en filas de resultado; `listRuns` con conteos por
+  estado; `getRun`; `updateResult`; `finishRun`; `deleteRun`); zod en `validation/testSchemas.ts` (los
+  schemas de casos+corridas se movieron ahí y se re-exportan desde schemas.ts por el guardrail 400); rutas
+  `GET/POST/PATCH/DELETE /api/test-runs`, `GET /api/test-runs/[id]`, `PUT /api/test-results` (member+). UI:
+  `/test-runs` (lista con avance + alta) y `/test-runs/[id]` (ejecución caso por caso: estado por paso
+  pass/fail/blocked/skipped con `ResultRow`; el estado del caso se DERIVA de los pasos; resultado real +
+  notas; resumen con avance y **cobertura de HU**; «Marcar terminada»). Ítem «Corridas de prueba» en
+  AppShell. **Evidencia binaria (subir capturas) = incremento posterior** (por ahora evidencia por
+  nota/enlace). **Fases siguientes:** 3 = import de Azure Test Plans (traer test cases con sus pasos, API
+  `test/plans`), 4 = métricas + export; integración = enganchar Regresión como ejecuciones automatizadas.
+  Ver [[casos-de-prueba-modulo]].
 
 ## Mapa del repo
 

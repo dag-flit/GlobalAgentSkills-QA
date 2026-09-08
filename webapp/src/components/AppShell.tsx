@@ -81,6 +81,12 @@ const IconCases = svg(
     <path d="M8.5 17h7" />
   </>
 );
+const IconRuns = svg(
+  <>
+    <path d="M3 6h11M3 12h11M3 18h7" />
+    <path d="M16 15l3 2.5L16 20z" />
+  </>
+);
 const IconFolders = svg(
   <>
     <path d="M4 20h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-7l-2-2H6a1 1 0 0 0-1 1" />
@@ -104,6 +110,7 @@ const GROUPS: Group[] = [
       { href: "/schedules", label: "Programadas", Icon: IconClock },
       { href: "/seguimiento", label: "Seguimiento QA", Icon: IconBoard },
       { href: "/test-cases", label: "Casos de Prueba", Icon: IconCases },
+      { href: "/test-runs", label: "Corridas de prueba", Icon: IconRuns },
       { href: "/runs", label: "Historial", Icon: IconHistory },
     ],
   },
