@@ -40,6 +40,10 @@ export function RunDetail({ id }: { id: string }) {
 
       {record && <RunMeta record={record} />}
 
+      {record?.mode === "code" && summary?.findingsWorkItem && (
+        <FindingsWorkItemCard fw={summary.findingsWorkItem} />
+      )}
+
       {summary?.fanout && (
         <div className="card space-y-2">
           <h2 className="font-semibold text-sm">Fan-out del Feature {summary.feature}</h2>
@@ -106,6 +110,48 @@ export function RunDetail({ id }: { id: string }) {
 
       <RunResults results={results} report={report} shots={shots} />
       {record?.error && <div className="card text-sm text-red-300">Error: {record.error}</div>}
+    </div>
+  );
+}
+
+// Tarjeta de la HU de hallazgos (modo QA de código). La publicación en ADO es AUTOMÁTICA al terminar
+// (paso 7 del ciclo): crea una User Story en el sprint en curso con el reporte adjunto. Esta tarjeta
+// deja visible el resultado (enlace + sprint + reporte) o, si falló, el motivo (el reporte local igual
+// quedó). Antes solo salía como un mensaje efímero en la consola en vivo.
+function FindingsWorkItemCard({ fw }: { fw: any }) {
+  if (fw.ok) {
+    return (
+      <div className="card space-y-2 border-accent/40">
+        <h2 className="font-semibold text-sm text-white">Evidencias publicadas en Azure DevOps</h2>
+        <div className="text-sm">
+          <a href={fw.url} target="_blank" rel="noreferrer" className="text-accent hover:underline break-all">
+            HU #{fw.id} — {fw.title}
+          </a>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[11px]">
+          {fw.iterationPath ? (
+            <span className="badge bg-panel2 text-muted">Sprint: {fw.iterationPath}</span>
+          ) : (
+            <span className="badge bg-amber-900 text-amber-300">Backlog (no se resolvió el sprint en curso)</span>
+          )}
+          <span className={`badge ${fw.attached ? "bg-green-900 text-green-300" : "bg-panel2 text-muted"}`}>
+            {fw.attached ? "Reporte adjunto" : "Sin adjunto"}
+          </span>
+          {fw.tagsSkipped && (
+            <span className="badge bg-panel2 text-muted">Sin tags (falta el permiso «create tag definition» en ADO)</span>
+          )}
+        </div>
+        <p className="text-[11px] text-muted">
+          La publicación es automática al finalizar el análisis; cada corrida crea su propia HU de hallazgos.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="card space-y-1 border-red-500/40">
+      <h2 className="font-semibold text-sm text-white">Publicación en Azure DevOps</h2>
+      <p className="text-sm text-red-300">No se pudo crear la HU de hallazgos: {fw.reason || "motivo desconocido"}.</p>
+      <p className="text-[11px] text-muted">Los hallazgos igual quedaron en el reporte local (ver abajo).</p>
     </div>
   );
 }

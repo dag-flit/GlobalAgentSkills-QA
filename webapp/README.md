@@ -1,19 +1,19 @@
-# Quality Ops Framework — interfaz web del qa-kit
+# Flit Certify — interfaz web (multitenant)
 
-UI (Next.js 15 + React 19 + TypeScript + Tailwind) para usar el **qa-kit a clics**: explorar una
-URL viva (pruebas E2E) sin tocar la CLI. **No reimplementa el motor**: importa `runQaCycle` del kit
-(`../runtime/`) y lo orquesta desde el navegador. Es un servicio **multitenant** (Postgres + RLS,
-auth propia, secretos cifrados).
+UI (Next.js 15 + React 19 + TypeScript + Tailwind) del producto **Flit Certify**. **No reimplementa el
+motor**: importa `runQaCycle`/`runCodeCycle` del kit (`../runtime/`) y lo orquesta desde el navegador. Es
+un servicio **multitenant** (Postgres + **RLS forzada**, auth propia, secretos cifrados AES-256-GCM,
+aislamiento por **Proyecto**).
 
 ## Arrancar
 
 Requiere **PostgreSQL** (control-plane del servicio). Primera vez:
 
-1. En pgAdmin, como superusuario, ejecuta `webapp/db/provision.sql` (crea la base
-   `flit_qa_kit` + el rol `flit_qa_app`; cambia el `CHANGE_ME` por una clave real).
+1. En pgAdmin, como superusuario, ejecuta `webapp/db/provision.sql` (crea la base + el rol de la app;
+   cambia el `CHANGE_ME` por una clave real). El rol de la app **no** debe ser superusuario (bypassea RLS).
 2. Crea `webapp/.env.local` (NO se commitea):
    ```
-   CONTROL_PLANE_URL=postgresql://flit_qa_app:<clave>@localhost:5432/flit_qa_kit
+   CONTROL_PLANE_URL=postgresql://<rol_app>:<clave>@localhost:5432/<base>
    QA_KIT_MASTER_KEY=<32 bytes base64>
    ```
    (genera la clave: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
@@ -22,78 +22,64 @@ Requiere **PostgreSQL** (control-plane del servicio). Primera vez:
 cd webapp
 npm install
 node --env-file=.env.local db/migrate.mjs   # aplica migraciones (idempotente)
-npm run dev                                   # http://localhost:4312
+npm run dev                                   # http://localhost:4312 (Turbopack)
 ```
 
-La app **exige login**. No hay usuarios preexistentes → entra a **`/register`** ("Crear
-organización"): nombre + tu email + contraseña (mín. 8). Esa cuenta queda como *owner*.
-Arquitectura, setup y reglas de extensión completas en **[../docs/MULTITENANT.md](../docs/MULTITENANT.md)**.
+La app **exige login**. Sin usuarios preexistentes → entra a **`/register`** ("Crear Proyecto"):
+nombre + tu email + contraseña (mín. 8). Esa cuenta queda como *owner*. Arquitectura, setup y reglas de
+extensión en **[../docs/MULTITENANT.md](../docs/MULTITENANT.md)**; despliegue en
+**[../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md)**.
 
-> Para explorar una URL se necesita Chromium de Playwright:
+> Para explorar una URL o correr regresión se necesita Chromium de Playwright:
 > `npx playwright install chromium` (una sola vez).
 
-⚠️ **No corras `npm run build` mientras `npm run dev` está vivo** (ambos usan `.next` y en Windows
-puede corromperse). Si la UI se rompe: detén dev → borra `.next` → reinicia dev.
+⚠️ **No corras `npm run build` mientras `npm run dev` está vivo** (ambos usan `.next` y en Windows puede
+corromperse). Si la UI se rompe: detén dev → borra `.next` → reinicia dev.
 
-## Qué hace (de un vistazo)
+⚠️ La `QA_KIT_MASTER_KEY` cifra los secretos por tenant: **se fija una vez y no se cambia** (si cambia, lo
+cifrado antes queda ilegible).
 
-- **Bases de datos** (`/databases`): gestor estilo pgAdmin (varias conexiones, **túnel SSH**),
-  con "Probar conexión" real y secretos enmascarados.
-- **Ajustes** (`/settings`): credenciales del tracker (**Local** / **Azure DevOps**) con
-  "Probar conexión" (preflight real del adapter).
-- **Ejecutar** (`/`): asistente `Tracker → URL → Pasos → Ejecutar`.
-  - **URL-smoke:** abre la app viva con Playwright y registra status HTTP + errores de consola + captura.
-  - **GUION E2E:** **constructor visual** de un flujo de pasos (login → navegar → verificar) para no
-    técnicos (sin YAML), con localizadores amigables, secretos por `${QA_USER}`/`${QA_PASS}` (efímeros),
-    **captura + evidencia por paso**, **Importar/Exportar guion (JSON)** y **guardado del guion por HU**.
-  - **Fan-out de Feature:** si el WI destino es un Feature, corre el guion guardado de **cada HU hija** y
-    publica evidencia por HU.
-  - **Criterios de aceptación:** panel que trae los AC declarados de la HU (o de las HU de un Feature) y
-    desplegable por paso de verificación para etiquetar qué AC prueba → **matriz de cobertura** en el reporte.
-- **Ejecución en vivo** (`/runs/[id]`): consola por SSE + resultados (casos/pasos con pass/fail),
-  tarjeta de **cobertura de AC**, tarjeta de **fan-out**, reporte y galería de capturas.
+## Módulos (de un vistazo)
+
+- **Ejecutar** (`/`): asistente `Tracker → (URL | Código | PR) → …→ Ejecutar`.
+  - **Explorar URL / GUION E2E:** URL-smoke o constructor visual de un flujo de pasos (login → navegar →
+    verificar) para no técnicos, con localizadores amigables, secretos `${QA_USER}`/`${QA_PASS}` (efímeros),
+    **captura + evidencia por paso**, Importar/Exportar guion (JSON), guardado por HU, **fan-out de Feature**
+    y **matriz de cobertura de AC**. Accesibilidad **axe/WCAG** opcional.
+  - **QA del Código:** analiza un repo local del servidor por capas (static/unit/api/db/security), con
+    **materialización efímera** de dependencias (no toca el repo certificado), sonda directa a Postgres y
+    publicación automática de la **HU de hallazgos** en el sprint en curso de Azure (con reporte adjunto).
+- **Analizar PR** (`/pr`): brief ISTQB determinista desde un PR de GitHub + corre guiones guardados.
+- **Test de Regresión** (`/regression`): catálogo de selectores por crawl, suites por alias, runner con
+  evidencia (capturas + video), multi-sistema, credenciales cifradas.
+- **Seguimiento QA** (`/seguimiento`): tablero/tabla de pendientes, comentarios + actividad, métricas,
+  export CSV/HTML, notificaciones e **import de work items de ADO** (solo lectura).
+- **Casos de Prueba** (`/test-cases`, `/test-runs`): suites y casos con pasos, corridas con resultado por
+  paso + cobertura de HU, **import de Azure Test Plans**, métricas y export.
+- **Programadas** (`/schedules`): horarios de corridas + token de servicio (disparo por cron externo).
+- **Bases de datos** (`/databases`): conexiones con **túnel SSH** y "Probar conexión" real.
+- **Ajustes** (`/settings`) y **Proyectos** (`/projects`): tracker (Local/Azure) con preflight, y gestión
+  de Proyectos (cada uno un tenant aislado).
+- **Ejecución en vivo** (`/runs/[id]`): consola por SSE + resultados (casos/pasos), tarjetas de cobertura
+  de AC, fan-out y **HU de hallazgos** (con enlace a ADO), reporte y galería de capturas.
 
 ## Dónde quedan las evidencias (y por qué NO se suben al repo)
 
-La corrida deja la evidencia bajo
-`webapp/data/tenants/<tenantId>/evidence/<id>/qa-evidence/<fecha>/…`. Cada carpeta es
-**autocontenida**: `report.html` + `report.md` + subcarpeta `capturas/` (las imágenes se copian
-ahí y se embeben en el HTML).
+Bajo `webapp/data/tenants/<tenantId>/…` (evidencia de corridas, evidencia de regresión, materialización
+efímera). Cada reporte es **autocontenido**: `report.html` + `report.md` + capturas embebidas.
 
-**Las evidencias NUNCA se suben al repo:**
-- `webapp/data/` (config con secretos, runs, evidencia de exploración) está en `webapp/.gitignore`.
-- `qa-evidence/` está en el `.gitignore` raíz del kit.
+**Las evidencias NUNCA se versionan:** `webapp/data/` está en `webapp/.gitignore` y `qa-evidence/` en el
+`.gitignore` raíz. Config, conexiones, runs y eventos viven en **PostgreSQL** (control-plane) con secretos
+**cifrados** (AES-256-GCM) y aislados por tenant (RLS). En prod, `data/tenants/` debe ir en un **volumen
+persistente** que sobreviva a los deploys (ver DEPLOYMENT.md).
 
-> **Persistencia:** config, conexiones, runs y eventos viven en **PostgreSQL** (control-plane),
-> con secretos **cifrados** (AES-GCM) y aislados por tenant (RLS). En disco, `webapp/data/` (no
-> versionado) solo guarda artefactos por tenant: `tenants/<tenantId>/evidence/`.
-
-## Pruebas
+## Pruebas / gates
 
 ```bash
-node ../runtime/smoke-test.mjs                 # motor del kit → 19/19
+node ../runtime/smoke-test.mjs                 # motor del kit → 140/140
 node ../scripts/check-line-budget.mjs all      # regla de 400 líneas → 0 violaciones
 npx tsc --noEmit                               # typecheck de la webapp
 ```
 
-> El aislamiento por tenant (AIS-01..08) se valida directamente contra Postgres (RLS) y por
-> HTTP con dos organizaciones (ver `docs/MULTITENANT.md`). `test/full-suite.mjs` cubre la
-> exploración de URL de punta a punta (requiere el dev server + login) y el guardrail de 400
-> líneas sobre `webapp/src`.
-
-## Estructura
-
-```
-src/middleware.ts   portón de auth (Edge) + cabeceras de seguridad
-src/app/            páginas (login, register, …) + API routes (auth/*, config, db/test, tracker/{test,workitem}, flows, runs/*, artifacts)
-src/components/      AppShell · SessionBadge · AuthCard · run-wizard/{StepsStep,AcPanel,FlowImportExport,steps-catalog,…} · db-connections/* · run-detail/* · ui
-src/lib/auth/        password (scrypt) · session · context · cookie · route (withTenantScope)
-src/lib/db/          pool · tx (withTenant) · tenantContext (ALS) · {config,runs,events,session,auth,flows}Repo · secretsMapper
-src/lib/security/    secretsCrypto (AES-GCM) · paths (anti-traversal)
-src/lib/validation/  schemas (zod) · parse
-src/lib/qa/          puentes al motor del kit: runner (runQaCycle) · fanout (Feature→HU) · tracker · kit
-db/                  migrations/*.sql + migrate.mjs + provision.sql
-scripts/             retention.mjs (retención por tenant)
-data/                local, NO versionado (evidencia por tenant)
-test/                full-suite.mjs
-```
+El aislamiento por tenant se valida contra Postgres (RLS) y por HTTP con dos Proyectos (ver
+`../docs/MULTITENANT.md`).

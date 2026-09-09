@@ -227,7 +227,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <TenantBar />
         <main className="flex-1 w-full max-w-[1400px] mx-auto px-6 py-6">{children}</main>
         <footer className="text-center text-xs text-muted py-4 border-t border-border">
-          Flit Certify · plataforma de QA
+          Flit Certify · By DAG
         </footer>
       </div>
     </div>

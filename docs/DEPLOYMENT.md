@@ -40,7 +40,8 @@ Plantilla documentada en [`webapp/.env.production.example`](../webapp/.env.produ
 
 ## 4. Migraciones de base de datos
 
-Runner idempotente: `webapp/db/migrate.mjs` (migraciones `0001`–`0011`, forward-only).
+Runner idempotente: `webapp/db/migrate.mjs` (migraciones `0001`–`0021` a hoy, forward-only;
+el runner aplica **todas las presentes** en la carpeta, así que este rango crece con el repo).
 Correr **como paso del deploy, contra la BD productiva, ANTES de arrancar la versión nueva**:
 
 ```bash
@@ -62,7 +63,26 @@ El motor **ejecuta herramientas en el host** durante las corridas. La VPS necesi
 - **Disco persistente** para datos por tenant: la app escribe bajo `data/tenants/<id>/`
   (evidencia de corridas, evidencia de regresión, **materialización efímera** que copia
   repos + `node_modules`). Debe ser un **volumen que sobreviva a los deploys** (no un
-  directorio efímero del contenedor).
+  directorio efímero del contenedor) y con **disco holgado** (las copias con dependencias pesan).
+
+### 5.1 Modelo de rutas de «QA del Código» (diferencia clave vs. local)
+
+El modo **QA del Código analiza una ruta del sistema de archivos DEL SERVIDOR**, no del navegador
+del usuario. En local se apunta a algo como `C:\...\flito`; en la VPS esa ruta no existe. Por lo tanto:
+
+- **El repositorio a certificar debe estar presente en el filesystem de la VPS** (p.ej. `git clone`
+  en el servidor, o que el pipeline lo deposite), con **rutas de Linux**. La webapp **no clona** en
+  modo código: lee una ruta local existente.
+- **Instalación de dependencias del repo = automática y AISLADA** (no hay que instalarlas a mano):
+  repo **Node con lockfile** → el kit **copia** el repo a `data/tenants/<id>/workspace` y corre
+  `npm ci` / `pnpm install --frozen-lockfile` **ahí** (el repo original queda intacto); **.NET** →
+  `dotnet restore` va al caché global de NuGet; **sin lockfile / no-Node** → se analiza tal cual.
+  Regla: la *herramienta* (Node, .NET, pnpm, semgrep…) se instala una vez en el host; el *artefacto*
+  (dependencias del repo) se resuelve solo, aislado, en cada corrida.
+- **`CODE_QA_BASE_DIR` (recomendado en prod):** en un servidor compartido, definí esta variable para
+  **confinar** las rutas de QA de código a un directorio base. Ese modo **ejecuta el código del repo**
+  (RCE por diseño); sin base, se permite cualquier ruta (aceptable con un solo operador de confianza,
+  riesgoso en multiusuario). Confiná la base y usá solo repos confiables.
 
 ## 6. Puerta de calidad antes del go-live (aislamiento multitenant)
 
@@ -73,9 +93,9 @@ El motor **ejecuta herramientas en el host** durante las corridas. La VPS necesi
 
 ## 7. Health check
 
-**Falta una ruta de health dedicada** (no existe `/api/health`). Opciones:
-- Agregar `GET /api/health` liviano (200 sin auth) para el proxy/monitor — recomendado.
-- Provisional: `GET /` responde **307** (redirect al login) = señal de que el server vive.
+**`GET /api/health` ya existe** (liviano, 200 sin auth): apuntá ahí el health check del
+reverse proxy / monitor de la VPS. Alternativa de vida básica: `GET /` responde **307**
+(redirect al login) = el server está arriba.
 
 ## 8. Programación de corridas (PRO #4)
 

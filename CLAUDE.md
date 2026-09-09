@@ -1198,6 +1198,24 @@ contenía; ver git. Registrar aquí las nuevas del kit explore-only.)*
   Turbopack soporta) → compila mucho más rápido y usa menos memoria. Producción (`next start`) ya es rápida
   (pre-compilada); era solo dev.
 
+- **QA de código: la HU de hallazgos ya publicada no se veía en el detalle → tarjeta en `RunDetail` +
+  footer «By DAG» (2026-09-09, webapp, tsc0 · budget0, sin commitear).** El usuario reportó que tras una
+  corrida de código en FLITO «el sistema perdió la opción para publicar en ADO». Diagnóstico por BD
+  (leyendo `runs`/`run_events` de FLITO con RLS): **la publicación NO se perdió** — en modo código es
+  AUTOMÁTICA (paso 7 de `code-cycle`) y funcionó en las 2 corridas: HU **#12190** y **#12198** creadas en
+  `FLIT - FLITO\Flito - Sprint 5` con el reporte HTML adjunto (`ok:true, attached:true`; `tagsSkipped:true`
+  porque la cuenta no tiene el permiso ADO «create tag definition» — inofensivo, el `#N` se cuenta por
+  título). No hay botón manual de «publicar» (por diseño: se retiró el «WI destino» en el giro Azure-only).
+  El hueco real era de UX: `RunDetail` **no mostraba** `summary.findingsWorkItem` — el único rastro era un
+  `say("result", "HU de hallazgos #… creada")` efímero en la consola en vivo → al reabrir la corrida no
+  había enlace y parecía que «no publicó». Fix: `RunDetail` (webapp) muestra, en modo código y cuando existe
+  `summary.findingsWorkItem`, la tarjeta `FindingsWorkItemCard`: si `ok` → enlace a la HU en ADO + sprint
+  (o aviso de backlog) + estado del reporte adjunto + nota de tags; si `!ok` → el motivo y que los hallazgos
+  quedaron en el reporte local. No toca el motor ni la publicación (solo SUPERFICIE de datos ya presentes) →
+  no debilita nada. Además, cambio de branding pedido: el footer de `AppShell` pasó de «Flit Certify ·
+  plataforma de QA» a «Flit Certify · By DAG». Solo webapp → Next recompila en caliente (no exige reiniciar).
+  Ver [[reintro-qa-codigo-modulo]].
+
 ## Mapa del repo
 
 ```
